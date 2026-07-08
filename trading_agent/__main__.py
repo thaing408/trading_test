@@ -39,6 +39,8 @@ def _run_intraday(args: argparse.Namespace) -> int:
         config.plan_file = args.plan
     if args.positions:
         config.positions_file = args.positions
+    if args.session:
+        config.session_file = args.session
     if args.output:
         config.output_file = args.output
     if args.cycles:
@@ -65,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     intraday.add_argument("--fixture", action="store_true", help="Use fixture data")
     intraday.add_argument("--plan", metavar="FILE", help="Daily Trading Plan context JSON")
     intraday.add_argument("--positions", metavar="FILE", help="Open positions JSON")
+    intraday.add_argument("--session", metavar="FILE", help="Intraday session fixture JSON")
     intraday.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
     intraday.add_argument("--cycles", type=int, default=1, help="Monitoring cycle count")
 

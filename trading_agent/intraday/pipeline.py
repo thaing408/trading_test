@@ -33,8 +33,39 @@ def _evaluate_risk_limits(positions, snapshot, risk_config) -> RiskLimitEvaluati
             breaches.append(f"{pos.symbol}: loss {loss_pct:.1f}% > {risk_config.max_loss_per_position_pct}%")
         total_risk += loss_pct
     if total_risk > risk_config.max_portfolio_risk_pct:
-        breaches.append(f"Portfolio aggregate risk {total_risk:.1f}% > {risk_config.max_portfolio_risk_pct}%")
+        breaches.append(
+            f"Portfolio aggregate risk {total_risk:.1f}% > {risk_config.max_portfolio_risk_pct}%"
+        )
     return RiskLimitEvaluation(within_limits=len(breaches) == 0, breaches=breaches)
+
+
+def _risk_limit_notifications(risk_eval: RiskLimitEvaluation) -> List[Alert]:
+    notifications: List[Alert] = []
+    for breach in risk_eval.breaches:
+        if breach.startswith("Portfolio"):
+            notifications.append(
+                Alert(
+                    alert_type="risk_limit_breach",
+                    symbol="PORTFOLIO",
+                    message=breach,
+                    recommended_response=(
+                        "Reduce aggregate exposure immediately; Scale Out or Exit weakest positions"
+                    ),
+                    severity="critical",
+                )
+            )
+        else:
+            symbol = breach.split(":")[0].strip()
+            notifications.append(
+                Alert(
+                    alert_type="risk_limit_breach",
+                    symbol=symbol,
+                    message=breach,
+                    recommended_response="Exit or reduce position to restore risk limits",
+                    severity="critical",
+                )
+            )
+    return notifications
 
 
 def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
@@ -71,6 +102,13 @@ def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
         all_notifications.extend(rec.alerts)
 
     risk_eval = _evaluate_risk_limits(positions, snapshot, config.risk)
+    portfolio_alerts = _risk_limit_notifications(risk_eval)
+    existing = {(a.alert_type, a.symbol, a.message) for a in all_notifications}
+    for alert in portfolio_alerts:
+        key = (alert.alert_type, alert.symbol, alert.message)
+        if key not in existing:
+            all_notifications.append(alert)
+            existing.add(key)
 
     return IntradayReport(
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from trading_agent.intraday.config import IntradayRiskConfig
 from trading_agent.intraday.decisions.alerts import detect_alerts
-from trading_agent.intraday.decisions.guards import check_averaging_down, compute_trailing_stop
+from trading_agent.intraday.decisions.guards import (
+    check_averaging_down,
+    compute_trailing_stop,
+    days_to_expiration,
+)
 from trading_agent.intraday.models import (
     OpenPosition,
     PositionRecommendation,
@@ -12,6 +16,10 @@ from trading_agent.intraday.models import (
     SessionSynthesis,
     SymbolSessionData,
 )
+
+
+def critical_alerts_pending(alerts: list) -> bool:
+    return any(a.severity == "critical" for a in alerts)
 
 
 def _update_scores(
@@ -70,6 +78,34 @@ def evaluate_position(
         what_changed_parts.append(a.message)
 
     what_changed = "; ".join(what_changed_parts) if what_changed_parts else "No material session changes"
+
+    if position.pending_entry and sym_data:
+        if (
+            sym_data.trend == "uptrend"
+            and sym_data.price >= sym_data.vwap
+            and not critical_alerts_pending(alerts)
+            and conf >= position.original_confidence
+        ):
+            return PositionRecommendation(
+                symbol=position.symbol,
+                action="Enter",
+                what_changed=what_changed,
+                why_recommended="Planned entry conditions met: price above VWAP with confirming uptrend",
+                risk_if_no_action="Miss planned entry at favorable intraday level",
+                updated_probability=prob,
+                updated_confidence=conf,
+                alerts=alerts,
+            )
+        return PositionRecommendation(
+            symbol=position.symbol,
+            action="Take No Action",
+            what_changed=what_changed,
+            why_recommended="Pending entry — conditions not yet confirmed for execution",
+            risk_if_no_action="Low — wait for entry trigger alignment",
+            updated_probability=prob,
+            updated_confidence=conf,
+            alerts=alerts,
+        )
 
     critical = [a for a in alerts if a.severity == "critical"]
     if any(a.alert_type == "stop_loss_triggered" for a in alerts):
@@ -200,6 +236,19 @@ def evaluate_position(
             what_changed=what_changed,
             why_recommended=f"IV moved {sym_data.iv_change_pct:+.1f}%; adjust strikes or size",
             risk_if_no_action="Greeks drift may distort intended risk/reward profile",
+            updated_probability=prob,
+            updated_confidence=conf,
+            alerts=alerts,
+        )
+
+    dte = days_to_expiration(position.expiration)
+    if dte <= risk_config.roll_days_threshold and dte >= 0 and sym_data:
+        return PositionRecommendation(
+            symbol=position.symbol,
+            action="Roll",
+            what_changed=what_changed + f"; {dte} day(s) to expiration ({position.expiration})",
+            why_recommended=f"Options expire in {dte} days; roll to next cycle to preserve thesis",
+            risk_if_no_action="Theta decay and gamma risk accelerate into expiration",
             updated_probability=prob,
             updated_confidence=conf,
             alerts=alerts,

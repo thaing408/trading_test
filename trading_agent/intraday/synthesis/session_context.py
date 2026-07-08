@@ -35,6 +35,7 @@ def synthesize_session(snapshot: SessionSnapshot) -> SessionSynthesis:
             f"VWAP {vwap_side} (${data.vwap:.2f}), vol {data.relative_volume:.1f}x, "
             f"trend {data.trend}, momentum {data.momentum}, "
             f"IV {data.iv:.1f}% ({data.iv_change_pct:+.1f}%), OI chg {data.oi_change_pct:+.1f}%, "
+            f"Greeks Δ={data.delta:.3f} Γ={data.gamma:.3f} Θ={data.theta:.3f} ν={data.vega:.3f}, "
             f"flow {data.options_flow_bias}, S/R ${data.support:.2f}/${data.resistance:.2f}"
         )
 

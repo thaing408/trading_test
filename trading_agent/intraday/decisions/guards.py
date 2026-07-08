@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from trading_agent.intraday.models import OpenPosition
+
+
+def days_to_expiration(expiration: str, reference: datetime | None = None) -> int:
+    ref = reference or datetime.now(timezone.utc)
+    exp = datetime.strptime(expiration, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return (exp.date() - ref.date()).days
 
 
 def check_averaging_down(position: OpenPosition, current_price: float) -> bool:

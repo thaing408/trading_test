@@ -37,6 +37,7 @@ class OpenPosition:
     allows_averaging_down: bool = False
     trailing_stop_pct: float = 2.0
     max_risk_dollars: float = 500.0
+    pending_entry: bool = False
 
 
 @dataclass

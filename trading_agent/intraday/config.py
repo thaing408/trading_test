@@ -17,6 +17,7 @@ class IntradayRiskConfig:
     partial_profit_pct: float = 50.0
     regime_shift_penalty: float = 15.0
     better_opportunity_margin: float = 10.0
+    roll_days_threshold: int = 14
 
 
 @dataclass
@@ -25,6 +26,7 @@ class IntradayConfig:
     fixture_mode: bool = False
     plan_file: str | None = None
     positions_file: str | None = None
+    session_file: str | None = None
     output_file: str | None = None
     cycles: int = 1
     risk: IntradayRiskConfig = field(default_factory=IntradayRiskConfig)

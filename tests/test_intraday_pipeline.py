@@ -48,6 +48,7 @@ def test_session_synthesis_in_report():
     assert "VWAP" in text or "vwap" in text.lower() or "regime" in text.lower()
     assert report.session.observations
     assert len(report.session.observations) >= 3
+    assert "Greeks" in text or "Δ=" in text
 
 
 def test_notifications_present_for_triggers():

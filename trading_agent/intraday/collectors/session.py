@@ -11,8 +11,20 @@ from trading_agent.intraday.models import OpenPosition, SessionSnapshot, SymbolS
 SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU"]
 
 
-def _fixture_snapshot(symbols: List[str]) -> SessionSnapshot:
-    data = load_fixture("intraday_session.json")
+def _load_session_fixture(filename: str) -> dict:
+    from pathlib import Path
+
+    path = Path(filename)
+    if path.exists():
+        import json
+
+        with path.open(encoding="utf-8") as f:
+            return json.load(f)
+    return load_fixture(filename)
+
+
+def _fixture_snapshot(symbols: List[str], session_file: str | None = None) -> SessionSnapshot:
+    data = _load_session_fixture(session_file or "intraday_session.json")
     sym_data = {}
     for sym in symbols:
         if sym in data.get("symbols", {}):
@@ -131,7 +143,7 @@ def collect_session_snapshot(
 ) -> SessionSnapshot:
     symbols = list({p.symbol for p in positions} | set(config.watch_symbols))
     if config.fixture_mode or not config.use_live_data:
-        return _fixture_snapshot(symbols)
+        return _fixture_snapshot(symbols, config.session_file)
 
     errors: List[str] = []
     sym_data: Dict[str, SymbolSessionData] = {}
@@ -151,7 +163,7 @@ def collect_session_snapshot(
     news_items = plan_context.get("news_highlights", [])
 
     if not sym_data:
-        snap = _fixture_snapshot(symbols)
+        snap = _fixture_snapshot(symbols, config.session_file)
         snap.errors.extend(errors)
         snap.source = "fixture-fallback"
         return snap

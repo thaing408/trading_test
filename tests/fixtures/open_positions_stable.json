@@ -1,0 +1,21 @@
+{
+  "positions": [
+    {
+      "symbol": "NVDA",
+      "strategy": "Debit Call Spread",
+      "entry_price": 130.0,
+      "stop_loss": 125.0,
+      "profit_target": 140.0,
+      "strike_prices": [130.0, 135.0],
+      "expiration": "2026-08-15",
+      "quantity": 2,
+      "thesis": "Earnings momentum and sector strength",
+      "original_probability": 0.55,
+      "original_confidence": 68.0,
+      "allows_averaging_down": false,
+      "trailing_stop_pct": 2.0,
+      "max_risk_dollars": 400.0,
+      "pending_entry": false
+    }
+  ]
+}

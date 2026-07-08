@@ -1,0 +1,35 @@
+{
+  "market_regime": "bullish",
+  "prior_regime": "bullish",
+  "vix": 16.0,
+  "vix_change_pct": 0.3,
+  "breadth_advancers": 5,
+  "breadth_decliners": 3,
+  "breadth_ratio": 0.62,
+  "sector_leaders": ["XLK", "XLF"],
+  "sector_laggards": ["XLE"],
+  "breaking_news": [],
+  "economic_announcements": [],
+  "symbols": {
+    "NVDA": {
+      "price": 130.5,
+      "change_pct": 0.2,
+      "vwap": 130.2,
+      "volume": 8000000,
+      "relative_volume": 1.1,
+      "support": 128.0,
+      "resistance": 133.0,
+      "trend": "uptrend",
+      "momentum": "steady",
+      "iv": 40.0,
+      "iv_change_pct": 0.5,
+      "open_interest": 12000,
+      "oi_change_pct": 0.5,
+      "delta": 0.52,
+      "gamma": 0.018,
+      "theta": -0.06,
+      "vega": 0.14,
+      "options_flow_bias": "bullish"
+    }
+  }
+}
