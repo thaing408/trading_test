@@ -1,0 +1,40 @@
+{
+  "futures": {
+    "ES": {"symbol": "ES=F", "last": 5450.0, "change_pct": 0.45},
+    "NQ": {"symbol": "NQ=F", "last": 19800.0, "change_pct": 0.62},
+    "YM": {"symbol": "YM=F", "last": 39500.0, "change_pct": 0.30},
+    "RTY": {"symbol": "RTY=F", "last": 2150.0, "change_pct": -0.15}
+  },
+  "international": {
+    "FTSE": {"symbol": "^FTSE", "last": 8200.0, "change_pct": 0.20},
+    "DAX": {"symbol": "^GDAXI", "last": 18200.0, "change_pct": 0.35},
+    "NIKKEI": {"symbol": "^N225", "last": 39000.0, "change_pct": -0.10},
+    "HSI": {"symbol": "^HSI", "last": 17500.0, "change_pct": 0.05}
+  },
+  "bonds": {
+    "TLT": {"symbol": "TLT", "last": 92.5, "change_pct": -0.25},
+    "IEF": {"symbol": "IEF", "last": 95.0, "change_pct": -0.10},
+    "SHY": {"symbol": "SHY", "last": 82.0, "change_pct": 0.02}
+  },
+  "dollar_index": {
+    "DXY": {"symbol": "DX-Y.NYB", "last": 104.5, "change_pct": 0.15}
+  },
+  "vix": {
+    "VIX": {"symbol": "^VIX", "last": 16.5, "change_pct": -2.5}
+  },
+  "commodities": {
+    "GOLD": {"symbol": "GC=F", "last": 2350.0, "change_pct": 0.40},
+    "OIL": {"symbol": "CL=F", "last": 78.5, "change_pct": -0.30},
+    "SILVER": {"symbol": "SI=F", "last": 28.0, "change_pct": 0.55}
+  },
+  "crypto": {
+    "BTC": {"symbol": "BTC-USD", "last": 68000.0, "change_pct": 1.20},
+    "ETH": {"symbol": "ETH-USD", "last": 3500.0, "change_pct": 0.80}
+  },
+  "sector_rotation": {
+    "XLK": {"symbol": "XLK", "last": 220.0, "change_pct": 0.55},
+    "XLF": {"symbol": "XLF", "last": 42.0, "change_pct": 0.10},
+    "XLE": {"symbol": "XLE", "last": 88.0, "change_pct": -0.20},
+    "XLV": {"symbol": "XLV", "last": 145.0, "change_pct": 0.25}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"symbol": "NVDA", "headline": "NVDA beats earnings estimates, raises guidance", "source": "Reuters", "category": "earnings"},
+    {"symbol": "AAPL", "headline": "Analyst upgrade: AAPL price target raised to $250", "source": "Bloomberg", "category": "analyst"},
+    {"symbol": "MSFT", "headline": "MSFT wins $2B government cloud contract", "source": "WSJ", "category": "contract"},
+    {"symbol": "TSLA", "headline": "TSLA insider Form 4 filing: director purchase", "source": "SEC", "category": "insider"}
+  ]
+}

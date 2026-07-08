@@ -1,0 +1,7 @@
+{
+  "events": [
+    {"time": "08:30 ET", "event": "Initial Jobless Claims", "impact": "medium", "country": "US"},
+    {"time": "10:00 ET", "event": "Existing Home Sales", "impact": "low", "country": "US"},
+    {"time": "14:00 ET", "event": "Fed Speaker: Powell", "impact": "high", "country": "US"}
+  ]
+}
