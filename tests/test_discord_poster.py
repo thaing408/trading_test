@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from trading_agent.discord.formatter import DISCORD_CONTENT_LIMIT, chunk_message
-from trading_agent.discord.poster import post_to_discord
+from trading_agent.discord.config import DiscordConfig
+from trading_agent.discord.poster import post_message, post_to_discord, post_to_discord_channel
 from trading_agent.intraday.config import IntradayConfig
 from trading_agent.intraday.pipeline import run_intraday_pipeline
 from trading_agent.pipeline import run_pipeline
@@ -41,8 +42,8 @@ def test_post_to_discord_sends_pipeline_rendered_content():
         ok = True
         text = ""
 
-    def fake_poster(url: str, payload: dict) -> FakeResponse:
-        captured.append({"url": url, "payload": payload})
+    def fake_poster(url: str, payload: dict, headers: dict) -> FakeResponse:
+        captured.append({"url": url, "payload": payload, "headers": headers})
         return FakeResponse()
 
     results = post_to_discord(
@@ -56,3 +57,48 @@ def test_post_to_discord_sends_pipeline_rendered_content():
     body = captured[0]["payload"]["content"]
     assert any(term in body for term in ("STAY IN CASH", "Ranked plays", "NVDA", "AAPL", "TSLA"))
     assert any(term in body for term in ("Exit", "Hold", "Move Stop Loss", "Watchlist scout", "Position actions"))
+
+
+def test_post_to_discord_channel_uses_bot_token_payload():
+    captured: list[dict] = []
+
+    class FakeResponse:
+        status_code = 200
+        ok = True
+        text = ""
+
+    def fake_poster(url: str, payload: dict, headers: dict) -> FakeResponse:
+        captured.append({"url": url, "payload": payload, "headers": headers})
+        return FakeResponse()
+
+    results = post_to_discord_channel(
+        "**NVDA** — Watch",
+        "test-token",
+        "123456789",
+        poster=fake_poster,
+    )
+    assert results[0]["mode"] == "bot_channel"
+    assert captured[0]["url"].endswith("/channels/123456789/messages")
+    assert captured[0]["headers"]["Authorization"] == "Bot test-token"
+    assert "NVDA" in captured[0]["payload"]["content"]
+
+
+def test_post_message_prefers_webhook_over_bot_channel():
+    config = DiscordConfig(
+        webhook_url="https://discord.test/hook",
+        bot_token="tok",
+        channel_id="999",
+    )
+    captured: list[str] = []
+
+    class FakeResponse:
+        status_code = 204
+        ok = True
+        text = ""
+
+    def fake_poster(url: str, payload: dict, headers: dict) -> FakeResponse:
+        captured.append(url)
+        return FakeResponse()
+
+    post_message("AAPL — Hold", config, poster=fake_poster)
+    assert captured == ["https://discord.test/hook"]

@@ -14,7 +14,7 @@ from trading_agent.cio.config import CIOConfig
 from trading_agent.cio.pipeline import run_cio_pipeline
 from trading_agent.config import AgentConfig
 from trading_agent.discord.config import DiscordConfig
-from trading_agent.discord.poster import DiscordPostError, post_to_discord
+from trading_agent.discord.poster import DiscordPostError, post_message
 from trading_agent.intraday.config import IntradayConfig
 from trading_agent.intraday.pipeline import run_intraday_pipeline
 from trading_agent.pipeline import run_pipeline
@@ -71,7 +71,7 @@ def _deliver(
         _log(log, f"[dry-run] Discord post skipped for: {title}")
         return
     try:
-        results = post_to_discord(content, discord.webhook_url, username="Trading Agent")
+        results = post_message(content, discord, username="Trading Agent")
         posts.extend(results)
         _log(log, f"[discord] Posted {title} ({len(results)} chunk(s))")
     except DiscordPostError as exc:
