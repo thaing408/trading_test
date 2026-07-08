@@ -17,6 +17,8 @@ from trading_agent.performance.pipeline import run_performance_pipeline
 from trading_agent.performance.reporter import render_performance_report
 from trading_agent.pipeline import run_pipeline
 from trading_agent.reporter.plan import render_daily_plan
+from trading_agent.session.config import SessionConfig
+from trading_agent.session.orchestrator import run_session_cli
 
 
 def _run_premarket(args: argparse.Namespace) -> int:
@@ -81,6 +83,41 @@ def _run_performance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_session(args: argparse.Namespace) -> int:
+    from datetime import date as date_type
+
+    config = SessionConfig.from_env()
+    if args.fixture:
+        config.fixture_mode = True
+    if args.dry_run:
+        config.dry_run = True
+    if args.no_discord:
+        config.no_discord = True
+    if args.date:
+        config.trading_date = date_type.fromisoformat(args.date)
+    if args.interval:
+        config.intraday_interval_minutes = args.interval
+    if args.cycles:
+        config.intraday_cycles = args.cycles
+    if args.positions:
+        config.positions_file = args.positions
+    if args.session:
+        config.session_file = args.session
+    if args.plan:
+        config.plan_file = args.plan
+    if args.output:
+        config.log_file = args.output
+    if args.no_cio:
+        config.include_cio = False
+    if args.portfolio_value:
+        config.portfolio_value = args.portfolio_value
+
+    if config.fixture_mode or config.dry_run or config.no_discord:
+        config.wait_for_schedule = False
+
+    return run_session_cli(config)
+
+
 def _run_cio(args: argparse.Namespace) -> int:
     config = CIOConfig.from_env()
     if args.fixture:
@@ -123,6 +160,23 @@ def main(argv: list[str] | None = None) -> int:
     performance.add_argument("--history", metavar="FILE", help="Historical trades JSON")
     performance.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
 
+    session = subparsers.add_parser(
+        "session",
+        help="Run full trading day: pre-market scout + intraday cycles + Discord",
+    )
+    session.add_argument("--fixture", action="store_true", help="Use fixture data")
+    session.add_argument("--dry-run", action="store_true", help="Run pipelines without Discord posts")
+    session.add_argument("--no-discord", action="store_true", help="Skip Discord delivery")
+    session.add_argument("--date", metavar="YYYY-MM-DD", help="Trading session date (default: next session)")
+    session.add_argument("--interval", type=int, default=15, help="Intraday cycle interval in minutes")
+    session.add_argument("--cycles", type=int, default=1, help="Intraday cycles to run (fixture/dry-run)")
+    session.add_argument("--positions", metavar="FILE", help="Open positions JSON")
+    session.add_argument("--session", metavar="FILE", help="Intraday session fixture JSON")
+    session.add_argument("--plan", metavar="FILE", help="Existing plan context JSON (skip pre-market regeneration)")
+    session.add_argument("--no-cio", action="store_true", help="Skip CIO summary push")
+    session.add_argument("--portfolio-value", type=float, default=100_000, help="Portfolio value for CIO allocation")
+    session.add_argument("--output", "-o", metavar="FILE", help="Write session log to file")
+
     cio = subparsers.add_parser("cio", help="CIO final decision (Phase 4)")
     cio.add_argument("--fixture", action="store_true", help="Use fixture data")
     cio.add_argument("--inputs", metavar="FILE", help="CIO inputs JSON (phases 1-3 context)")
@@ -134,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command == "session":
+        return _run_session(args)
     if args.command == "intraday":
         return _run_intraday(args)
     if args.command == "performance":
