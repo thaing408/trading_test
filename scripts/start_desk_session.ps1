@@ -1,10 +1,19 @@
 # Start the full PST trading desk session (runs all day, posts to Discord).
-# Requires: python, trading_agent package, .env with DISCORD_CHANNEL_ID,
-# and DISCORD_TOKEN from C:\Personal\Scripts\researcher\.env
+# Auto-updates from GitHub, installs deps, then launches the 7-phase desk.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
+
+$logDir = Join-Path $env:USERPROFILE ".trading_agent\logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+
+function Write-Log($msg) {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$ts] $msg"
+    Write-Host $line
+    Add-Content -Path $script:StartupLog -Value $line -Encoding UTF8
+}
 
 $today = Get-Date
 if ($today.DayOfWeek -eq "Saturday" -or $today.DayOfWeek -eq "Sunday") {
@@ -13,10 +22,51 @@ if ($today.DayOfWeek -eq "Saturday" -or $today.DayOfWeek -eq "Sunday") {
 }
 
 $dateArg = $today.ToString("yyyy-MM-dd")
-$logDir = Join-Path $env:USERPROFILE ".trading_agent\logs"
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$logFile = Join-Path $logDir "desk_$dateArg.log"
+$script:StartupLog = Join-Path $logDir "desk_startup_$dateArg.log"
+$sessionLog = Join-Path $logDir "desk_$dateArg.log"
 
-Write-Host "Starting trading desk session for $dateArg ..."
-python -m trading_agent session --date $dateArg --output $logFile
-exit $LASTEXITCODE
+Write-Log "=== Trading desk startup ==="
+Write-Log "Repo: $RepoRoot"
+
+# Resolve Python (scheduled tasks may not have WindowsApps shim on PATH)
+$Python = $env:TRADING_AGENT_PYTHON
+if (-not $Python -or -not (Test-Path $Python)) {
+    $candidates = @(
+        "$env:LOCALAPPDATA\Python\bin\python.exe",
+        "$env:LOCALAPPDATA\Python\pythoncore-3.14-64\python.exe",
+        (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path $c)) { $Python = $c; break }
+    }
+}
+if (-not $Python) { throw "Python not found. Set TRADING_AGENT_PYTHON." }
+Write-Log "Python: $Python"
+
+# Auto-update from GitHub
+Write-Log "Pulling latest from origin/main ..."
+$pullOut = git pull origin main 2>&1
+Write-Log ($pullOut | Out-String).Trim()
+
+# Install / refresh package + dependencies after pull
+Write-Log "Installing package dependencies ..."
+& $Python -m pip install -e ".[dev]" -q 2>&1 | ForEach-Object { Write-Log $_ }
+
+# Load local .env into process (Discord channel id, etc.)
+$envFile = Join-Path $RepoRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^\s*([^#][^=]+)=(.*)$') {
+            $name = $matches[1].Trim()
+            $value = $matches[2].Trim()
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+    }
+    Write-Log "Loaded .env from $envFile"
+}
+
+Write-Log "Starting desk session for $dateArg (log: $sessionLog)"
+& $Python -m trading_agent session --date $dateArg --output $sessionLog
+$code = $LASTEXITCODE
+Write-Log "Desk session exited with code $code"
+exit $code
