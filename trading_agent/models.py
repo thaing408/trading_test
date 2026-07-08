@@ -85,6 +85,8 @@ class TechnicalAnalysis:
     ma_alignment: str
     volume_profile_bias: str
     score: float
+    timeframe_trends: Dict[str, str] = field(default_factory=dict)
+    timeframe_alignment: str = "mixed"
 
 
 @dataclass

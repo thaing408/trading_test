@@ -38,6 +38,7 @@ def _render_rejections(rejections: List[RejectedSetup]) -> str:
 
 
 def render_daily_plan(plan: DailyTradingPlan) -> str:
+    rs = plan.research_summary
     lines = [
         f"# Daily Trading Plan — {plan.date}",
         "",
@@ -47,10 +48,29 @@ def render_daily_plan(plan: DailyTradingPlan) -> str:
         "## Market Environment Score",
         f"**{plan.market_environment_score:.1f}** / 100",
         "",
-        "## Top Watchlist",
-        ", ".join(plan.top_watchlist) if plan.top_watchlist else "_None_",
-        "",
+        "## Overnight Global Markets",
     ]
+    overnight = rs.get("overnight_summary", {})
+    for key, val in overnight.items():
+        lines.append(f"- **{key.title()}:** {val}")
+    if rs.get("market_signals"):
+        lines.append(f"- **Key signals:** {'; '.join(rs['market_signals'][:4])}")
+    lines.extend(["", "## Economic Calendar Highlights", rs.get("calendar_summary", "N/A")])
+    for evt in rs.get("high_impact_events", []):
+        lines.append(f"- {evt}")
+    lines.extend(["", "## News & Catalysts"])
+    for headline in rs.get("news_highlights", []):
+        lines.append(f"- {headline}")
+    if rs.get("catalyst_symbols"):
+        lines.append(f"- **Catalyst watch:** {', '.join(rs['catalyst_symbols'])}")
+    lines.extend(
+        [
+            "",
+            "## Top Watchlist",
+            ", ".join(plan.top_watchlist) if plan.top_watchlist else "_None_",
+            "",
+        ]
+    )
 
     if plan.stay_in_cash:
         lines.extend(
@@ -75,12 +95,14 @@ def render_daily_plan(plan: DailyTradingPlan) -> str:
         [
             "",
             "## Research Summary",
-            f"- Market data source: {plan.research_summary.get('market_source', 'N/A')}",
-            f"- Calendar source: {plan.research_summary.get('calendar_source', 'N/A')}",
-            f"- News source: {plan.research_summary.get('news_source', 'N/A')}",
-            f"- Screener source: {plan.research_summary.get('screener_source', 'N/A')}",
-            f"- Candidates screened: {plan.research_summary.get('candidates_screened', 0)}",
-            f"- Qualified after risk filter: {plan.research_summary.get('qualified_count', 0)}",
+            f"- Market data source: {rs.get('market_source', 'N/A')}",
+            f"- Calendar source: {rs.get('calendar_source', 'N/A')}",
+            f"- News source: {rs.get('news_source', 'N/A')}",
+            f"- Screener source: {rs.get('screener_source', 'N/A')}",
+            f"- Candidates screened: {rs.get('candidates_screened', 0)}",
+            f"- Qualified after risk filter: {rs.get('qualified_count', 0)}",
+            f"- Calendar events reviewed: {rs.get('calendar_events', 0)}",
+            f"- News items synthesized: {rs.get('news_items', 0)}",
         ]
     )
 

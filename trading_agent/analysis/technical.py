@@ -167,6 +167,44 @@ def trend_label(closes: Sequence[float]) -> str:
     return "sideways"
 
 
+def resample_weekly(
+    closes: Sequence[float],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    volumes: Sequence[float],
+    bars_per_week: int = 5,
+) -> tuple[List[float], List[float], List[float], List[float]]:
+    """Aggregate daily bars into weekly OHLCV (testable without network)."""
+    w_close, w_high, w_low, w_vol = [], [], [], []
+    for i in range(0, len(closes), bars_per_week):
+        chunk_c = closes[i : i + bars_per_week]
+        chunk_h = highs[i : i + bars_per_week]
+        chunk_l = lows[i : i + bars_per_week]
+        chunk_v = volumes[i : i + bars_per_week]
+        if not chunk_c:
+            continue
+        w_close.append(float(chunk_c[-1]))
+        w_high.append(float(max(chunk_h)))
+        w_low.append(float(min(chunk_l)))
+        w_vol.append(float(sum(chunk_v)))
+    return w_close, w_high, w_low, w_vol
+
+
+def timeframe_alignment(trends: Dict[str, str]) -> str:
+    values = list(trends.values())
+    if not values:
+        return "mixed"
+    bullish = sum(1 for t in values if t == "uptrend")
+    bearish = sum(1 for t in values if t == "downtrend")
+    if bullish >= 2 and bearish == 0:
+        return "aligned_bullish"
+    if bearish >= 2 and bullish == 0:
+        return "aligned_bearish"
+    if bullish > 0 and bearish > 0:
+        return "conflicting"
+    return "mixed"
+
+
 def technical_score(ta: Dict[str, float | str]) -> float:
     score = 50.0
     if ta.get("trend") == "uptrend":
@@ -186,6 +224,13 @@ def technical_score(ta: Dict[str, float | str]) -> float:
         score += 7
     elif ta.get("ma_alignment") == "bearish":
         score -= 7
+    alignment = ta.get("timeframe_alignment", "mixed")
+    if alignment == "aligned_bullish":
+        score += 10
+    elif alignment == "aligned_bearish":
+        score -= 10
+    elif alignment == "conflicting":
+        score -= 5
     return max(0.0, min(100.0, score))
 
 
@@ -196,12 +241,28 @@ def compute_technical_analysis(
     lows: Sequence[float],
     volumes: Sequence[float],
     benchmark_closes: Sequence[float] | None = None,
+    intraday_closes: Sequence[float] | None = None,
+    intraday_highs: Sequence[float] | None = None,
+    intraday_lows: Sequence[float] | None = None,
+    intraday_volumes: Sequence[float] | None = None,
 ) -> TechnicalAnalysis:
     bench = benchmark_closes or closes
     sup, res = support_resistance(list(lows), list(highs))
+
+    w_close, w_high, w_low, w_vol = resample_weekly(closes, highs, lows, volumes)
+    timeframe_trends = {
+        "daily": trend_label(list(closes)),
+        "weekly": trend_label(w_close) if len(w_close) >= 10 else "sideways",
+    }
+    if intraday_closes and len(intraday_closes) >= 10:
+        timeframe_trends["intraday"] = trend_label(list(intraday_closes))
+
+    alignment = timeframe_alignment(timeframe_trends)
+    primary_trend = timeframe_trends.get("daily", "sideways")
+
     ta = TechnicalAnalysis(
         symbol=symbol,
-        trend=trend_label(list(closes)),
+        trend=primary_trend,
         rsi=round(rsi(list(closes)), 2),
         macd_signal=macd_signal(list(closes)),
         adx=adx(list(highs), list(lows), list(closes)),
@@ -210,10 +271,15 @@ def compute_technical_analysis(
         support=sup,
         resistance=res,
         relative_strength=relative_strength(list(closes), list(bench)),
-        vwap_relation=vwap_relation(list(closes), list(volumes)),
+        vwap_relation=vwap_relation(
+            list(intraday_closes or closes),
+            list(intraday_volumes or volumes),
+        ),
         ma_alignment=ma_alignment(list(closes)),
         volume_profile_bias=volume_profile_bias(list(volumes)),
         score=0.0,
+        timeframe_trends=timeframe_trends,
+        timeframe_alignment=alignment,
     )
     ta.score = technical_score(
         {
@@ -222,6 +288,7 @@ def compute_technical_analysis(
             "macd_signal": ta.macd_signal,
             "adx": ta.adx,
             "ma_alignment": ta.ma_alignment,
+            "timeframe_alignment": alignment,
         }
     )
     return ta

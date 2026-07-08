@@ -16,7 +16,6 @@ from trading_agent.collectors import (
 from trading_agent.config import AgentConfig
 from trading_agent.models import (
     DailyTradingPlan,
-    MarketSnapshot,
     OptionsMetrics,
     RejectedSetup,
     ScreenerCandidate,
@@ -25,66 +24,39 @@ from trading_agent.models import (
 )
 from trading_agent.ranking.ranker import build_opportunities
 from trading_agent.risk.manager import evaluate_risk
+from trading_agent.synthesis.market_context import build_watchlist, synthesize_market_context
 
 
-def _compute_market_bias(snapshot: MarketSnapshot) -> Tuple[str, float]:
-    score = 50.0
-    signals: List[str] = []
-
-    es = snapshot.futures.get("ES", {})
-    nq = snapshot.futures.get("NQ", {})
-    vix = snapshot.vix.get("VIX", {})
-
-    if es.get("change_pct", 0) > 0.3:
-        score += 8
-        signals.append("S&P futures positive overnight")
-    elif es.get("change_pct", 0) < -0.3:
-        score -= 8
-        signals.append("S&P futures negative overnight")
-
-    if nq.get("change_pct", 0) > 0.3:
-        score += 5
-    elif nq.get("change_pct", 0) < -0.3:
-        score -= 5
-
-    vix_level = vix.get("last", 20)
-    if vix_level and vix_level < 18:
-        score += 5
-        signals.append("VIX subdued — risk-on tone")
-    elif vix_level and vix_level > 25:
-        score -= 10
-        signals.append("Elevated VIX — caution warranted")
-
-    sectors = snapshot.sector_rotation
-    if sectors:
-        leaders = sorted(sectors.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
-        if leaders:
-            signals.append(f"Sector leader: {leaders[0][0]}")
-
-    if score >= 58:
-        bias = "Bullish — risk-on pre-market conditions favor selective long premium or bullish spreads"
-    elif score <= 42:
-        bias = "Bearish — defensive positioning favored; favor hedges or cash-secured strategies"
-    else:
-        bias = "Neutral — mixed overnight signals; favor defined-risk premium strategies"
-
-    if signals:
-        bias += f" ({'; '.join(signals[:3])})"
-
-    return bias, round(min(100.0, max(0.0, score)), 1)
-
-
-def _get_ohlcv(symbol: str) -> Dict[str, List[float]]:
-    if symbol == "__fixture__":
+def _get_ohlcv(
+    symbol: str,
+    config: AgentConfig,
+    interval: str = "1d",
+    period: str = "3mo",
+) -> Dict[str, List[float]]:
+    if config.fixture_mode:
         from trading_agent.collectors.base import load_fixture
 
-        data = load_fixture("ohlcv.json")
-        return data.get(symbol, data.get("SPY", {}))
+        data = load_fixture("ohlcv.json").get(symbol, {})
+        if interval == "1h":
+            hourly = data.get("hourly", {})
+            if hourly:
+                return {
+                    "close": hourly.get("close", []),
+                    "high": hourly.get("high", []),
+                    "low": hourly.get("low", []),
+                    "volume": hourly.get("volume", []),
+                }
+        return {
+            "close": data.get("close", []),
+            "high": data.get("high", []),
+            "low": data.get("low", []),
+            "volume": data.get("volume", []),
+        }
 
     import yfinance as yf
 
     ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="3mo", interval="1d")
+    hist = ticker.history(period=period, interval=interval)
     if hist.empty:
         return {"close": [], "high": [], "low": [], "volume": []}
     return {
@@ -108,14 +80,23 @@ def _analyze_candidate(
         highs = data.get("high", [])
         lows = data.get("low", [])
         volumes = data.get("volume", [])
+        hourly = data.get("hourly", {})
         iv_history = data.get("iv_history", [0.25, 0.28, 0.30, 0.27])
         iv = data.get("iv", 0.28)
+        intraday = {
+            "close": hourly.get("close", []),
+            "high": hourly.get("high", []),
+            "low": hourly.get("low", []),
+            "volume": hourly.get("volume", []),
+        }
     else:
-        ohlcv = _get_ohlcv(candidate.symbol)
-        closes = ohlcv["close"]
-        highs = ohlcv["high"]
-        lows = ohlcv["low"]
-        volumes = ohlcv["volume"]
+        daily = _get_ohlcv(candidate.symbol, config, interval="1d", period="3mo")
+        intraday_ohlcv = _get_ohlcv(candidate.symbol, config, interval="1h", period="5d")
+        closes = daily["close"]
+        highs = daily["high"]
+        lows = daily["low"]
+        volumes = daily["volume"]
+        intraday = intraday_ohlcv
         returns = [
             abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
             for i in range(1, len(closes))
@@ -125,10 +106,19 @@ def _analyze_candidate(
 
     bench = benchmark_closes
     if bench is None and not config.fixture_mode:
-        bench = _get_ohlcv("SPY")["close"]
+        bench = _get_ohlcv("SPY", config, interval="1d", period="3mo")["close"]
 
     technical = compute_technical_analysis(
-        candidate.symbol, closes, highs, lows, volumes, bench
+        candidate.symbol,
+        closes,
+        highs,
+        lows,
+        volumes,
+        bench,
+        intraday_closes=intraday.get("close"),
+        intraday_highs=intraday.get("high"),
+        intraday_lows=intraday.get("low"),
+        intraday_volumes=intraday.get("volume"),
     )
     strike = round(candidate.price * (1.02 if technical.trend == "uptrend" else 0.98), 2)
     options = compute_options_metrics(
@@ -153,7 +143,9 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
     symbols = [c.symbol for c in screener.candidates]
     news = collect_news_catalysts(config, symbols)
 
-    bias, env_score = _compute_market_bias(market)
+    context = synthesize_market_context(market, calendar, news)
+    bias = context.bias
+    env_score = context.environment_score
 
     bench_closes = None
     if config.fixture_mode:
@@ -171,7 +163,6 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
     low_confidence_rejected: List[RejectedSetup] = []
     opportunities: List[TradeOpportunity] = build_opportunities(qualified, config.risk)
 
-    qualified_symbols = {q[0].symbol for q in qualified}
     for candidate, technical, options in qualified:
         from trading_agent.ranking.ranker import compute_confidence_score
 
@@ -193,13 +184,10 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             f"({len(all_rejections)} rejected). Recommend staying in cash until higher-quality "
             "opportunities emerge."
         )
+        if context.high_impact_events:
+            cash_reason += f" High-impact calendar: {context.high_impact_events[0]}."
 
-    watchlist = sorted(
-        screener.candidates,
-        key=lambda c: c.relative_volume,
-        reverse=True,
-    )[:10]
-    top_watchlist = [c.symbol for c in watchlist]
+    top_watchlist = build_watchlist(screener.candidates, context)
 
     errors: List[str] = []
     errors.extend(market.errors)
@@ -216,6 +204,12 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "qualified_count": len(qualified),
         "calendar_events": len(calendar.events),
         "news_items": len(news.items),
+        "calendar_summary": context.calendar_summary,
+        "high_impact_events": context.high_impact_events,
+        "news_highlights": context.news_highlights,
+        "overnight_summary": context.overnight_summary,
+        "market_signals": context.signals,
+        "catalyst_symbols": list(context.catalyst_symbols.keys()),
         "errors": errors,
     }
 

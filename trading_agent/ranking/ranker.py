@@ -83,7 +83,9 @@ def build_opportunities(
     for rank, (confidence, candidate, technical, options, strategy) in enumerate(scored[:max_count], 1):
         params = _trade_params(candidate.price, strategy, options)
         expiry = (datetime.now() + timedelta(days=strategy.expiration_days)).strftime("%Y-%m-%d")
+        tf_summary = ", ".join(f"{k}={v}" for k, v in technical.timeframe_trends.items())
         reasons = [
+            f"Multi-timeframe: {tf_summary} (alignment: {technical.timeframe_alignment})",
             f"Technical trend: {technical.trend} with RSI {technical.rsi}",
             f"Options IV Rank {options.iv_rank}, liquidity {options.liquidity_score}",
             f"Strategy {strategy.name} matched to {strategy.bias} bias",

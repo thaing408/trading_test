@@ -7,6 +7,9 @@ from trading_agent.reporter.plan import render_daily_plan
 REQUIRED_SECTIONS = [
     "## Overall Market Bias",
     "## Market Environment Score",
+    "## Overnight Global Markets",
+    "## Economic Calendar Highlights",
+    "## News & Catalysts",
     "## Top Watchlist",
     "## Ranked Trade Opportunities",
     "## Rejected Lower-Quality Setups",
