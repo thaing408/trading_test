@@ -28,6 +28,7 @@ class SessionConfig:
     portfolio_value: float = 100_000.0
     log_file: str | None = None
     from_phase: DeskPhaseKind | None = None
+    until_phase: DeskPhaseKind | None = None
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -37,6 +38,8 @@ class SessionConfig:
         interval = int(os.getenv("TRADING_AGENT_INTRADAY_INTERVAL", "15"))
         cycles = int(os.getenv("TRADING_AGENT_INTRADAY_CYCLES", "1"))
         tz = os.getenv("TRADING_AGENT_TIMEZONE", "America/Los_Angeles")
+        until_raw = os.getenv("TRADING_AGENT_UNTIL_PHASE", "").strip()
+        until_phase = DeskPhaseKind(until_raw) if until_raw else None
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -48,4 +51,5 @@ class SessionConfig:
             session_file=os.getenv("TRADING_AGENT_SESSION_FILE"),
             plan_file=os.getenv("TRADING_AGENT_PLAN_FILE"),
             log_file=os.getenv("TRADING_AGENT_SESSION_LOG"),
+            until_phase=until_phase,
         )

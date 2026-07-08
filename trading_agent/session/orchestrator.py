@@ -151,6 +151,14 @@ def run_session(
         DeskPhaseKind.CIO_REVIEW,
     ]
     start_index = phase_order.index(start_kind)
+    end_index = (
+        phase_order.index(config.until_phase)
+        if config.until_phase is not None
+        else len(phase_order) - 1
+    )
+    phases_to_run = phase_order[start_index : end_index + 1]
+    if config.until_phase is not None:
+        _log(log, f"Phase scope: {start_kind.value} → {config.until_phase.value} ({len(phases_to_run)} phases)")
 
     _log(log, schedule_log)
 
@@ -163,7 +171,7 @@ def run_session(
     watch_symbols: list[str] = []
     intraday_flags: dict[str, str] = {}
 
-    for phase_kind in phase_order[start_index:]:
+    for phase_kind in phases_to_run:
         if phase_kind == DeskPhaseKind.INTELLIGENCE:
             phase = schedule.phases[0]
             _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)

@@ -65,8 +65,10 @@ if (Test-Path $envFile) {
     Write-Log "Loaded .env from $envFile"
 }
 
-Write-Log "Starting desk session for $dateArg (log: $sessionLog)"
-& $Python -m trading_agent session --date $dateArg --output $sessionLog
+# Phases 1-4 only (no brokerage / intraday execution): intelligence → research → CIO → pre-open
+$untilPhase = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE } else { "preopen" }
+Write-Log "Starting desk session for $dateArg (phases through: $untilPhase, log: $sessionLog)"
+& $Python -m trading_agent session --date $dateArg --until-phase $untilPhase --output $sessionLog
 $code = $LASTEXITCODE
 Write-Log "Desk session exited with code $code"
 exit $code

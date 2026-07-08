@@ -117,6 +117,8 @@ def _run_session(args: argparse.Namespace) -> int:
         config.timezone = args.timezone
     if args.from_phase:
         config.from_phase = DeskPhaseKind(args.from_phase)
+    if args.until_phase:
+        config.until_phase = DeskPhaseKind(args.until_phase)
 
     if config.fixture_mode or config.dry_run or config.no_discord:
         config.wait_for_schedule = False
@@ -183,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
         "--from-phase",
         choices=[p.value for p in DeskPhaseKind],
         help="Start at a specific desk phase (skip earlier phases)",
+    )
+    session.add_argument(
+        "--until-phase",
+        choices=[p.value for p in DeskPhaseKind],
+        help="Stop after this phase (e.g. preopen = first 4 phases only)",
     )
     session.add_argument("--interval", type=int, default=15, help="Intraday cycle interval in minutes")
     session.add_argument("--cycles", type=int, default=1, help="Intraday cycles to run (fixture/dry-run)")

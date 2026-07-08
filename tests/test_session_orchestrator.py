@@ -47,3 +47,24 @@ def test_fixture_session_contains_all_desk_phases(tmp_path):
 
 def test_live_session_default_has_no_positions():
     assert load_positions(None, fixture_mode=False) == []
+
+
+def test_until_preopen_runs_first_four_phases_only(tmp_path):
+    from trading_agent.session.schedule import DeskPhaseKind
+
+    config = SessionConfig(
+        fixture_mode=True,
+        dry_run=True,
+        trading_date=date(2026, 7, 9),
+        until_phase=DeskPhaseKind.PREOPEN,
+        wait_for_schedule=False,
+        session_dir=tmp_path,
+    )
+    result = run_session(config)
+    assert result.phase_messages.get("intelligence")
+    assert result.phase_messages.get("research")
+    assert result.phase_messages.get("cio_approval")
+    assert result.phase_messages.get("preopen")
+    assert "intraday_1" not in result.phase_messages
+    assert "performance" not in result.phase_messages
+    assert "cio_review" not in result.phase_messages
