@@ -1,21 +1,16 @@
-"""Persist pre-market plan context for intraday cycles."""
+"""Persist desk session artifacts between phases."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from trading_agent.models import DailyTradingPlan
-
-
-def infer_market_regime(bias: str) -> str:
-    lower = bias.lower()
-    if "bearish" in lower:
-        return "bearish"
-    if "bullish" in lower:
-        return "bullish"
-    return "neutral"
+from trading_agent.regime import infer_market_regime
+from trading_agent.session.intelligence import IntelligenceBrief
 
 
 def plan_to_context(plan: DailyTradingPlan) -> dict:
@@ -35,12 +30,19 @@ def plan_to_context(plan: DailyTradingPlan) -> dict:
                 "symbol": opp.symbol,
                 "strategy": opp.strategy,
                 "entry_price": opp.entry_price,
+                "strike_prices": opp.strike_prices,
+                "expiration": opp.expiration,
+                "profit_target": opp.profit_target,
+                "stop_loss": opp.stop_loss,
                 "confidence_score": opp.confidence_score,
                 "probability_of_success": opp.probability_of_success,
                 "maximum_risk": opp.maximum_risk,
                 "maximum_reward": opp.maximum_reward,
             }
             for opp in plan.ranked_opportunities
+        ],
+        "rejection_reasons": [
+            {"symbol": r.symbol, "reason": r.reason} for r in plan.rejection_reasons
         ],
     }
 
@@ -52,14 +54,61 @@ def default_session_dir(trading_date: date, base: Path | None = None) -> Path:
     return path
 
 
+def _write_json(path: Path, data: Any) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+    return path
+
+
 def save_plan_context(context: dict, directory: Path) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    out = directory / "daily_plan_context.json"
-    with out.open("w", encoding="utf-8") as handle:
-        json.dump(context, handle, indent=2)
-    return out
+    return _write_json(directory / "daily_plan_context.json", context)
 
 
 def load_saved_plan_context(path: Path) -> dict:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def save_intelligence(brief: IntelligenceBrief, directory: Path) -> Path:
+    payload = {
+        "date": brief.date,
+        "bias": brief.bias,
+        "environment_score": brief.environment_score,
+        "overnight_summary": brief.overnight_summary,
+        "market_signals": brief.market_signals,
+        "calendar_summary": brief.calendar_summary,
+        "high_impact_events": brief.high_impact_events,
+        "news_highlights": brief.news_highlights,
+        "catalyst_symbols": brief.catalyst_symbols,
+        "errors": brief.errors,
+        "metadata": brief.metadata,
+    }
+    return _write_json(directory / "intelligence.json", payload)
+
+
+def load_intelligence(directory: Path) -> dict:
+    path = directory / "intelligence.json"
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def save_cio_inputs(directory: Path, candidates: list, context: dict) -> Path:
+    return _write_json(
+        directory / "cio_inputs.json",
+        {"candidates": candidates, "context": context},
+    )
+
+
+def save_performance_report(report: Any, directory: Path) -> Path:
+    if is_dataclass(report):
+        payload = asdict(report)
+    elif isinstance(report, dict):
+        payload = report
+    else:
+        raise TypeError("report must be a dataclass or dict")
+    return _write_json(directory / "performance_report.json", payload)
+
+
+def save_intraday_flags(directory: Path, flags: dict[str, str]) -> Path:
+    return _write_json(directory / "intraday_flags.json", flags)

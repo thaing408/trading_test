@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
 from trading_agent.cio.models import PhaseContext, TradeCandidate
 from trading_agent.config import AgentConfig
 from trading_agent.intraday.config import IntradayConfig
+from trading_agent.models import DailyTradingPlan
 from trading_agent.performance.config import PerformanceConfig
+from trading_agent.regime import infer_market_regime
 
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
@@ -38,6 +40,147 @@ def load_from_fixture(path: str | None) -> Tuple[List[TradeCandidate], PhaseCont
     return candidates, context
 
 
+def _candidate_from_ranked(item: dict, rank: int) -> TradeCandidate:
+    return TradeCandidate(
+        symbol=item["symbol"],
+        direction="Bullish",
+        strategy=item.get("strategy", "Debit Call Spread"),
+        entry_price=float(item.get("entry_price", 0)),
+        strike_prices=item.get("strike_prices", []),
+        expiration=item.get("expiration", ""),
+        profit_target=float(item.get("profit_target", 0)),
+        stop_loss=float(item.get("stop_loss", 0)),
+        maximum_risk=float(item.get("maximum_risk", 100)),
+        maximum_reward=float(item.get("maximum_reward", 250)),
+        probability_of_success=float(item.get("probability_of_success", 0.5)),
+        confidence_score=float(item.get("confidence_score", 60)),
+        primary_catalyst="research pipeline",
+        catalyst_type="technical",
+        technical_summary="Phase 1 ranked opportunity",
+        technical_confirmations=["trend:uptrend", "research:passed", "risk:approved"],
+        options_summary="Liquidity screened in Phase 1",
+        open_interest=5000,
+        daily_options_volume=10000,
+        bid_ask_spread_pct=2.0,
+        iv_rank=35.0,
+        expected_move_pct=4.0,
+        probability_of_profit=float(item.get("probability_of_success", 0.5)),
+        liquidity_score=70.0,
+        sector="Unknown",
+        phase1_rank=rank,
+    )
+
+
+def build_cio_context_from_plan(plan: DailyTradingPlan, intraday_flags: dict | None = None) -> PhaseContext:
+    return PhaseContext(
+        overall_market_bias=plan.overall_market_bias,
+        market_environment_score=plan.market_environment_score,
+        market_regime=infer_market_regime(plan.overall_market_bias),
+        stay_in_cash=plan.stay_in_cash,
+        intraday_flags=intraday_flags or {},
+    )
+
+
+def build_cio_approval_inputs(
+    plan: DailyTradingPlan,
+    fixture_mode: bool,
+) -> Tuple[List[TradeCandidate], PhaseContext]:
+    context = build_cio_context_from_plan(plan)
+    if plan.ranked_opportunities:
+        candidates = []
+        for opp in plan.ranked_opportunities:
+            candidates.append(
+                TradeCandidate(
+                    symbol=opp.symbol,
+                    direction="Bullish",
+                    strategy=opp.strategy,
+                    entry_price=opp.entry_price,
+                    strike_prices=opp.strike_prices,
+                    expiration=opp.expiration,
+                    profit_target=opp.profit_target,
+                    stop_loss=opp.stop_loss,
+                    maximum_risk=opp.maximum_risk,
+                    maximum_reward=opp.maximum_reward,
+                    probability_of_success=opp.probability_of_success,
+                    confidence_score=opp.confidence_score,
+                    primary_catalyst=opp.supporting_reasons[0] if opp.supporting_reasons else "technical",
+                    catalyst_type="technical",
+                    technical_summary=f"Trend {opp.technical.trend}, RSI {opp.technical.rsi:.0f}",
+                    technical_confirmations=[
+                        f"trend:{opp.technical.trend}",
+                        f"macd:{opp.technical.macd_signal}",
+                        f"vwap:{opp.technical.vwap_relation}",
+                    ],
+                    options_summary=f"IV rank {opp.options.iv_rank:.0f}, liquidity {opp.options.liquidity_score:.0f}",
+                    open_interest=max(opp.options.liquidity_score * 100, 1000),
+                    daily_options_volume=5000,
+                    bid_ask_spread_pct=2.0,
+                    iv_rank=opp.options.iv_rank,
+                    expected_move_pct=opp.options.expected_move_pct,
+                    probability_of_profit=opp.options.probability_of_profit,
+                    liquidity_score=opp.options.liquidity_score,
+                    sector="Unknown",
+                    phase1_rank=opp.rank,
+                )
+            )
+        return candidates, context
+    if fixture_mode:
+        candidates, fixture_ctx = load_from_fixture(None)
+        context = PhaseContext(
+            overall_market_bias=plan.overall_market_bias,
+            market_environment_score=plan.market_environment_score,
+            market_regime=infer_market_regime(plan.overall_market_bias),
+            stay_in_cash=plan.stay_in_cash,
+            intraday_flags=fixture_ctx.intraday_flags,
+            strategy_refinement=fixture_ctx.strategy_refinement,
+            sector_refinement=fixture_ctx.sector_refinement,
+            weakest_strategies=fixture_ctx.weakest_strategies,
+            performance_notes=fixture_ctx.performance_notes,
+        )
+        return candidates, context
+    return [], context
+
+
+def load_from_session_dir(
+    session_dir: Path,
+    mode: Literal["approval", "review"] = "approval",
+) -> Tuple[List[TradeCandidate], PhaseContext]:
+    inputs_path = session_dir / "cio_inputs.json"
+    if not inputs_path.exists():
+        raise FileNotFoundError(f"Missing CIO inputs at {inputs_path}")
+
+    data = _load_json(inputs_path)
+    candidates = [TradeCandidate(**c) for c in data.get("candidates", [])]
+    ctx_data = dict(data.get("context", {}))
+
+    if mode == "review":
+        perf_path = session_dir / "performance_report.json"
+        if perf_path.exists():
+            perf = _load_json(perf_path)
+            refinement = perf.get("refinement", {})
+            patterns = perf.get("patterns", {})
+            ctx_data["strategy_refinement"] = refinement.get("strategy_adjustments", {})
+            ctx_data["sector_refinement"] = refinement.get("sector_adjustments", {})
+            ctx_data["weakest_strategies"] = patterns.get("weakest_strategies", [])
+            ctx_data["performance_notes"] = perf.get("lessons_learned", [])[:5]
+        flags_path = session_dir / "intraday_flags.json"
+        if flags_path.exists():
+            ctx_data["intraday_flags"] = _load_json(flags_path)
+
+    context = PhaseContext(
+        overall_market_bias=ctx_data.get("overall_market_bias", ""),
+        market_environment_score=ctx_data.get("market_environment_score", 50.0),
+        market_regime=ctx_data.get("market_regime", "neutral"),
+        stay_in_cash=ctx_data.get("stay_in_cash", False),
+        intraday_flags=ctx_data.get("intraday_flags", {}),
+        strategy_refinement=ctx_data.get("strategy_refinement", {}),
+        sector_refinement=ctx_data.get("sector_refinement", {}),
+        weakest_strategies=ctx_data.get("weakest_strategies", []),
+        performance_notes=ctx_data.get("performance_notes", []),
+    )
+    return candidates, context
+
+
 def load_from_pipelines() -> Tuple[List[TradeCandidate], PhaseContext]:
     """Synthesize CIO inputs by running Phase 1–3 pipelines in fixture mode."""
     from trading_agent.intraday.pipeline import run_intraday_pipeline
@@ -48,67 +191,29 @@ def load_from_pipelines() -> Tuple[List[TradeCandidate], PhaseContext]:
     intraday = run_intraday_pipeline(IntradayConfig(fixture_mode=True, use_live_data=False))
     performance = run_performance_pipeline(PerformanceConfig(fixture_mode=True))
 
-    candidates: List[TradeCandidate] = []
-    for opp in plan.ranked_opportunities:
-        candidates.append(
-            TradeCandidate(
-                symbol=opp.symbol,
-                direction="Bullish" if "Call" in opp.strategy or "bullish" in opp.strategy.lower() else "Neutral",
-                strategy=opp.strategy,
-                entry_price=opp.entry_price,
-                strike_prices=opp.strike_prices,
-                expiration=opp.expiration,
-                profit_target=opp.profit_target,
-                stop_loss=opp.stop_loss,
-                maximum_risk=opp.maximum_risk,
-                maximum_reward=opp.maximum_reward,
-                probability_of_success=opp.probability_of_success,
-                confidence_score=opp.confidence_score,
-                primary_catalyst="; ".join(opp.supporting_reasons[:1]) if opp.supporting_reasons else "technical",
-                catalyst_type="technical",
-                technical_summary=f"Trend {opp.technical.trend}, RSI {opp.technical.rsi}",
-                technical_confirmations=[
-                    f"trend:{opp.technical.trend}",
-                    f"macd:{opp.technical.macd_signal}",
-                    f"vwap:{opp.technical.vwap_relation}",
-                    f"ma:{opp.technical.ma_alignment}",
-                ],
-                options_summary=f"IV rank {opp.options.iv_rank}, liquidity {opp.options.liquidity_score}",
-                open_interest=1000,
-                daily_options_volume=5000,
-                bid_ask_spread_pct=2.0,
-                iv_rank=opp.options.iv_rank,
-                expected_move_pct=opp.options.expected_move_pct,
-                probability_of_profit=opp.options.probability_of_profit,
-                liquidity_score=opp.options.liquidity_score,
-                sector="Unknown",
-                phase1_rank=opp.rank,
-            )
-        )
-
+    candidates, context = build_cio_approval_inputs(plan, fixture_mode=True)
     intraday_flags = {r.symbol: r.action for r in intraday.recommendations}
-    context = PhaseContext(
-        overall_market_bias=plan.overall_market_bias,
-        market_environment_score=plan.market_environment_score,
-        market_regime=plan.research_summary.get("market_regime", "neutral")
-        if isinstance(plan.research_summary, dict)
-        else "neutral",
-        stay_in_cash=plan.stay_in_cash,
-        intraday_flags=intraday_flags,
-        strategy_refinement=performance.refinement.strategy_adjustments,
-        sector_refinement=performance.refinement.sector_adjustments,
-        weakest_strategies=performance.patterns.weakest_strategies,
-        performance_notes=performance.lessons_learned[:3],
-    )
+    context.intraday_flags = intraday_flags
+    context.strategy_refinement = performance.refinement.strategy_adjustments
+    context.sector_refinement = performance.refinement.sector_adjustments
+    context.weakest_strategies = performance.patterns.weakest_strategies
+    context.performance_notes = performance.lessons_learned[:3]
     return candidates, context
 
 
-def load_cio_inputs(fixture_mode: bool, inputs_file: str | None) -> Tuple[List[TradeCandidate], PhaseContext]:
+def load_cio_inputs(
+    fixture_mode: bool,
+    inputs_file: str | None,
+    session_dir: Path | None = None,
+    mode: Literal["approval", "review"] = "approval",
+) -> Tuple[List[TradeCandidate], PhaseContext]:
+    if session_dir and (session_dir / "cio_inputs.json").exists():
+        return load_from_session_dir(session_dir, mode=mode)
     if fixture_mode:
         return load_from_fixture(inputs_file)
     try:
         candidates, context = load_from_pipelines()
-        if candidates:
+        if candidates or context.stay_in_cash:
             return candidates, context
     except Exception:
         pass

@@ -16,8 +16,8 @@ from trading_agent.session.schedule import (
 
 
 def test_resolve_trading_date_next_weekday_after_close():
-    wednesday_close = datetime(2026, 7, 8, 17, 0, tzinfo=ET)
-    assert resolve_trading_date(now=wednesday_close) == date(2026, 7, 9)
+    wednesday_after_pt_close = datetime(2026, 7, 8, 17, 0, tzinfo=ET)
+    assert resolve_trading_date(now=wednesday_after_pt_close) == date(2026, 7, 9)
 
 
 def test_compute_session_schedule_for_tomorrow():

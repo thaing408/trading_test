@@ -11,6 +11,8 @@ class CIOConfig:
     fixture_mode: bool = False
     inputs_file: str | None = None
     output_file: str | None = None
+    session_dir: str | None = None
+    cio_mode: str = "approval"
     portfolio_value: float = 100_000.0
     min_risk_reward: float = 2.0
     min_probability: float = 0.50
@@ -33,6 +35,7 @@ class CIOConfig:
         return cls(
             fixture_mode=fixture,
             inputs_file=os.getenv("TRADING_AGENT_CIO_INPUTS"),
+            session_dir=os.getenv("TRADING_AGENT_SESSION_DIR"),
             output_file=os.getenv("TRADING_AGENT_OUTPUT"),
             portfolio_value=float(os.getenv("TRADING_AGENT_PORTFOLIO_VALUE", "100000")),
         )

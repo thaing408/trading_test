@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from trading_agent.cio.config import CIOConfig
 from trading_agent.cio.decisions import process_all_candidates
@@ -13,7 +14,13 @@ from trading_agent.cio.reporter import render_cio_report
 
 
 def run_cio_pipeline(config: CIOConfig) -> CIOReport:
-    candidates, context = load_cio_inputs(config.fixture_mode, config.inputs_file)
+    session_dir = Path(config.session_dir) if config.session_dir else None
+    candidates, context = load_cio_inputs(
+        config.fixture_mode,
+        config.inputs_file,
+        session_dir=session_dir,
+        mode=config.cio_mode,
+    )
 
     if context.stay_in_cash and context.market_environment_score < 50:
         return CIOReport(

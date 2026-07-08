@@ -19,6 +19,7 @@ from trading_agent.pipeline import run_pipeline
 from trading_agent.reporter.plan import render_daily_plan
 from trading_agent.session.config import SessionConfig
 from trading_agent.session.orchestrator import run_session_cli
+from trading_agent.session.schedule import DeskPhaseKind
 
 
 def _run_premarket(args: argparse.Namespace) -> int:
@@ -112,6 +113,11 @@ def _run_session(args: argparse.Namespace) -> int:
     if args.portfolio_value:
         config.portfolio_value = args.portfolio_value
 
+    if args.timezone:
+        config.timezone = args.timezone
+    if args.from_phase:
+        config.from_phase = DeskPhaseKind(args.from_phase)
+
     if config.fixture_mode or config.dry_run or config.no_discord:
         config.wait_for_schedule = False
 
@@ -162,12 +168,22 @@ def main(argv: list[str] | None = None) -> int:
 
     session = subparsers.add_parser(
         "session",
-        help="Run full trading day: pre-market scout + intraday cycles + Discord",
+        help="Run full PST trading desk day (7 phases) with Discord delivery",
     )
     session.add_argument("--fixture", action="store_true", help="Use fixture data")
     session.add_argument("--dry-run", action="store_true", help="Run pipelines without Discord posts")
     session.add_argument("--no-discord", action="store_true", help="Skip Discord delivery")
     session.add_argument("--date", metavar="YYYY-MM-DD", help="Trading session date (default: next session)")
+    session.add_argument(
+        "--timezone",
+        default="America/Los_Angeles",
+        help="Desk schedule timezone (default: America/Los_Angeles)",
+    )
+    session.add_argument(
+        "--from-phase",
+        choices=[p.value for p in DeskPhaseKind],
+        help="Start at a specific desk phase (skip earlier phases)",
+    )
     session.add_argument("--interval", type=int, default=15, help="Intraday cycle interval in minutes")
     session.add_argument("--cycles", type=int, default=1, help="Intraday cycles to run (fixture/dry-run)")
     session.add_argument("--positions", metavar="FILE", help="Open positions JSON")

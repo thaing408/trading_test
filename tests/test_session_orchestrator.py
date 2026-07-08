@@ -9,31 +9,41 @@ from trading_agent.session.config import SessionConfig
 from trading_agent.session.orchestrator import run_session
 
 
-def test_fixture_session_contains_premarket_and_intraday_plays():
+REQUIRED_TEAMS = [
+    "Market Intelligence Team",
+    "Trading Research Team",
+    "Chief Investment Officer (Final Approval)",
+    "Trading Desk (Pre-Open Check)",
+    "Trading Desk — cycle 1",
+    "Performance & Learning Team",
+    "Chief Investment Officer Daily Review",
+]
+
+
+def test_fixture_session_contains_all_desk_phases(tmp_path):
     config = SessionConfig(
         fixture_mode=True,
         dry_run=True,
         trading_date=date(2026, 7, 9),
         intraday_cycles=1,
         wait_for_schedule=False,
+        session_dir=tmp_path,
     )
     result = run_session(config)
 
-    assert result.premarket_message
-    assert "Bias:" in result.premarket_message
-    assert result.intraday_messages
-    intraday = result.intraday_messages[0]
-    assert "Intraday Update" in intraday
-    assert any(
-        term in intraday
-        for term in ("Exit", "Hold", "Move Stop Loss", "Watchlist scout", "Position actions")
-    )
-    assert any(sym in intraday for sym in ("NVDA", "AAPL", "TSLA"))
-    assert result.schedule_log
+    assert result.phase_messages.get("intelligence")
+    assert result.phase_messages.get("research")
+    assert result.phase_messages.get("cio_approval")
+    assert result.phase_messages.get("preopen")
+    assert result.phase_messages.get("intraday_1")
+    assert result.phase_messages.get("performance")
+    assert result.phase_messages.get("cio_review")
     assert "2026-07-09" in result.schedule_log
-    assert result.plan_context_path
+    assert (tmp_path / "intelligence.json").exists()
+    assert (tmp_path / "daily_plan_context.json").exists()
+    assert (tmp_path / "cio_inputs.json").exists()
+    assert (tmp_path / "performance_report.json").exists()
 
 
 def test_live_session_default_has_no_positions():
-    """Tomorrow's `session --date` without --positions must not load fixture book."""
     assert load_positions(None, fixture_mode=False) == []
