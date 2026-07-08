@@ -9,6 +9,9 @@ from trading_agent.config import AgentConfig
 from trading_agent.intraday.config import IntradayConfig
 from trading_agent.intraday.pipeline import run_intraday_pipeline
 from trading_agent.intraday.reporter import render_intraday_report
+from trading_agent.cio.config import CIOConfig
+from trading_agent.cio.pipeline import run_cio_pipeline
+from trading_agent.cio.reporter import render_cio_report
 from trading_agent.performance.config import PerformanceConfig
 from trading_agent.performance.pipeline import run_performance_pipeline
 from trading_agent.performance.reporter import render_performance_report
@@ -78,8 +81,28 @@ def _run_performance(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_cio(args: argparse.Namespace) -> int:
+    config = CIOConfig.from_env()
+    if args.fixture:
+        config.fixture_mode = True
+    if args.inputs:
+        config.inputs_file = args.inputs
+    if args.output:
+        config.output_file = args.output
+    if args.portfolio_value:
+        config.portfolio_value = args.portfolio_value
+
+    report = run_cio_pipeline(config)
+    text = render_cio_report(report)
+    print(text)
+    if config.output_file:
+        with open(config.output_file, "w", encoding="utf-8") as f:
+            f.write(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Trading Agent — Pre-Market, Intraday & Performance")
+    parser = argparse.ArgumentParser(description="Trading Agent — Full Desk (Phases 1–4)")
     subparsers = parser.add_subparsers(dest="command")
 
     premarket = subparsers.add_parser("premarket", help="Generate Daily Trading Plan (Phase 1)")
@@ -100,6 +123,12 @@ def main(argv: list[str] | None = None) -> int:
     performance.add_argument("--history", metavar="FILE", help="Historical trades JSON")
     performance.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
 
+    cio = subparsers.add_parser("cio", help="CIO final decision (Phase 4)")
+    cio.add_argument("--fixture", action="store_true", help="Use fixture data")
+    cio.add_argument("--inputs", metavar="FILE", help="CIO inputs JSON (phases 1-3 context)")
+    cio.add_argument("--portfolio-value", type=float, default=100_000, help="Portfolio value for allocation")
+    cio.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
+
     parser.add_argument("--fixture", action="store_true", help="(legacy) fixture mode for premarket")
     parser.add_argument("--output", "-o", metavar="FILE", help="(legacy) output file")
 
@@ -109,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_intraday(args)
     if args.command == "performance":
         return _run_performance(args)
+    if args.command == "cio":
+        return _run_cio(args)
     if args.command == "premarket":
         return _run_premarket(args)
 
