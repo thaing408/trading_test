@@ -1,5 +1,4 @@
-# Start the full PST trading desk session (runs all day, posts to Discord).
-# Auto-updates from GitHub, installs deps, then launches the 7-phase desk.
+# Start PST trading desk: git pull, install deps, run session (phases 1-4 by default).
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -17,7 +16,7 @@ function Write-Log($msg) {
 
 $today = Get-Date
 if ($today.DayOfWeek -eq "Saturday" -or $today.DayOfWeek -eq "Sunday") {
-    Write-Host "Weekend — desk session not started."
+    Write-Host "Weekend - desk session not started."
     exit 0
 }
 
@@ -28,7 +27,6 @@ $sessionLog = Join-Path $logDir "desk_$dateArg.log"
 Write-Log "=== Trading desk startup ==="
 Write-Log "Repo: $RepoRoot"
 
-# Resolve Python (scheduled tasks may not have WindowsApps shim on PATH)
 $Python = $env:TRADING_AGENT_PYTHON
 if (-not $Python -or -not (Test-Path $Python)) {
     $candidates = @(
@@ -40,19 +38,16 @@ if (-not $Python -or -not (Test-Path $Python)) {
         if ($c -and (Test-Path $c)) { $Python = $c; break }
     }
 }
-if (-not $Python) { throw "Python not found. Set TRADING_AGENT_PYTHON." }
+if (-not $Python) { throw "Python not found. Set TRADING_AGENT_PYTHON in .env" }
 Write-Log "Python: $Python"
 
-# Auto-update from GitHub
 Write-Log "Pulling latest from origin/main ..."
 $pullOut = git pull origin main 2>&1
 Write-Log ($pullOut | Out-String).Trim()
 
-# Install / refresh package + dependencies after pull
 Write-Log "Installing package dependencies ..."
 & $Python -m pip install -e ".[dev]" -q 2>&1 | ForEach-Object { Write-Log $_ }
 
-# Load local .env into process (Discord channel id, etc.)
 $envFile = Join-Path $RepoRoot ".env"
 if (Test-Path $envFile) {
     Get-Content $envFile | ForEach-Object {
@@ -65,9 +60,9 @@ if (Test-Path $envFile) {
     Write-Log "Loaded .env from $envFile"
 }
 
-# Phases 1-4 only (no brokerage / intraday execution): intelligence → research → CIO → pre-open
 $untilPhase = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE } else { "preopen" }
-Write-Log "Starting desk session for $dateArg (phases through: $untilPhase, log: $sessionLog)"
+Write-Log "Starting desk session for $dateArg (until-phase: $untilPhase)"
+Write-Log "Session log: $sessionLog"
 & $Python -m trading_agent session --date $dateArg --until-phase $untilPhase --output $sessionLog
 $code = $LASTEXITCODE
 Write-Log "Desk session exited with code $code"
