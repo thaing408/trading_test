@@ -167,7 +167,8 @@ def run_session(
         intraday_config.fixture_mode = config.fixture_mode
         intraday_config.use_live_data = not config.fixture_mode
         intraday_config.plan_file = str(plan_path)
-        intraday_config.positions_file = config.positions_file
+        # Live default: no --positions => empty book, watchlist scouting only.
+        intraday_config.positions_file = config.positions_file if config.positions_file else None
         intraday_config.session_file = config.session_file
         intraday_config.cycles = cycle_index
         intraday_config.watch_symbols = watch_symbols

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from trading_agent.intraday.plan_loader import load_positions
 from trading_agent.session.config import SessionConfig
 from trading_agent.session.orchestrator import run_session
 
@@ -31,3 +32,8 @@ def test_fixture_session_contains_premarket_and_intraday_plays():
     assert result.schedule_log
     assert "2026-07-09" in result.schedule_log
     assert result.plan_context_path
+
+
+def test_live_session_default_has_no_positions():
+    """Tomorrow's `session --date` without --positions must not load fixture book."""
+    assert load_positions(None, fixture_mode=False) == []

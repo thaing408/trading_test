@@ -12,17 +12,30 @@ FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
 
 def load_positions(path: str | None, fixture_mode: bool) -> List[OpenPosition]:
-    file_path = Path(path) if path else FIXTURE_DIR / "open_positions.json"
-    if fixture_mode and not path:
-        file_path = FIXTURE_DIR / "open_positions.json"
-    with file_path.open(encoding="utf-8") as f:
-        data = json.load(f)
-    return [OpenPosition(**p) for p in data.get("positions", [])]
+    if path:
+        with Path(path).open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        return [OpenPosition(**p) for p in data.get("positions", [])]
+    if fixture_mode:
+        with (FIXTURE_DIR / "open_positions.json").open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        return [OpenPosition(**p) for p in data.get("positions", [])]
+    return []
 
 
 def load_plan_context(path: str | None, fixture_mode: bool) -> dict:
-    file_path = Path(path) if path else FIXTURE_DIR / "daily_plan_context.json"
-    if fixture_mode and not path:
-        file_path = FIXTURE_DIR / "daily_plan_context.json"
-    with file_path.open(encoding="utf-8") as f:
-        return json.load(f)
+    if path:
+        with Path(path).open(encoding="utf-8") as handle:
+            return json.load(handle)
+    if fixture_mode:
+        with (FIXTURE_DIR / "daily_plan_context.json").open(encoding="utf-8") as handle:
+            return json.load(handle)
+    return {
+        "overall_market_bias": "Neutral",
+        "market_environment_score": 50.0,
+        "market_regime": "neutral",
+        "top_watchlist": [],
+        "news_highlights": [],
+        "high_impact_events": [],
+        "stay_in_cash": True,
+    }
