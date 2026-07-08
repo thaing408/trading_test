@@ -1,0 +1,15 @@
+{
+  "date": "2026-07-08",
+  "overall_market_bias": "Bullish — risk-on pre-market conditions",
+  "market_environment_score": 65.0,
+  "market_regime": "bullish",
+  "top_watchlist": ["AMD", "NVDA", "AAPL", "MSFT", "SPY"],
+  "news_highlights": [
+    "[TSLA] Analyst downgrade: TSLA price target cut on demand concerns",
+    "[NVDA] NVDA maintains leadership in AI segment"
+  ],
+  "high_impact_events": [
+    "14:00 ET: Fed Speaker"
+  ],
+  "stay_in_cash": false
+}

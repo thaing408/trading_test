@@ -1,0 +1,52 @@
+{
+  "positions": [
+    {
+      "symbol": "NVDA",
+      "strategy": "Debit Call Spread",
+      "entry_price": 130.0,
+      "stop_loss": 125.0,
+      "profit_target": 140.0,
+      "strike_prices": [130.0, 135.0],
+      "expiration": "2026-08-15",
+      "quantity": 2,
+      "thesis": "Earnings momentum and sector strength",
+      "original_probability": 0.55,
+      "original_confidence": 68.0,
+      "allows_averaging_down": false,
+      "trailing_stop_pct": 2.0,
+      "max_risk_dollars": 400.0
+    },
+    {
+      "symbol": "AAPL",
+      "strategy": "Long Call",
+      "entry_price": 225.0,
+      "stop_loss": 220.0,
+      "profit_target": 235.0,
+      "strike_prices": [230.0],
+      "expiration": "2026-08-15",
+      "quantity": 1,
+      "thesis": "Analyst upgrade and technical breakout",
+      "original_probability": 0.52,
+      "original_confidence": 62.0,
+      "allows_averaging_down": false,
+      "trailing_stop_pct": 2.0,
+      "max_risk_dollars": 350.0
+    },
+    {
+      "symbol": "TSLA",
+      "strategy": "Covered Call",
+      "entry_price": 250.0,
+      "stop_loss": 240.0,
+      "profit_target": 265.0,
+      "strike_prices": [260.0],
+      "expiration": "2026-08-15",
+      "quantity": 1,
+      "thesis": "Range-bound premium collection",
+      "original_probability": 0.48,
+      "original_confidence": 58.0,
+      "allows_averaging_down": false,
+      "trailing_stop_pct": 2.5,
+      "max_risk_dollars": 500.0
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "market_regime": "bearish",
+  "prior_regime": "bullish",
+  "vix": 22.5,
+  "vix_change_pct": 6.2,
+  "breadth_advancers": 2,
+  "breadth_decliners": 6,
+  "breadth_ratio": 0.25,
+  "sector_leaders": ["XLU", "XLP"],
+  "sector_laggards": ["XLK", "XLY", "XLF"],
+  "breaking_news": [
+    "[TSLA] Analyst downgrade: TSLA price target cut on demand concerns",
+    "[NVDA] NVDA maintains leadership in AI segment"
+  ],
+  "economic_announcements": [
+    "14:00 ET: Fed Speaker — hawkish tone expected"
+  ],
+  "symbols": {
+    "NVDA": {
+      "price": 132.5,
+      "change_pct": 0.8,
+      "vwap": 131.0,
+      "volume": 12000000,
+      "relative_volume": 1.4,
+      "support": 128.0,
+      "resistance": 135.0,
+      "trend": "uptrend",
+      "momentum": "steady",
+      "iv": 42.0,
+      "iv_change_pct": 1.2,
+      "open_interest": 15000,
+      "oi_change_pct": 3.5,
+      "delta": 0.55,
+      "gamma": 0.02,
+      "theta": -0.08,
+      "vega": 0.15,
+      "options_flow_bias": "bullish"
+    },
+    "AAPL": {
+      "price": 218.0,
+      "change_pct": -2.5,
+      "vwap": 222.0,
+      "volume": 8000000,
+      "relative_volume": 1.1,
+      "support": 215.0,
+      "resistance": 225.0,
+      "trend": "downtrend",
+      "momentum": "decelerating",
+      "iv": 28.0,
+      "iv_change_pct": 4.0,
+      "open_interest": 20000,
+      "oi_change_pct": -2.0,
+      "delta": 0.45,
+      "gamma": 0.015,
+      "theta": -0.06,
+      "vega": 0.12,
+      "options_flow_bias": "bearish"
+    },
+    "TSLA": {
+      "price": 248.0,
+      "change_pct": -1.2,
+      "vwap": 251.0,
+      "volume": 15000000,
+      "relative_volume": 1.6,
+      "support": 245.0,
+      "resistance": 255.0,
+      "trend": "downtrend",
+      "momentum": "decelerating",
+      "iv": 55.0,
+      "iv_change_pct": 6.5,
+      "open_interest": 12000,
+      "oi_change_pct": 8.0,
+      "delta": 0.4,
+      "gamma": 0.02,
+      "theta": -0.1,
+      "vega": 0.18,
+      "options_flow_bias": "bearish"
+    }
+  }
+}
