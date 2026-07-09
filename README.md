@@ -49,7 +49,9 @@ The agent posts to Discord via **bot channel** (preferred) or webhook.
 | 13:15 | Performance Review | `performance` |
 | 13:30 | CIO Daily Review | `cio_review` |
 
-**Current mode:** phases 1-4 only (`TRADING_AGENT_UNTIL_PHASE=preopen`) until brokerage is connected.
+**Windows default:** phases 1-4 only (`TRADING_AGENT_UNTIL_PHASE=preopen`) until brokerage is connected.
+
+**macOS Grok pipeline:** runs all **7 phases** with Schwab positions + Discord via `scripts/macos/`.
 
 ## Commands
 
@@ -69,6 +71,8 @@ python -m trading_agent performance --fixture
 
 ## Automation
 
+### Windows
+
 | Script | Purpose |
 |--------|---------|
 | `scripts/start_desk_session.ps1` | Git pull, install, run session |
@@ -78,9 +82,33 @@ python -m trading_agent performance --fixture
 
 **Scheduled task:** `TradingAgentDeskSession` — Mon-Fri 01:55 AM Pacific.
 
-Logs: `%USERPROFILE%\.trading_agent\logs\`
+### macOS (Grok + Schwab pipeline)
 
-Session artifacts: `%USERPROFILE%\.trading_agent\sessions\{date}\`
+```bash
+git clone https://github.com/thaing408/trading_agent.git ~/trading_agent
+cd ~/trading_agent
+/opt/homebrew/bin/python3.11 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+# Configure ~/.grok/discord.env (DISCORD_BOT_TOKEN) then:
+cp scripts/macos/trading-agent.env.example ~/.grok/trading-agent.env
+bash scripts/macos/install-trading-agent-launchd.sh
+
+# Verify (all 7 phases, no Discord)
+.venv/bin/python -m trading_agent session --fixture --dry-run --date 2026-07-09
+```
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/macos/trading-agent-desk.sh` | Git pull, install, Schwab positions, run session |
+| `scripts/macos/trading-agent-positions.sh` | Export Schwab MCP positions JSON |
+| `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` (weekdays 1:55 AM PT) |
+
+**Discord channels (macOS):** desk posts → `#daily-plays` (`1510184298442002502`); scalp bot and journal stay on separate Grok channels.
+
+Logs: `~/.trading_agent/logs/`
+
+Session artifacts: `~/.trading_agent/sessions/{date}/`
 
 ## Tests
 

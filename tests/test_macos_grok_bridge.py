@@ -6,9 +6,11 @@ import importlib.util
 import json
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 HOME = Path.home()
-SCRIPTS = HOME / ".grok" / "scripts"
-POSITIONS_PY = SCRIPTS / "trading-agent-positions.py"
+MACOS_SCRIPTS = REPO_ROOT / "scripts" / "macos"
+GROK_SCRIPTS = HOME / ".grok" / "scripts"
+POSITIONS_PY = MACOS_SCRIPTS / "trading-agent-positions.py"
 
 
 def _load_positions_module():
@@ -20,10 +22,10 @@ def _load_positions_module():
 
 
 def test_macos_desk_scripts_exist():
-    assert (SCRIPTS / "trading-agent-desk.sh").is_file()
-    assert (SCRIPTS / "trading-agent-positions.sh").is_file()
-    assert (HOME / ".grok" / "trading-agent.env").is_file()
-    assert (HOME / ".grok" / "launchd" / "com.grok.trading-agent-desk.plist").is_file()
+    assert (MACOS_SCRIPTS / "trading-agent-desk.sh").is_file()
+    assert (MACOS_SCRIPTS / "trading-agent-positions.sh").is_file()
+    assert (MACOS_SCRIPTS / "install-trading-agent-launchd.sh").is_file()
+    assert (MACOS_SCRIPTS / "com.grok.trading-agent-desk.plist").is_file()
 
 
 def test_schwab_positions_converter_option_and_equity():
@@ -60,10 +62,10 @@ def test_schwab_positions_converter_option_and_equity():
     assert qs["quantity"] == 500
 
 
-def test_trading_agent_env_has_no_preopen_cap():
+def test_trading_agent_env_example_has_no_preopen_cap():
     active = [
         line.strip()
-        for line in (HOME / ".grok" / "trading-agent.env").read_text().splitlines()
+        for line in (MACOS_SCRIPTS / "trading-agent.env.example").read_text().splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
     assert "TRADING_AGENT_UNTIL_PHASE=preopen" not in active
