@@ -76,8 +76,25 @@ if ($taskOk) {
     $startText = if (Test-Path $startScript) { Get-Content $startScript -Raw } else { "" }
     $safePull = ($startText -match "Invoke-LoggedCommand") -and ($startText -match "from-phase")
     Check "Startup script hardened" $safePull $(if ($safePull) { "git/pip non-fatal + from-phase set" } else { "update scripts/start_desk_session.ps1" })
+    $wakeOk = [bool]$task.Settings.WakeToRun
+    Check "Task WakeToRun" $wakeOk $(if ($wakeOk) { "enabled (will wake from sleep)" } else { "disabled - re-run register_desk_task.ps1" })
 }
-Check "Logged-in user" ([bool]$env:USERNAME) "Interactive logon as $env:USERNAME - stay signed in for 01:55 AM (StartWhenAvailable after login)"
+$wakeTask = Get-ScheduledTask -TaskName "TradingAgentDeskWake" -ErrorAction SilentlyContinue
+if ($wakeTask) {
+    $wi = Get-ScheduledTaskInfo -TaskName "TradingAgentDeskWake"
+    Check "Wake pulse task" ([bool]$wakeTask.Settings.WakeToRun) "01:50 AM next=$($wi.NextRunTime) WakeToRun=$($wakeTask.Settings.WakeToRun)"
+} else {
+    Check "Wake pulse task" $false "missing - re-run register_desk_task.ps1"
+}
+$rtcRaw = powercfg /query SCHEME_CURRENT SUB_SLEEP bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d 2>$null
+$rtcAc = $null
+foreach ($line in $rtcRaw) {
+    if ($line -match "Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)") {
+        $rtcAc = [Convert]::ToInt32($matches[1], 16)
+    }
+}
+Check "OS wake timers" ($rtcAc -eq 1) $(if ($rtcAc -eq 1) { "Enabled" } elseif ($rtcAc -eq 2) { "Important only - run enable_pc_wake.ps1" } else { "Disabled - run enable_pc_wake.ps1" })
+Check "Logged-in user" ([bool]$env:USERNAME) "Interactive logon as $env:USERNAME - stay signed in (Sleep/Hibernate OK; full Shutdown will not auto-power-on)"
 
 # Phase scope
 $until = $env:TRADING_AGENT_UNTIL_PHASE

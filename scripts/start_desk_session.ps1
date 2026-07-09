@@ -27,6 +27,31 @@ function Convert-ToLogText {
     return "$InputObject"
 }
 
+# Keep the machine awake for the full prep window (wait 02:00-06:25 + pipelines).
+function Enable-DeskAwake {
+    try {
+        Add-Type -Namespace TradingAgent -Name Native -ErrorAction SilentlyContinue -MemberDefinition @"
+[DllImport("kernel32.dll")]
+public static extern uint SetThreadExecutionState(uint esFlags);
+"@
+        # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        $flags = [uint32](0x80000000 -bor 0x00000001 -bor 0x00000040)
+        [void][TradingAgent.Native]::SetThreadExecutionState($flags)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Disable-DeskAwake {
+    try {
+        if ("TradingAgent.Native" -as [type]) {
+            # ES_CONTINUOUS only — clear previous request
+            [void][TradingAgent.Native]::SetThreadExecutionState([uint32]0x80000000)
+        }
+    } catch { }
+}
+
 function Import-DotEnv {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return $false }
@@ -122,6 +147,12 @@ try {
     Write-Log "Host: $env:COMPUTERNAME  User: $env:USERNAME"
     Write-Log "PWD:  $(Get-Location)"
 
+    if (Enable-DeskAwake) {
+        Write-Log "Sleep inhibited for desk session (SetThreadExecutionState)"
+    } else {
+        Write-Log "WARN: could not inhibit sleep; ensure wake timers remain enabled"
+    }
+
     # Load .env before resolving Python / phase scope
     $envFile = Join-Path $RepoRoot ".env"
     if (Import-DotEnv $envFile) {
@@ -203,4 +234,6 @@ try {
         Write-Log $_.ScriptStackTrace
     }
     exit 1
+} finally {
+    Disable-DeskAwake
 }
