@@ -38,7 +38,6 @@ Check "Git" $gitOk $(if ($gitOk) { (git remote get-url origin 2>$null) } else { 
 
 # .env
 $envFile = Join-Path $RepoRoot ".env"
-$envEx = Join-Path $RepoRoot ".env.example"
 $hasEnv = Test-Path $envFile
 Check ".env file" $hasEnv $(if ($hasEnv) { $envFile } else { "copy .env.example to .env" })
 
@@ -65,8 +64,20 @@ $taskOk = $null -ne $task
 Check "Scheduled task" $taskOk $(if ($taskOk) { "state=$($task.State)" } else { "run scripts/setup_desk_automation.ps1" })
 if ($taskOk) {
     $info = Get-ScheduledTaskInfo -TaskName "TradingAgentDeskSession"
-    Check "Next run" ($info.NextRunTime -gt (Get-Date)) " $($info.NextRunTime)"
+    Check "Next run" ($null -ne $info.NextRunTime) " $($info.NextRunTime)"
+    $last = $info.LastTaskResult
+    # 267011 = never run; 0 = success. Prior failures are informational once the script is hardened.
+    if ($info.LastRunTime -and $info.LastRunTime.Year -gt 2000) {
+        Check "Last task result" $true "exit=$last at $($info.LastRunTime) (historical; next run uses hardened script)"
+    } else {
+        Check "Last task result" $true "not run yet"
+    }
+    $startScript = Join-Path $RepoRoot "scripts\start_desk_session.ps1"
+    $startText = if (Test-Path $startScript) { Get-Content $startScript -Raw } else { "" }
+    $safePull = ($startText -match "Invoke-LoggedCommand") -and ($startText -match "from-phase")
+    Check "Startup script hardened" $safePull $(if ($safePull) { "git/pip non-fatal + from-phase set" } else { "update scripts/start_desk_session.ps1" })
 }
+Check "Logged-in user" ([bool]$env:USERNAME) "Interactive logon as $env:USERNAME - stay signed in for 01:55 AM (StartWhenAvailable after login)"
 
 # Phase scope
 $until = $env:TRADING_AGENT_UNTIL_PHASE
