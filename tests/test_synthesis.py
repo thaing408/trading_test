@@ -67,3 +67,44 @@ def test_pipeline_research_summary_includes_synthesis():
     assert rs.get("news_highlights")
     assert rs.get("overnight_summary")
     assert rs.get("market_signals")
+
+
+def test_live_unavailable_calendar_and_news_omitted_from_bias():
+    """Fixture-fallback / unavailable must never invent Jobless Claims or fake NVDA headlines."""
+    market = collect_market_snapshot(AgentConfig(fixture_mode=True))
+    cal = EconomicCalendar(
+        source="unavailable",
+        events=[CalendarEvent(time="08:30 ET", event="Initial Jobless Claims", impact="high")],
+        errors=["FMP_API_KEY not set"],
+    )
+    news = NewsCatalysts(
+        source="fixture-fallback",
+        items=[
+            NewsItem(
+                symbol="NVDA",
+                headline="NVDA beats earnings estimates, raises guidance",
+                source="fixture",
+                category="earnings",
+            )
+        ],
+    )
+    ctx = synthesize_market_context(market, cal, news)
+    assert "Jobless Claims" not in ctx.bias
+    assert "NVDA beats" not in ctx.bias
+    assert "calendar risk" not in ctx.bias.lower()
+    assert "active catalyst" not in ctx.bias.lower()
+    assert ctx.high_impact_events == []
+    assert ctx.news_highlights == []
+
+
+def test_live_collectors_do_not_fill_fixture_events():
+    cfg = AgentConfig(fixture_mode=False, use_live_data=True)
+    cal = collect_economic_calendar(cfg)
+    news = collect_news_catalysts(cfg, ["NVDA", "AAPL"])
+    # Without FMP / empty yfinance news: empty + unavailable (never fixture-fallback content)
+    if cal.source != "fmp":
+        assert cal.source == "unavailable"
+        assert cal.events == []
+    if news.source != "yfinance":
+        assert news.source == "unavailable"
+        assert news.items == []

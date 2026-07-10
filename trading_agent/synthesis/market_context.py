@@ -27,6 +27,15 @@ CATALYST_BOOST = {
     "sec_filing": 1.0,
 }
 
+# Live desk used to inject "fixture-fallback" Jobless Claims / fake NVDA headlines — never trust those.
+# Explicit source "fixture" is only for AgentConfig.fixture_mode offline tests.
+_UNTRUSTED_CATALYST_SOURCES = frozenset({"fixture-fallback", "unavailable", ""})
+
+
+def _is_real_catalyst_source(source: str) -> bool:
+    """True for live APIs (fmp, yfinance), fixture_mode, or unit-test sources — not silent fallbacks."""
+    return (source or "").strip().lower() not in _UNTRUSTED_CATALYST_SOURCES
+
 
 @dataclass
 class MarketContext:
@@ -153,6 +162,11 @@ def _apply_sectors(snapshot: MarketSnapshot, signals: List[str]) -> None:
 
 
 def _calendar_impact(calendar: EconomicCalendar) -> Tuple[float, List[str], str]:
+    """Score + high-impact list only for real calendar sources (not fixture fill)."""
+    if not _is_real_catalyst_source(calendar.source):
+        err = "; ".join(calendar.errors[:1]) if calendar.errors else "no live calendar"
+        return 0.0, [], f"Calendar unavailable — {err}"
+
     adjustment = 0.0
     high_impact: List[str] = []
     for event in calendar.events:
@@ -170,13 +184,16 @@ def _calendar_impact(calendar: EconomicCalendar) -> Tuple[float, List[str], str]
 
 
 def _news_synthesis(news: NewsCatalysts) -> Tuple[Dict[str, List[str]], List[str], float]:
+    """Catalysts only when source is live (or explicit test). Fixture headlines never enter bias."""
+    if not _is_real_catalyst_source(news.source):
+        return {}, [], 0.0
+
     catalyst_symbols: Dict[str, List[str]] = {}
     highlights: List[str] = []
     score_adj = 0.0
 
     for item in news.items:
         catalyst_symbols.setdefault(item.symbol, []).append(item.headline)
-        boost = CATALYST_BOOST.get(item.category, 0.5)
         if item.category in ("earnings", "analyst", "contract", "ma"):
             score_adj += 0.5
 
@@ -218,9 +235,10 @@ def synthesize_market_context(
     else:
         bias = "Neutral — mixed overnight signals; favor defined-risk premium strategies"
 
-    if high_impact:
+    # Only append calendar/catalyst when from real sources (never fixture Jobless Claims / fake NVDA print)
+    if high_impact and _is_real_catalyst_source(calendar.source):
         bias += f"; calendar risk: {high_impact[0]}"
-    if news_highlights:
+    if news_highlights and _is_real_catalyst_source(news.source):
         bias += f"; active catalyst: {news_highlights[0]}"
 
     if signals:

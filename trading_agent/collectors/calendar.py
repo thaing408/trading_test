@@ -43,6 +43,7 @@ def _fixture_calendar() -> EconomicCalendar:
 
 
 def collect_economic_calendar(config: AgentConfig) -> EconomicCalendar:
+    """Live mode never injects fixture events into bias/sentiment (empty if unavailable)."""
     if config.fixture_mode or not config.use_live_data:
         return _fixture_calendar()
 
@@ -51,19 +52,19 @@ def collect_economic_calendar(config: AgentConfig) -> EconomicCalendar:
     api_key = os.getenv("FMP_API_KEY", "")
     errors: List[str] = []
     if not api_key:
-        errors.append("FMP_API_KEY not set; using fixture calendar fallback")
-        cal = _fixture_calendar()
-        cal.errors.extend(errors)
-        cal.source = "fixture-fallback"
-        return cal
+        # Do not invent Jobless Claims / Powell from test fixtures for live desk.
+        return EconomicCalendar(
+            source="unavailable",
+            events=[],
+            errors=["FMP_API_KEY not set; calendar omitted from bias (no fixture fill)"],
+        )
 
     def fetch() -> List[CalendarEvent]:
         return _fetch_fmp_calendar(api_key)
 
     events = safe_fetch(fetch, [], errors)
     if not events:
-        cal = _fixture_calendar()
-        cal.errors.extend(errors)
-        cal.source = "fixture-fallback"
-        return cal
+        if not errors:
+            errors.append("No economic calendar events returned for today")
+        return EconomicCalendar(source="unavailable", events=[], errors=errors)
     return EconomicCalendar(source="fmp", events=events, errors=errors)

@@ -56,14 +56,14 @@ def _fixture_news() -> NewsCatalysts:
 
 
 def collect_news_catalysts(config: AgentConfig, symbols: List[str]) -> NewsCatalysts:
+    """Live mode never injects fixture headlines into bias (empty if none found)."""
     if config.fixture_mode or not config.use_live_data:
         return _fixture_news()
 
     errors: List[str] = []
     items = safe_fetch(lambda: _fetch_yfinance_news(symbols), [], errors)
     if not items:
-        news = _fixture_news()
-        news.errors.extend(errors)
-        news.source = "fixture-fallback"
-        return news
+        if not errors:
+            errors.append("No live news headlines; catalysts omitted from bias (no fixture fill)")
+        return NewsCatalysts(source="unavailable", items=[], errors=errors)
     return NewsCatalysts(source="yfinance", items=items, errors=errors)
