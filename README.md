@@ -6,7 +6,7 @@ Multi-phase options trading desk: market intelligence, research, CIO approval, a
 
 ## Quick start (new machine / new user)
 
-### Windows
+### Windows (this machine)
 
 ```powershell
 git clone https://github.com/thaing408/trading_agent.git
@@ -14,7 +14,7 @@ cd trading_agent
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-The installer prompts for everything needed (Discord bot/webhook **or** safe dry-run), installs the package, writes `.env`, verifies readiness, optionally registers weekday automation, and runs a fixture dry-run of prep phases.
+The Windows installer (`scripts\install.ps1`) prompts for everything needed (Discord bot/webhook **or** safe dry-run), installs the package, writes `.env`, verifies readiness, optionally registers weekday automation + wake timers, and runs a fixture dry-run of prep phases. Re-running reuses existing `.env` values as defaults.
 
 Non-interactive (CI / scripted):
 
@@ -22,30 +22,19 @@ Non-interactive (CI / scripted):
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -NonInteractive -DeliveryMode dry_run -SkipAutomation
 ```
 
-### macOS
-
-```bash
-git clone https://github.com/thaing408/trading_agent.git
-cd trading_agent
-bash scripts/install.sh
-```
-
-Non-interactive:
-
-```bash
-bash scripts/install.sh --non-interactive --delivery-mode dry_run --skip-automation
-```
-
-After install:
+After install (Windows):
 
 ```powershell
 # Safe prep session (no Discord posts if dry-run)
 python -m trading_agent session --fixture --dry-run --until-phase preopen
 
 # Readiness check
-powershell -ExecutionPolicy Bypass -File scripts\verify_environment.ps1   # Windows
-# or: python -m trading_agent.install_wizard validate-env --env-file .env
+powershell -ExecutionPolicy Bypass -File scripts\verify_environment.ps1
 ```
+
+### macOS
+
+macOS install / launchd / Schwab bridge scripts live under `scripts/install.sh` and `scripts/macos/` and are maintained on the Mac side. See those scripts or the macOS notes below after a Mac push.
 
 ## Discord setup
 

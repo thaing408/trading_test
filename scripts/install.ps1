@@ -90,6 +90,44 @@ function Resolve-InstallPython {
     return $null
 }
 
+function Import-ExistingEnvDefaults {
+    param([string]$Path)
+    $map = @{}
+    if (-not (Test-Path -LiteralPath $Path)) { return $map }
+    Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) { return }
+        $eq = $line.IndexOf('=')
+        if ($eq -lt 1) { return }
+        $name = $line.Substring(0, $eq).Trim()
+        $value = $line.Substring($eq + 1).Trim()
+        if ($value.Length -ge 2 -and (
+            ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'"))
+        )) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $map[$name] = $value
+        if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name, 'Process'))) {
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+    }
+    return $map
+}
+
+function Infer-DeliveryModeFromEnv {
+    param([hashtable]$Map)
+    $dry = $Map['TRADING_AGENT_DRY_RUN']
+    $noD = $Map['TRADING_AGENT_NO_DISCORD']
+    if (($dry -match '^(1|true|yes)$') -or ($noD -match '^(1|true|yes)$')) {
+        if ($noD -match '^(1|true|yes)$' -and -not ($dry -match '^(1|true|yes)$')) { return 'no_discord' }
+        return 'dry_run'
+    }
+    if ($Map['DISCORD_WEBHOOK_URL'] -and $Map['DISCORD_WEBHOOK_URL'].StartsWith('https://')) { return 'webhook' }
+    if ($Map['DISCORD_TOKEN']) { return 'bot' }
+    return ''
+}
+
 Write-Host '============================================'
 Write-Host ' Trading Agent - Windows Install Wizard'
 Write-Host " Repo: $RepoRoot"
@@ -104,6 +142,12 @@ if ($gitOk) {
     Write-WarnMsg 'git not on PATH (optional for install, needed for auto-update)'
 }
 
+$envPathEarly = Join-Path $RepoRoot '.env'
+$existingEnv = Import-ExistingEnvDefaults -Path $envPathEarly
+if ($existingEnv.Count -gt 0) {
+    Write-Ok "Loaded existing defaults from $envPathEarly"
+}
+
 $py = Resolve-InstallPython -Preferred $PythonPath
 if (-not $py) {
     Write-ErrMsg 'Python 3.10+ not found. Install from https://www.python.org/downloads/ and re-run.'
@@ -116,55 +160,71 @@ Write-Ok "$ver"
 # --- Collect answers ---
 Write-Step 'Collecting configuration'
 
+$inferredMode = Infer-DeliveryModeFromEnv -Map $existingEnv
+$defaultMode = if ($inferredMode) { $inferredMode } else { 'dry_run' }
+
 if (-not $DeliveryMode) {
     if ($NonInteractive) {
-        if ($env:DELIVERY_MODE) { $DeliveryMode = $env:DELIVERY_MODE } else { $DeliveryMode = 'dry_run' }
+        if ($env:DELIVERY_MODE) {
+            $DeliveryMode = $env:DELIVERY_MODE
+        } elseif ($inferredMode) {
+            $DeliveryMode = $inferredMode
+        } else {
+            $DeliveryMode = 'dry_run'
+        }
     } else {
         Write-Host 'Discord delivery options:'
         Write-Host '  1) dry_run     - run pipelines, never post (safest first install)'
         Write-Host '  2) no_discord  - same as dry_run opt-out'
         Write-Host '  3) bot         - DISCORD_TOKEN + DISCORD_CHANNEL_ID'
         Write-Host '  4) webhook     - DISCORD_WEBHOOK_URL'
-        $choice = Read-Default 'Choose delivery mode (dry_run/bot/webhook/no_discord)' 'dry_run'
+        $choice = Read-Default 'Choose delivery mode (dry_run/bot/webhook/no_discord)' $defaultMode
         $DeliveryMode = $choice.ToLower().Replace('-', '_')
     }
 }
 
 if ($DeliveryMode -eq 'bot') {
     if (-not $DiscordToken) {
-        if ($env:DISCORD_TOKEN) { $DiscordToken = $env:DISCORD_TOKEN } else { $DiscordToken = Read-Default 'DISCORD_TOKEN (bot token)' '' }
+        $seed = if ($env:DISCORD_TOKEN) { $env:DISCORD_TOKEN } elseif ($existingEnv['DISCORD_TOKEN']) { $existingEnv['DISCORD_TOKEN'] } else { '' }
+        if ($NonInteractive) { $DiscordToken = $seed } else { $DiscordToken = Read-Default 'DISCORD_TOKEN (bot token)' $seed }
     }
     if (-not $DiscordChannelId) {
-        if ($env:DISCORD_CHANNEL_ID) { $DiscordChannelId = $env:DISCORD_CHANNEL_ID } else { $DiscordChannelId = Read-Default 'DISCORD_CHANNEL_ID' '1510184298442002502' }
+        $seed = if ($env:DISCORD_CHANNEL_ID) { $env:DISCORD_CHANNEL_ID } elseif ($existingEnv['DISCORD_CHANNEL_ID']) { $existingEnv['DISCORD_CHANNEL_ID'] } else { '1510184298442002502' }
+        if ($NonInteractive) { $DiscordChannelId = $seed } else { $DiscordChannelId = Read-Default 'DISCORD_CHANNEL_ID' $seed }
     }
 } elseif ($DeliveryMode -eq 'webhook') {
     if (-not $DiscordWebhookUrl) {
-        if ($env:DISCORD_WEBHOOK_URL) { $DiscordWebhookUrl = $env:DISCORD_WEBHOOK_URL } else { $DiscordWebhookUrl = Read-Default 'DISCORD_WEBHOOK_URL' '' }
+        $seed = if ($env:DISCORD_WEBHOOK_URL) { $env:DISCORD_WEBHOOK_URL } elseif ($existingEnv['DISCORD_WEBHOOK_URL']) { $existingEnv['DISCORD_WEBHOOK_URL'] } else { '' }
+        if ($NonInteractive) { $DiscordWebhookUrl = $seed } else { $DiscordWebhookUrl = Read-Default 'DISCORD_WEBHOOK_URL' $seed }
     }
     if (-not $DiscordChannelId) {
-        if ($env:DISCORD_CHANNEL_ID) { $DiscordChannelId = $env:DISCORD_CHANNEL_ID } else { $DiscordChannelId = '1510184298442002502' }
+        $seed = if ($env:DISCORD_CHANNEL_ID) { $env:DISCORD_CHANNEL_ID } elseif ($existingEnv['DISCORD_CHANNEL_ID']) { $existingEnv['DISCORD_CHANNEL_ID'] } else { '1510184298442002502' }
+        $DiscordChannelId = $seed
     }
 } else {
     if (-not $DiscordChannelId) {
-        if ($env:DISCORD_CHANNEL_ID) { $DiscordChannelId = $env:DISCORD_CHANNEL_ID } else { $DiscordChannelId = '1510184298442002502' }
+        $seed = if ($env:DISCORD_CHANNEL_ID) { $env:DISCORD_CHANNEL_ID } elseif ($existingEnv['DISCORD_CHANNEL_ID']) { $existingEnv['DISCORD_CHANNEL_ID'] } else { '1510184298442002502' }
+        $DiscordChannelId = $seed
     }
 }
 
 if (-not $UntilPhase) {
+    $seedPhase = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE } elseif ($existingEnv['TRADING_AGENT_UNTIL_PHASE']) { $existingEnv['TRADING_AGENT_UNTIL_PHASE'] } else { 'preopen' }
     if ($NonInteractive) {
-        if ($env:TRADING_AGENT_UNTIL_PHASE) { $UntilPhase = $env:TRADING_AGENT_UNTIL_PHASE } else { $UntilPhase = 'preopen' }
+        $UntilPhase = $seedPhase
     } else {
         Write-Host 'Phase scope: preopen = prep phases 1-4 (recommended without brokerage).'
         Write-Host '             full    = all 7 phases when you are ready.'
-        $UntilPhase = Read-Default 'Until-phase (preopen/full/...)' 'preopen'
+        $UntilPhase = Read-Default 'Until-phase (preopen/full/...)' $seedPhase
     }
 }
 
 if ($PortfolioValue -le 0) {
+    $seedPv = if ($existingEnv['TRADING_AGENT_PORTFOLIO_VALUE']) { $existingEnv['TRADING_AGENT_PORTFOLIO_VALUE'] } else { '100000' }
     if ($NonInteractive) {
-        $PortfolioValue = 100000
+        try { $PortfolioValue = [double]$seedPv } catch { $PortfolioValue = 100000 }
     } else {
-        $rawPv = Read-Default 'Portfolio value USD for CIO sizing' '100000'
+        $rawPv = Read-Default 'Portfolio value USD for CIO sizing' $seedPv
         $PortfolioValue = [double]$rawPv
     }
 }
