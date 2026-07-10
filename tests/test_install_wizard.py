@@ -22,6 +22,20 @@ from trading_agent.install_wizard import (
 )
 
 
+def test_install_shell_scripts_use_unix_lf_line_endings():
+    """bash rejects CRLF ($'\\r': command not found). Keep install entrypoints LF-only."""
+    repo = Path(__file__).resolve().parents[1]
+    scripts = [
+        repo / "scripts" / "install.sh",
+        repo / "scripts" / "macos" / "install-trading-agent-launchd.sh",
+    ]
+    for path in scripts:
+        assert path.is_file(), f"missing {path}"
+        data = path.read_bytes()
+        assert b"\r" not in data, f"{path.name} must use LF line endings (found CR)"
+        assert data.startswith(b"#!/"), f"{path.name} missing shebang"
+
+
 def test_normalize_delivery_mode_aliases():
     assert normalize_delivery_mode("dry-run") == "dry_run"
     assert normalize_delivery_mode("token") == "bot"

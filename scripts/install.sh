@@ -115,7 +115,7 @@ read_yes_no() {
 }
 
 resolve_python() {
-  local c
+  local c resolved
   for c in "$PYTHON_PATH" \
            "${TRADING_AGENT_PYTHON:-}" \
            "$REPO_ROOT/.venv/bin/python" \
@@ -126,14 +126,19 @@ resolve_python() {
            "python3" \
            "python"; do
     [[ -z "$c" ]] && continue
+    resolved=""
     if [[ -x "$c" ]]; then
-      printf '%s\n' "$c"
-      return 0
+      resolved="$c"
+    elif command -v "$c" >/dev/null 2>&1; then
+      resolved="$(command -v "$c")"
     fi
-    if command -v "$c" >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
+    [[ -z "$resolved" ]] && continue
+    # Skip Windows Store python shim (breaks real installs under Git Bash)
+    case "$resolved" in
+      *WindowsApps*) continue ;;
+    esac
+    printf '%s\n' "$resolved"
+    return 0
   done
   return 1
 }

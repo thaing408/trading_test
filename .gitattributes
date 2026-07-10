@@ -1,0 +1,4 @@
+# Shell scripts must use LF so bash on macOS/Linux does not fail on $'\r'
+*.sh text eol=lf
+scripts/install.sh text eol=lf
+scripts/macos/** text eol=lf
