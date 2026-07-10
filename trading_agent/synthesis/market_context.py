@@ -27,6 +27,17 @@ CATALYST_BOOST = {
     "sec_filing": 1.0,
 }
 
+# Prefer institutional catalysts over generic ETF/market wrap headlines in bias text.
+_CATALYST_PRIORITY = {
+    "earnings": 0,
+    "analyst": 1,
+    "contract": 2,
+    "ma": 3,
+    "insider": 4,
+    "sec_filing": 5,
+    "general": 9,
+}
+
 # Live desk used to inject "fixture-fallback" Jobless Claims / fake NVDA headlines — never trust those.
 # Explicit source "fixture" is only for AgentConfig.fixture_mode offline tests.
 _UNTRUSTED_CATALYST_SOURCES = frozenset({"fixture-fallback", "unavailable", ""})
@@ -197,7 +208,11 @@ def _news_synthesis(news: NewsCatalysts) -> Tuple[Dict[str, List[str]], List[str
         if item.category in ("earnings", "analyst", "contract", "ma"):
             score_adj += 0.5
 
-    for item in news.items[:5]:
+    ranked = sorted(
+        news.items,
+        key=lambda item: (_CATALYST_PRIORITY.get(item.category, 8), item.symbol),
+    )
+    for item in ranked[:5]:
         highlights.append(f"[{item.symbol}] {item.headline} ({item.category})")
 
     return catalyst_symbols, highlights, min(score_adj, 5.0)
@@ -243,6 +258,22 @@ def synthesize_market_context(
 
     if signals:
         bias += f" ({'; '.join(signals[:4])})"
+
+    provenance: list[str] = []
+    if market.source == "yfinance":
+        provenance.append("sentiment: live yfinance")
+    elif market.source == "fixture":
+        provenance.append("sentiment: fixture")
+    if _is_real_catalyst_source(calendar.source):
+        provenance.append(f"calendar: {calendar.source}")
+    elif calendar.source == "unavailable":
+        provenance.append("calendar: omitted (no live feed)")
+    if _is_real_catalyst_source(news.source):
+        provenance.append(f"catalysts: {news.source}")
+    elif news.source == "unavailable":
+        provenance.append("catalysts: omitted (no live headlines)")
+    if provenance:
+        bias += f" [data: {', '.join(provenance)}]"
 
     overnight = {
         "futures": f"ES {market.futures.get('ES', {}).get('change_pct', 0):+.2f}%",

@@ -26,11 +26,23 @@ def format_intelligence_brief(brief: IntelligenceBrief) -> str:
         lines.append(f"- {evt}")
     if brief.news_highlights:
         lines.append("")
-        lines.append("**Catalysts:**")
+        lines.append("**Catalysts (live headlines):**")
         for item in brief.news_highlights[:5]:
             lines.append(f"- {item}")
+    else:
+        news_src = brief.metadata.get("news_source", "")
+        if news_src == "unavailable":
+            lines.append("")
+            lines.append("**Catalysts:** none — live news feed returned no verified headlines")
     if brief.catalyst_symbols:
         lines.append(f"**Watch:** {', '.join(brief.catalyst_symbols)}")
+    market_src = brief.metadata.get("market_source", "")
+    cal_src = brief.metadata.get("calendar_source", "")
+    if market_src or cal_src:
+        lines.append("")
+        lines.append(
+            f"_Sources: market={market_src or 'n/a'}, calendar={cal_src or 'n/a'}, news={brief.metadata.get('news_source', 'n/a')}_"
+        )
     return "\n".join(lines)
 
 

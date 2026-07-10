@@ -8,6 +8,7 @@ from typing import List
 import requests
 
 from trading_agent.config import AgentConfig
+from trading_agent.discord.env import load_project_env
 from trading_agent.models import CalendarEvent, EconomicCalendar
 
 from .base import load_fixture, safe_fetch
@@ -49,6 +50,7 @@ def collect_economic_calendar(config: AgentConfig) -> EconomicCalendar:
 
     import os
 
+    load_project_env()
     api_key = os.getenv("FMP_API_KEY", "")
     errors: List[str] = []
     if not api_key:
