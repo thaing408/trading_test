@@ -102,7 +102,7 @@ def test_live_collectors_do_not_fill_fixture_events():
     cal = collect_economic_calendar(cfg)
     news = collect_news_catalysts(cfg, ["NVDA", "AAPL"])
     # Without FMP / empty yfinance news: empty + unavailable (never fixture-fallback content)
-    if cal.source != "fmp":
+    if cal.source not in ("fmp", "fmp-earnings"):
         assert cal.source == "unavailable"
         assert cal.events == []
     if news.source != "yfinance":
