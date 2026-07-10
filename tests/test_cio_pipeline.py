@@ -8,6 +8,8 @@ REQUIRED_SECTIONS = [
     "## Daily Portfolio Summary",
     "## Governance Notes",
     "## Approved Trades",
+    "## Modified Trades",
+    "## Rejected Trades",
     "## Rejected / Delayed / Watchlist",
     "## Cross-Phase Context",
 ]
@@ -33,15 +35,23 @@ REQUIRED_APPROVED_FIELDS = [
     "Options Summary",
     "Key Risks",
     "Contingency Plan",
+    "Why should this trade work?",
+    "Why could this trade fail?",
+    "What event would invalidate this thesis?",
+    "Would a professional hedge fund approve this trade?",
+    "Reward-to-Risk",
+    "Capital Efficiency",
 ]
 
 REQUIRED_SUMMARY_FIELDS = [
     "Overall Market Bias",
     "Market Environment Score",
-    "Total Capital Recommended",
+    "Capital Allocation",
     "Cash Allocation",
     "Approved Trades",
+    "Modified Trades",
     "Portfolio Risk Rating",
+    "Overall Portfolio Risk",
 ]
 
 
@@ -56,7 +66,8 @@ def test_cio_report_structure():
     for field in REQUIRED_SUMMARY_FIELDS:
         assert field in text, f"Missing summary field {field}"
 
-    assert report.approved
+    book = report.approved + report.modified
+    assert book, "expected at least one approved or modified trade in fixture"
     for field in REQUIRED_APPROVED_FIELDS:
         assert field in text, f"Missing approved field {field}"
 
@@ -64,12 +75,15 @@ def test_cio_report_structure():
 def test_portfolio_allocation_and_diversification():
     config = CIOConfig(fixture_mode=True, portfolio_value=100_000)
     report = run_cio_pipeline(config)
-    total_pct = sum(t.position_size_pct for t in report.approved)
+    book = report.approved + report.modified
+    total_pct = sum(t.position_size_pct for t in book)
     assert total_pct <= 80.0
     assert report.portfolio.cash_allocation_pct >= 20.0
-    for t in report.approved:
+    for t in book:
         assert t.dollar_allocation > 0
         assert t.position_size_pct <= config.max_single_position_pct
+    assert report.portfolio.overall_portfolio_risk
+    assert report.portfolio.correlation_note
 
 
 def test_rejections_have_explanations():
@@ -79,3 +93,11 @@ def test_rejections_have_explanations():
     for r in report.rejected:
         assert r.decision in ("Reject", "Delay", "Watchlist Only")
         assert r.explanation
+
+
+def test_conviction_ranking_order():
+    config = CIOConfig(fixture_mode=True, portfolio_value=100_000)
+    report = run_cio_pipeline(config)
+    book = report.approved + report.modified
+    scores = [t.conviction_score for t in book]
+    assert scores == sorted(scores, reverse=True)

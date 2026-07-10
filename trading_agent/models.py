@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class MarketSnapshot:
+    """Overnight institutional market snapshot.
+
+    Optional groups (etfs, treasury_yields, breadth, unavailable) may be empty
+    when a live series cannot be fetched; callers must not invent values.
+    """
+
     source: str
     futures: Dict[str, Any] = field(default_factory=dict)
     international: Dict[str, Any] = field(default_factory=dict)
@@ -17,6 +23,12 @@ class MarketSnapshot:
     commodities: Dict[str, Any] = field(default_factory=dict)
     crypto: Dict[str, Any] = field(default_factory=dict)
     sector_rotation: Dict[str, Any] = field(default_factory=dict)
+    etfs: Dict[str, Any] = field(default_factory=dict)
+    treasury_yields: Dict[str, Any] = field(default_factory=dict)
+    # breadth keys map to {status, value?, note?} — status is "ok" or "unavailable"
+    breadth: Dict[str, Any] = field(default_factory=dict)
+    # Named series that could not be sourced (e.g. MOVE, CME FedWatch, TRIN)
+    unavailable: Dict[str, str] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
 
@@ -60,6 +72,10 @@ class ScreenerCandidate:
     open_interest: int
     bid_ask_spread_pct: float
     sector: str = ""
+    avg_daily_volume: int = 0
+    market_cap: float = 0.0  # 0 = unknown / not provided
+    institutional_score: float = 0.0
+    options_volume: int = 0
 
 
 @dataclass
@@ -87,6 +103,12 @@ class TechnicalAnalysis:
     score: float
     timeframe_trends: Dict[str, str] = field(default_factory=dict)
     timeframe_alignment: str = "mixed"
+    ema_9: float = 0.0
+    ema_20: float = 0.0
+    ema_50: float = 0.0
+    ema_200: float = 0.0
+    breakout_state: str = "none"  # breakout | breakdown | none
+    momentum: str = "neutral"  # bullish | bearish | neutral
 
 
 @dataclass
@@ -104,6 +126,10 @@ class OptionsMetrics:
     institutional_flow_bias: str
     liquidity_score: float
     probability_of_profit: float
+    probability_of_touch: float = 0.0
+    options_volume: int = 0
+    open_interest: int = 0
+    bid_ask_spread_pct: float = 0.0
 
 
 @dataclass
@@ -123,6 +149,10 @@ class TradeOpportunity:
     supporting_reasons: List[str]
     technical: TechnicalAnalysis
     options: OptionsMetrics
+    direction: str = "Neutral"
+    trade_thesis: str = ""
+    trade_quality_score: float = 0.0
+    risks: List[str] = field(default_factory=list)
 
 
 @dataclass

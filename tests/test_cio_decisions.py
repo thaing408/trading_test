@@ -32,6 +32,7 @@ def _candidate(**kw):
         "probability_of_profit": 0.58,
         "liquidity_score": 85.0,
         "sector": "Technology",
+        "correlation_group": "semiconductors",
     }
     defaults.update(kw)
     return TradeCandidate(**defaults)
@@ -48,10 +49,16 @@ def _context(**kw):
 
 
 def test_approves_strong_candidate():
-    decision, _, _, _, trade = decide_candidate(_candidate(), _context(), CIOConfig())
+    decision, _, scorecard, _, trade = decide_candidate(_candidate(), _context(), CIOConfig())
     assert decision.startswith("Approve")
     assert trade is not None
     assert trade.ticker == "NVDA"
+    assert trade.why_it_works
+    assert trade.why_it_fails
+    assert trade.thesis_invalidation
+    assert trade.hedge_fund_approve
+    assert trade.conviction_score > 0
+    assert scorecard.hedge_fund_standard is True or decision == "Approve with Modifications"
 
 
 def test_rejects_speculative_catalyst():
@@ -89,14 +96,40 @@ def test_watchlist_for_low_confidence():
         assert trade is None
 
 
+def test_stay_in_cash_rejects_new_risk():
+    decision, explanation, _, _, trade = decide_candidate(
+        _candidate(),
+        _context(stay_in_cash=True),
+        CIOConfig(),
+    )
+    assert decision == "Reject"
+    assert trade is None
+    assert "cash" in explanation.lower() or "preservation" in explanation.lower()
+
+
 def test_process_fixture_candidates():
     from trading_agent.cio.loader import load_from_fixture
 
     candidates, context = load_from_fixture(None)
-    approved, rejected = process_all_candidates(candidates, context, CIOConfig())
-    assert approved
+    approved, modified, rejected = process_all_candidates(candidates, context, CIOConfig())
+    book = approved + modified
+    assert book
     assert rejected
-    symbols_approved = {t.ticker for t in approved}
+    symbols_approved = {t.ticker for t in book}
     symbols_rejected = {r.ticker for r in rejected}
     assert "NVDA" in symbols_approved
     assert "TSLA" in symbols_rejected
+    # Ranked by conviction
+    if len(book) > 1:
+        assert book[0].conviction_score >= book[1].conviction_score
+
+
+def test_weak_environment_portfolio_cash():
+    approved, modified, rejected = process_all_candidates(
+        [_candidate()],
+        _context(market_environment_score=30.0),
+        CIOConfig(),
+    )
+    assert approved == []
+    assert modified == []
+    assert any(r.ticker == "PORTFOLIO" for r in rejected)

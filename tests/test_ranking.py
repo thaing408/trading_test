@@ -17,10 +17,14 @@ def _bundle(symbol, rel_vol=1.8, oi=10000):
         symbol=symbol,
         price=closes[-1],
         volume=5_000_000,
-        relative_volume=rel_vol,
+        relative_volume=max(rel_vol, 2.1),
         options_liquidity_score=80.0,
         open_interest=oi,
         bid_ask_spread_pct=1.0,
+        avg_daily_volume=4_000_000,
+        market_cap=50_000_000_000,
+        institutional_score=70.0,
+        options_volume=20_000,
     )
     options = compute_options_metrics(
         symbol=symbol,
@@ -64,3 +68,7 @@ def test_opportunity_has_required_trade_fields():
     assert opp.maximum_risk > 0
     assert opp.maximum_reward > 0
     assert opp.supporting_reasons
+    assert opp.direction
+    assert opp.trade_thesis
+    assert 0 <= opp.trade_quality_score <= 100
+    assert opp.risks

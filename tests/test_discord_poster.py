@@ -54,9 +54,24 @@ def test_post_to_discord_sends_pipeline_rendered_content():
 
     assert results[0]["status_code"] == 204
     assert captured
-    body = captured[0]["payload"]["content"]
-    assert any(term in body for term in ("STAY IN CASH", "Ranked plays", "NVDA", "AAPL", "TSLA"))
-    assert any(term in body for term in ("Exit", "Hold", "Move Stop Loss", "Watchlist scout", "Position actions"))
+    # Full payload may span multiple Discord chunks — assert across all posts
+    body = "\n".join(c["payload"]["content"] for c in captured)
+    assert any(
+        term in body
+        for term in (
+            "STAY IN CASH",
+            "Ranked plays",
+            "Top 5 trade candidates",
+            "Top 10 Watchlist",
+            "NVDA",
+            "AAPL",
+            "TSLA",
+        )
+    )
+    assert any(
+        term in body
+        for term in ("Exit", "Hold", "Move Stop Loss", "Watchlist scout", "Position actions")
+    )
 
 
 def test_post_to_discord_channel_uses_bot_token_payload():

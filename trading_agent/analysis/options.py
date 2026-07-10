@@ -60,6 +60,14 @@ def probability_of_profit(delta: float, strategy_bias: str) -> float:
     return round(min(0.75, max(0.40, 0.5 + base * 0.15)), 2)
 
 
+def probability_of_touch(delta: float, expected_move: float) -> float:
+    """Rough POT: higher when delta ATM and expected move large."""
+    atm_factor = 1.0 - abs(abs(delta) - 0.5) * 1.2
+    em_factor = min(1.0, max(0.2, expected_move / 10.0))
+    pot = 0.35 + 0.35 * max(0.0, atm_factor) + 0.25 * em_factor
+    return round(min(0.95, max(0.15, pot)), 2)
+
+
 def compute_options_metrics(
     symbol: str,
     price: float,
@@ -71,18 +79,23 @@ def compute_options_metrics(
     relative_volume: float,
     bid_ask_spread_pct: float,
     trend: str,
+    options_volume: int = 0,
 ) -> OptionsMetrics:
     delta, gamma, theta, vega = estimate_greeks(price, strike, iv, days_to_expiry)
-    unusual = relative_volume >= 1.5 and open_interest >= 500
+    unusual = relative_volume >= 2.0 and open_interest >= 1000
     flow_bias = "bullish" if trend == "uptrend" else "bearish" if trend == "downtrend" else "neutral"
     liquidity = min(100.0, max(0.0, 100 - bid_ask_spread_pct * 4 + open_interest / 100))
+    if options_volume:
+        liquidity = min(100.0, liquidity + min(10.0, options_volume / 500.0))
     pop = probability_of_profit(delta, flow_bias)
+    em = expected_move_pct(price, iv, days_to_expiry)
+    pot = probability_of_touch(delta, em)
     return OptionsMetrics(
         symbol=symbol,
         implied_volatility=round(iv, 2),
         iv_rank=iv_rank(iv, iv_history),
         iv_percentile=iv_percentile(iv, iv_history),
-        expected_move_pct=expected_move_pct(price, iv, days_to_expiry),
+        expected_move_pct=em,
         delta=delta,
         gamma=gamma,
         theta=theta,
@@ -91,4 +104,8 @@ def compute_options_metrics(
         institutional_flow_bias=flow_bias,
         liquidity_score=round(liquidity, 1),
         probability_of_profit=pop,
+        probability_of_touch=pot,
+        options_volume=options_volume,
+        open_interest=open_interest,
+        bid_ask_spread_pct=bid_ask_spread_pct,
     )

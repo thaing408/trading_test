@@ -72,6 +72,8 @@ def _analyze_candidate(
     config: AgentConfig,
     benchmark_closes: List[float] | None = None,
 ) -> Tuple[TechnicalAnalysis, OptionsMetrics]:
+    bars_30m: List[float] | None = None
+    bars_15m: List[float] | None = None
     if config.fixture_mode:
         from trading_agent.collectors.base import load_fixture
 
@@ -83,20 +85,35 @@ def _analyze_candidate(
         hourly = data.get("hourly", {})
         iv_history = data.get("iv_history", [0.25, 0.28, 0.30, 0.27])
         iv = data.get("iv", 0.28)
+        # Scale fixture IV if stored as fraction
+        if iv < 1.5:
+            iv = iv * 100
+            iv_history = [v * 100 if v < 1.5 else v for v in iv_history]
         intraday = {
             "close": hourly.get("close", []),
             "high": hourly.get("high", []),
             "low": hourly.get("low", []),
             "volume": hourly.get("volume", []),
         }
+        bars_30m = data.get("m30", {}).get("close")
+        bars_15m = data.get("m15", {}).get("close")
+        # Synthesize lower TFs from hourly when fixture omits them
+        if not bars_30m and intraday.get("close"):
+            bars_30m = list(intraday["close"])  # best-effort proxy
+        if not bars_15m and intraday.get("close"):
+            bars_15m = list(intraday["close"])
     else:
-        daily = _get_ohlcv(candidate.symbol, config, interval="1d", period="3mo")
-        intraday_ohlcv = _get_ohlcv(candidate.symbol, config, interval="1h", period="5d")
+        daily = _get_ohlcv(candidate.symbol, config, interval="1d", period="1y")
+        intraday_ohlcv = _get_ohlcv(candidate.symbol, config, interval="1h", period="10d")
+        m30 = _get_ohlcv(candidate.symbol, config, interval="30m", period="5d")
+        m15 = _get_ohlcv(candidate.symbol, config, interval="15m", period="5d")
         closes = daily["close"]
         highs = daily["high"]
         lows = daily["low"]
         volumes = daily["volume"]
         intraday = intraday_ohlcv
+        bars_30m = m30.get("close") or None
+        bars_15m = m15.get("close") or None
         returns = [
             abs((closes[i] - closes[i - 1]) / closes[i - 1]) * 100
             for i in range(1, len(closes))
@@ -106,7 +123,7 @@ def _analyze_candidate(
 
     bench = benchmark_closes
     if bench is None and not config.fixture_mode:
-        bench = _get_ohlcv("SPY", config, interval="1d", period="3mo")["close"]
+        bench = _get_ohlcv("SPY", config, interval="1d", period="1y")["close"]
 
     technical = compute_technical_analysis(
         candidate.symbol,
@@ -119,6 +136,8 @@ def _analyze_candidate(
         intraday_highs=intraday.get("high"),
         intraday_lows=intraday.get("low"),
         intraday_volumes=intraday.get("volume"),
+        bars_30m=bars_30m,
+        bars_15m=bars_15m,
     )
     strike = round(candidate.price * (1.02 if technical.trend == "uptrend" else 0.98), 2)
     options = compute_options_metrics(
@@ -132,6 +151,7 @@ def _analyze_candidate(
         relative_volume=candidate.relative_volume,
         bid_ask_spread_pct=candidate.bid_ask_spread_pct,
         trend=technical.trend,
+        options_volume=candidate.options_volume,
     )
     return technical, options
 
@@ -187,7 +207,11 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         if context.high_impact_events:
             cash_reason += f" High-impact calendar: {context.high_impact_events[0]}."
 
-    top_watchlist = build_watchlist(screener.candidates, context)
+    top_watchlist = build_watchlist(
+        screener.candidates,
+        context,
+        limit=config.risk.top_watchlist_size,
+    )
 
     errors: List[str] = []
     errors.extend(market.errors)
@@ -210,6 +234,8 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "overnight_summary": context.overnight_summary,
         "market_signals": context.signals,
         "catalyst_symbols": list(context.catalyst_symbols.keys()),
+        "top_candidates_cap": config.risk.top_candidates,
+        "top_watchlist_cap": config.risk.top_watchlist_size,
         "errors": errors,
     }
 

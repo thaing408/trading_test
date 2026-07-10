@@ -57,6 +57,8 @@ class PhaseContext:
     sector_refinement: Dict[str, float] = field(default_factory=dict)
     weakest_strategies: List[str] = field(default_factory=list)
     performance_notes: List[str] = field(default_factory=list)
+    # Optional sector strength map (e.g. XLK: +0.5) from MI when available
+    sector_strength: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -73,6 +75,16 @@ class EvaluationScorecard:
     risk_pass: bool
     risk_notes: str
     challenges: List[str] = field(default_factory=list)
+    # Expanded institutional challenge dimensions
+    sector_strength_pass: bool = True
+    sector_notes: str = ""
+    correlation_notes: str = ""
+    capital_efficiency: float = 0.0
+    capital_efficiency_notes: str = ""
+    estimated_trade_drawdown_pct: float = 0.0
+    hedge_fund_standard: bool = False
+    hedge_fund_notes: str = ""
+    conviction_score: float = 0.0
 
 
 @dataclass
@@ -103,6 +115,17 @@ class ApprovedTrade:
     decision_explanation: str
     sector: str = ""
     modifications: List[str] = field(default_factory=list)
+    # CIO institutional challenge answers
+    conviction_rank: int = 0
+    conviction_score: float = 0.0
+    why_it_works: str = ""
+    why_it_fails: str = ""
+    thesis_invalidation: str = ""
+    hedge_fund_approve: str = ""
+    reward_to_risk: float = 0.0
+    capital_efficiency: float = 0.0
+    estimated_drawdown_pct: float = 0.0
+    correlation_group: str = ""
 
 
 @dataclass
@@ -111,6 +134,9 @@ class RejectedDecision:
     decision: str
     explanation: str
     challenges: List[str]
+    why_it_fails: str = ""
+    thesis_invalidation: str = ""
+    hedge_fund_approve: str = "No"
 
 
 @dataclass
@@ -126,6 +152,14 @@ class PortfolioSummary:
     average_probability: float
     average_confidence: float
     portfolio_risk_rating: str
+    # Expanded allocation / risk
+    modified_count: int = 0
+    max_sector_concentration_pct: float = 0.0
+    max_strategy_concentration_pct: float = 0.0
+    estimated_portfolio_drawdown_pct: float = 0.0
+    capital_efficiency_score: float = 0.0
+    overall_portfolio_risk: str = "Low"
+    correlation_note: str = ""
 
 
 @dataclass
@@ -137,3 +171,4 @@ class CIOReport:
     portfolio: PortfolioSummary
     governance_notes: List[str]
     metadata: Dict[str, str] = field(default_factory=dict)
+    modified: List[ApprovedTrade] = field(default_factory=list)

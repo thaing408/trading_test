@@ -9,26 +9,41 @@ from typing import List
 
 @dataclass
 class RiskConfig:
+    """Institutional Trading Research floors (prompt minimums)."""
+
     max_risk_per_trade_pct: float = 2.0
     min_probability_of_success: float = 0.45
     min_confidence_score: float = 55.0
-    max_bid_ask_spread_pct: float = 5.0
-    min_open_interest: int = 100
-    min_volume: int = 50_000
-    min_relative_volume: float = 1.2
-    min_options_liquidity_score: float = 40.0
+    max_bid_ask_spread_pct: float = 3.0  # tight bid/ask
+    min_open_interest: int = 1_000
+    min_volume: int = 2_000_000  # session volume floor
+    min_avg_daily_volume: int = 2_000_000
+    min_relative_volume: float = 2.0
+    min_options_liquidity_score: float = 50.0
+    min_price: float = 20.0
+    min_market_cap: float = 2_000_000_000.0  # $2B
+    min_institutional_score: float = 40.0
+    min_technical_score: float = 40.0
+    top_watchlist_size: int = 10
+    top_candidates: int = 5
 
 
 @dataclass
 class ScreenerConfig:
     symbols: List[str] = field(
         default_factory=lambda: [
-            "SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "META",
-            "GOOGL", "TSLA", "AMD", "JPM", "XLE", "XLF", "GLD", "TLT",
+            "SPY", "QQQ", "IWM", "DIA", "AAPL", "MSFT", "NVDA", "AMZN", "META",
+            "GOOGL", "TSLA", "AMD", "JPM", "XLE", "XLF", "XLK", "SMH", "SOXX",
+            "XBI", "GLD", "TLT",
         ]
     )
-    min_price: float = 10.0
-    max_price: float = 500.0
+    min_price: float = 20.0
+    max_price: float = 10_000.0
+    min_avg_daily_volume: int = 2_000_000
+    min_relative_volume: float = 2.0
+    min_market_cap: float = 2_000_000_000.0
+    min_open_interest: int = 1_000
+    max_bid_ask_spread_pct: float = 3.0
 
 
 @dataclass

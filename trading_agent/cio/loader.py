@@ -40,10 +40,22 @@ def load_from_fixture(path: str | None) -> Tuple[List[TradeCandidate], PhaseCont
     return candidates, context
 
 
+_SECTOR_BY_SYMBOL = {
+    "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology",
+    "AMZN": "Consumer", "META": "Technology", "GOOGL": "Technology",
+    "TSLA": "Consumer", "AMD": "Technology", "JPM": "Financials",
+    "SPY": "Broad Market", "QQQ": "Technology", "IWM": "Small Cap",
+    "DIA": "Broad Market", "XLK": "Technology", "SMH": "Technology",
+    "SOXX": "Technology", "XBI": "Healthcare", "XLE": "Energy",
+    "XLF": "Financials", "GLD": "Commodities", "TLT": "Bonds",
+}
+
+
 def _candidate_from_ranked(item: dict, rank: int) -> TradeCandidate:
+    symbol = item["symbol"]
     return TradeCandidate(
-        symbol=item["symbol"],
-        direction="Bullish",
+        symbol=symbol,
+        direction=item.get("direction", "Bullish"),
         strategy=item.get("strategy", "Debit Call Spread"),
         entry_price=float(item.get("entry_price", 0)),
         strike_prices=item.get("strike_prices", []),
@@ -66,7 +78,8 @@ def _candidate_from_ranked(item: dict, rank: int) -> TradeCandidate:
         expected_move_pct=4.0,
         probability_of_profit=float(item.get("probability_of_success", 0.5)),
         liquidity_score=70.0,
-        sector="Unknown",
+        sector=_SECTOR_BY_SYMBOL.get(symbol, item.get("sector", "Unknown")),
+        correlation_group=_SECTOR_BY_SYMBOL.get(symbol, "General"),
         phase1_rank=rank,
     )
 
@@ -89,10 +102,23 @@ def build_cio_approval_inputs(
     if plan.ranked_opportunities:
         candidates = []
         for opp in plan.ranked_opportunities:
+            sector = _SECTOR_BY_SYMBOL.get(opp.symbol, "Unknown")
+            direction = getattr(opp, "direction", None) or (
+                "Bullish" if opp.technical.trend == "uptrend"
+                else "Bearish" if opp.technical.trend == "downtrend"
+                else "Neutral"
+            )
+            confirmations = [
+                f"trend:{opp.technical.trend}",
+                f"macd:{opp.technical.macd_signal}",
+                f"vwap:{opp.technical.vwap_relation}",
+                f"ma:{opp.technical.ma_alignment}",
+                f"momentum:{getattr(opp.technical, 'momentum', 'neutral')}",
+            ]
             candidates.append(
                 TradeCandidate(
                     symbol=opp.symbol,
-                    direction="Bullish",
+                    direction=direction,
                     strategy=opp.strategy,
                     entry_price=opp.entry_price,
                     strike_prices=opp.strike_prices,
@@ -104,22 +130,22 @@ def build_cio_approval_inputs(
                     probability_of_success=opp.probability_of_success,
                     confidence_score=opp.confidence_score,
                     primary_catalyst=opp.supporting_reasons[0] if opp.supporting_reasons else "technical",
-                    catalyst_type="technical",
-                    technical_summary=f"Trend {opp.technical.trend}, RSI {opp.technical.rsi:.0f}",
-                    technical_confirmations=[
-                        f"trend:{opp.technical.trend}",
-                        f"macd:{opp.technical.macd_signal}",
-                        f"vwap:{opp.technical.vwap_relation}",
-                    ],
+                    catalyst_type="technical_breakout" if "breakout" in (opp.technical.breakout_state or "") else "technical",
+                    technical_summary=(
+                        f"Trend {opp.technical.trend}, RSI {opp.technical.rsi:.0f}, "
+                        f"ADX {opp.technical.adx:.0f}, TF {opp.technical.timeframe_alignment}"
+                    ),
+                    technical_confirmations=confirmations,
                     options_summary=f"IV rank {opp.options.iv_rank:.0f}, liquidity {opp.options.liquidity_score:.0f}",
-                    open_interest=max(opp.options.liquidity_score * 100, 1000),
-                    daily_options_volume=5000,
-                    bid_ask_spread_pct=2.0,
+                    open_interest=max(int(opp.options.liquidity_score * 100), 1000),
+                    daily_options_volume=max(int(getattr(opp.options, "options_volume", 0) or 5000), 1000),
+                    bid_ask_spread_pct=float(getattr(opp.options, "bid_ask_spread_pct", 2.0) or 2.0),
                     iv_rank=opp.options.iv_rank,
                     expected_move_pct=opp.options.expected_move_pct,
                     probability_of_profit=opp.options.probability_of_profit,
                     liquidity_score=opp.options.liquidity_score,
-                    sector="Unknown",
+                    sector=sector,
+                    correlation_group=sector,
                     phase1_rank=opp.rank,
                 )
             )

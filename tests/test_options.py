@@ -35,12 +35,16 @@ def test_compute_options_metrics_fields():
         strike=102.0,
         days_to_expiry=30,
         open_interest=5000,
-        relative_volume=1.5,
+        relative_volume=2.2,
         bid_ask_spread_pct=1.0,
         trend="uptrend",
+        options_volume=8000,
     )
     assert metrics.symbol == "TEST"
     assert metrics.implied_volatility == 30.0
     assert 0 <= metrics.iv_rank <= 100
     assert metrics.unusual_activity is True
     assert metrics.probability_of_profit > 0
+    assert 0.15 <= metrics.probability_of_touch <= 0.95
+    assert metrics.options_volume == 8000
+    assert metrics.open_interest == 5000

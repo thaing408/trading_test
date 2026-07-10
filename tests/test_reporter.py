@@ -17,6 +17,9 @@ REQUIRED_SECTIONS = [
 ]
 
 REQUIRED_TRADE_FIELDS = [
+    "**Ticker:**",
+    "**Direction:**",
+    "**Trade Thesis:**",
     "**Entry Price:**",
     "**Strike Prices:**",
     "**Expiration:**",
@@ -26,6 +29,8 @@ REQUIRED_TRADE_FIELDS = [
     "**Maximum Reward:**",
     "**Probability of Success:**",
     "**Confidence Score:**",
+    "**Trade Quality Score:**",
+    "**Risks:**",
     "**Supporting Reasons:**",
 ]
 

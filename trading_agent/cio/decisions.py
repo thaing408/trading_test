@@ -1,4 +1,4 @@
-"""Final CIO decision engine."""
+"""Final CIO decision engine — challenge every assumption; capital preservation first."""
 
 from __future__ import annotations
 
@@ -34,6 +34,33 @@ def _intraday_veto(symbol: str, context: PhaseContext) -> str | None:
     return None
 
 
+def _why_it_works(candidate: TradeCandidate, scorecard: EvaluationScorecard, context: PhaseContext) -> str:
+    return (
+        f"Works if {context.market_regime} regime holds, catalyst ({candidate.primary_catalyst}) "
+        f"remains valid, technicals ({scorecard.technical_notes}) persist, and "
+        f"options liquidity stays adequate ({scorecard.options_notes}). "
+        f"R:R {scorecard.risk_reward_ratio:.1f}:1 with POP {candidate.probability_of_success:.0%} "
+        f"supports positive expectancy under sized risk."
+    )
+
+
+def _why_it_fails(candidate: TradeCandidate, scorecard: EvaluationScorecard) -> str:
+    fails = list(scorecard.challenges[:3]) if scorecard.challenges else []
+    fails.append("Adverse gap through stop / vol crush against long premium")
+    fails.append("Regime flip invalidating directional bias")
+    return "; ".join(fails[:4])
+
+
+def _thesis_invalidation(candidate: TradeCandidate, context: PhaseContext) -> str:
+    return (
+        f"Invalidate if: (1) price closes beyond stop ${candidate.stop_loss:.2f}; "
+        f"(2) catalyst reversed or proven false; "
+        f"(3) market regime shifts away from {candidate.direction.lower()} "
+        f"(env score collapse or opposite futures trend); "
+        f"(4) options liquidity deteriorates beyond CIO floors."
+    )
+
+
 def decide_candidate(
     candidate: TradeCandidate,
     context: PhaseContext,
@@ -46,6 +73,24 @@ def decide_candidate(
     veto = _intraday_veto(candidate.symbol, context)
     if veto:
         return "Reject", veto, scorecard, scorecard.challenges + [veto], None
+
+    # Elevated uncertainty: refuse new risk even if research proposed names
+    if context.stay_in_cash:
+        return (
+            "Reject",
+            "Capital preservation: research/phase stay-in-cash — no new deployment",
+            scorecard,
+            scorecard.challenges + ["Stay-in-cash mandate"],
+            None,
+        )
+    if context.market_environment_score < 42:
+        return (
+            "Reject",
+            f"Elevated uncertainty (environment {context.market_environment_score:.0f}) — remain in cash",
+            scorecard,
+            scorecard.challenges + ["Environment too weak for deployment"],
+            None,
+        )
 
     if not scorecard.catalyst_valid:
         return (
@@ -67,6 +112,15 @@ def decide_candidate(
             None,
         )
 
+    if not scorecard.sector_strength_pass:
+        return (
+            "Reject",
+            scorecard.sector_notes,
+            scorecard,
+            scorecard.challenges,
+            None,
+        )
+
     if not scorecard.technical_pass and not scorecard.options_pass:
         return (
             "Reject",
@@ -75,6 +129,8 @@ def decide_candidate(
             scorecard.challenges,
             None,
         )
+
+    decision = "Approve"
 
     if not scorecard.technical_pass:
         if scorecard.options_pass and scorecard.risk_pass and adj_conf >= config.min_confidence - 5:
@@ -124,13 +180,35 @@ def decide_candidate(
             scorecard.challenges,
             None,
         )
+    elif not scorecard.hedge_fund_standard:
+        # Soft path: only allow as modified if close; else reject
+        if scorecard.conviction_score >= config.min_confidence - 5 and scorecard.risk_pass:
+            modifications.append("Size cut 30% — fails full hedge-fund standard stack")
+            decision = "Approve with Modifications"
+        else:
+            return (
+                "Reject",
+                scorecard.hedge_fund_notes,
+                scorecard,
+                scorecard.challenges,
+                None,
+            )
     else:
         decision = "Approve"
         if modifications:
             decision = "Approve with Modifications"
 
+    if scorecard.capital_efficiency < 45 and decision.startswith("Approve"):
+        modifications.append("Reduce size 20% — capital efficiency below institutional bar")
+        decision = "Approve with Modifications"
+
     rr = scorecard.risk_reward_ratio
     size_mult = 0.75 if modifications else 1.0
+    why_works = _why_it_works(candidate, scorecard, context)
+    why_fails = _why_it_fails(candidate, scorecard)
+    invalidation = _thesis_invalidation(candidate, context)
+    hf = "Yes" if scorecard.hedge_fund_standard and decision == "Approve" else scorecard.hedge_fund_notes
+
     approved = ApprovedTrade(
         ticker=candidate.symbol,
         direction=candidate.direction,
@@ -144,7 +222,7 @@ def decide_candidate(
         maximum_reward=round(candidate.maximum_reward * size_mult, 2),
         profit_targets=[candidate.profit_target],
         stop_loss=candidate.stop_loss,
-        exit_criteria="Exit at profit target, stop loss, or thesis invalidation",
+        exit_criteria=invalidation,
         estimated_holding_period="2-5 sessions",
         probability_of_success=candidate.probability_of_success,
         confidence_score=adj_conf,
@@ -158,6 +236,15 @@ def decide_candidate(
         decision_explanation=_build_explanation(decision, scorecard, candidate, context),
         sector=candidate.sector,
         modifications=modifications,
+        conviction_score=scorecard.conviction_score,
+        why_it_works=why_works,
+        why_it_fails=why_fails,
+        thesis_invalidation=invalidation,
+        hedge_fund_approve=hf,
+        reward_to_risk=round(rr, 2),
+        capital_efficiency=scorecard.capital_efficiency,
+        estimated_drawdown_pct=scorecard.estimated_trade_drawdown_pct,
+        correlation_group=candidate.correlation_group or candidate.sector,
     )
     apply_risk_rating(approved, rr)
     return decision, approved.decision_explanation, scorecard, scorecard.challenges, approved
@@ -174,35 +261,59 @@ def _build_explanation(
         f"Market fit {scorecard.market_fit:.0f}/100 in {context.market_regime} regime",
         scorecard.catalyst_notes,
         scorecard.technical_notes,
+        scorecard.sector_notes,
         scorecard.risk_notes,
+        scorecard.capital_efficiency_notes,
+        f"Conviction {scorecard.conviction_score:.0f}",
+        scorecard.hedge_fund_notes,
     ]
-    return "; ".join(parts)
+    return "; ".join(p for p in parts if p)
 
 
 def process_all_candidates(
     candidates: List[TradeCandidate],
     context: PhaseContext,
     config: CIOConfig,
-) -> Tuple[List[ApprovedTrade], List[RejectedDecision]]:
+) -> Tuple[List[ApprovedTrade], List[ApprovedTrade], List[RejectedDecision]]:
+    """Return (approved, modified, rejected) ranked by conviction within each bucket."""
     if context.stay_in_cash and not candidates:
-        return [], [
+        return [], [], [
             RejectedDecision(
                 ticker="PORTFOLIO",
                 decision="Reject",
                 explanation="Phase 1 recommends stay in cash — no capital deployment",
                 challenges=["Unfavorable market conditions"],
+                why_it_fails="Stay-in-cash mandate from research",
+                thesis_invalidation="N/A — no trade",
+                hedge_fund_approve="No — capital preservation",
+            )
+        ]
+
+    if context.market_environment_score < 42:
+        return [], [], [
+            RejectedDecision(
+                ticker="PORTFOLIO",
+                decision="Reject",
+                explanation="Elevated uncertainty — CIO mandates cash",
+                challenges=[f"Environment score {context.market_environment_score}"],
+                why_it_fails="Macro/regime uncertainty too high",
+                thesis_invalidation="Remain flat until environment improves",
+                hedge_fund_approve="No",
             )
         ]
 
     approved: list[ApprovedTrade] = []
+    modified: list[ApprovedTrade] = []
     rejected: list[RejectedDecision] = []
 
     for candidate in candidates:
         decision, explanation, scorecard, challenges, trade = decide_candidate(
             candidate, context, config
         )
-        if trade and decision.startswith("Approve"):
+        if trade and decision == "Approve":
             approved.append(trade)
+        elif trade and decision == "Approve with Modifications":
+            modified.append(trade)
         else:
             rejected.append(
                 RejectedDecision(
@@ -210,7 +321,18 @@ def process_all_candidates(
                     decision=decision,
                     explanation=explanation,
                     challenges=challenges,
+                    why_it_fails=_why_it_fails(candidate, scorecard),
+                    thesis_invalidation=_thesis_invalidation(candidate, context),
+                    hedge_fund_approve="No",
                 )
             )
 
-    return approved, rejected
+    # Rank by conviction (highest first)
+    approved.sort(key=lambda t: t.conviction_score, reverse=True)
+    modified.sort(key=lambda t: t.conviction_score, reverse=True)
+    for i, t in enumerate(approved, 1):
+        t.conviction_rank = i
+    for i, t in enumerate(modified, 1):
+        t.conviction_rank = i
+
+    return approved, modified, rejected

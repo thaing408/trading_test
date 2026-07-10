@@ -11,11 +11,15 @@ def _make_candidate(**overrides):
     defaults = {
         "symbol": "TEST",
         "price": 100.0,
-        "volume": 100_000,
-        "relative_volume": 1.5,
+        "volume": 5_000_000,
+        "relative_volume": 2.2,
         "options_liquidity_score": 70.0,
         "open_interest": 5000,
         "bid_ask_spread_pct": 1.0,
+        "avg_daily_volume": 4_000_000,
+        "market_cap": 50_000_000_000,
+        "institutional_score": 65.0,
+        "options_volume": 10_000,
     }
     defaults.update(overrides)
     return ScreenerCandidate(**defaults)
@@ -54,13 +58,36 @@ def test_passes_risk_checks_valid_setup():
 
 def test_rejects_low_volume():
     result = passes_risk_checks(
-        _make_candidate(volume=1000),
+        _make_candidate(volume=1000, avg_daily_volume=1000),
         _make_analysis(),
         _make_options(),
         RiskConfig(),
     )
     assert result.passed is False
-    assert any("Volume" in r for r in result.reasons)
+    assert any("volume" in r.lower() or "Volume" in r for r in result.reasons)
+
+
+def test_rejects_low_relative_volume_and_price():
+    result = passes_risk_checks(
+        _make_candidate(relative_volume=1.0, price=15.0),
+        _make_analysis(),
+        _make_options(),
+        RiskConfig(),
+    )
+    assert result.passed is False
+    assert any("Relative volume" in r for r in result.reasons)
+    assert any("Price" in r for r in result.reasons)
+
+
+def test_rejects_unknown_market_cap():
+    result = passes_risk_checks(
+        _make_candidate(market_cap=0),
+        _make_analysis(),
+        _make_options(),
+        RiskConfig(),
+    )
+    assert result.passed is False
+    assert any("Market cap" in r for r in result.reasons)
 
 
 def test_rejects_wide_spread():
@@ -76,7 +103,11 @@ def test_rejects_wide_spread():
 
 def test_evaluate_risk_splits_qualified_and_rejected():
     good = (_make_candidate(symbol="GOOD"), _make_analysis(), _make_options())
-    bad = (_make_candidate(symbol="BAD", volume=100), _make_analysis(), _make_options())
+    bad = (
+        _make_candidate(symbol="BAD", volume=100, avg_daily_volume=100, relative_volume=0.5),
+        _make_analysis(),
+        _make_options(),
+    )
     qualified, rejected = evaluate_risk([good, bad], RiskConfig())
     assert len(qualified) == 1
     assert qualified[0][0].symbol == "GOOD"

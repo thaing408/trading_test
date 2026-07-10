@@ -10,9 +10,13 @@ from trading_agent.models import DailyTradingPlan, RejectedSetup, TradeOpportuni
 def _render_opportunity(opp: TradeOpportunity) -> str:
     strikes = ", ".join(f"${s:.2f}" for s in opp.strike_prices)
     reasons = "\n".join(f"    - {r}" for r in opp.supporting_reasons)
+    risks = "\n".join(f"    - {r}" for r in (opp.risks or ["Standard session risk"]))
     return f"""
 ### #{opp.rank} — {opp.symbol} ({opp.strategy})
 
+- **Ticker:** {opp.symbol}
+- **Direction:** {opp.direction}
+- **Trade Thesis:** {opp.trade_thesis or "n/a"}
 - **Entry Price:** ${opp.entry_price:.2f}
 - **Strike Prices:** {strikes}
 - **Expiration:** {opp.expiration}
@@ -22,6 +26,10 @@ def _render_opportunity(opp: TradeOpportunity) -> str:
 - **Maximum Reward:** ${opp.maximum_reward:.2f}
 - **Probability of Success:** {opp.probability_of_success:.0%}
 - **Confidence Score:** {opp.confidence_score:.1f}/100
+- **Trade Quality Score:** {opp.trade_quality_score:.1f}/100
+
+**Risks:**
+{risks}
 
 **Supporting Reasons:**
 {reasons}

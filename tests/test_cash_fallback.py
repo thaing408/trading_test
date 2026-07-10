@@ -36,10 +36,13 @@ def test_build_opportunities_empty_on_strict_confidence():
         symbol="X",
         price=closes[-1],
         volume=5_000_000,
-        relative_volume=1.5,
+        relative_volume=2.2,
         options_liquidity_score=80.0,
         open_interest=5000,
         bid_ask_spread_pct=1.0,
+        avg_daily_volume=4_000_000,
+        market_cap=50_000_000_000,
+        institutional_score=70.0,
     )
     options = compute_options_metrics(
         symbol="X",

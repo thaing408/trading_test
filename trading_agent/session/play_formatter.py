@@ -10,39 +10,96 @@ from trading_agent.session.intelligence import IntelligenceBrief
 
 
 def format_intelligence_brief(brief: IntelligenceBrief) -> str:
+    """Institutional Market Intelligence brief — no trade recommendations."""
     lines = [
         f"**Market Intelligence — {brief.date}**",
-        f"**Bias:** {brief.bias}",
-        f"**Environment:** {brief.environment_score:.1f}/100",
+        f"**Outlook:** {brief.outlook}",
+        f"**Market Environment Score:** {brief.environment_score:.1f}/100",
+        f"**Bias narrative:** {brief.bias}",
         "",
-        "**Overnight snapshot:**",
+        "**Global markets / overnight:**",
     ]
     for key, val in brief.overnight_summary.items():
-        lines.append(f"- {key.title()}: {val}")
+        lines.append(f"- {key.replace('_', ' ').title()}: {val}")
+    if brief.vix_term_note:
+        lines.append(f"- VIX term: {brief.vix_term_note}")
+    if brief.yield_curve_note:
+        lines.append(f"- Yields: {brief.yield_curve_note}")
     if brief.market_signals:
-        lines.append(f"- Signals: {'; '.join(brief.market_signals[:4])}")
-    lines.extend(["", f"**Calendar:** {brief.calendar_summary}"])
-    for evt in brief.high_impact_events[:4]:
+        lines.append(f"- Signals: {'; '.join(brief.market_signals[:6])}")
+
+    lines.extend(["", f"**Macro calendar:** {brief.calendar_summary}"])
+    for evt in brief.high_impact_events[:6]:
         lines.append(f"- {evt}")
+
+    if brief.sector_ranking:
+        lines.extend(["", "**Sector ranking (strongest → weakest):**"])
+        for i, row in enumerate(brief.sector_ranking, 1):
+            lines.append(f"{i}. {row}")
+
+    if brief.etf_snapshot:
+        lines.extend(["", "**ETF complex:**"])
+        for row in brief.etf_snapshot:
+            lines.append(f"- {row}")
+
+    if brief.breadth_notes:
+        lines.extend(["", "**Market breadth / internals:**"])
+        for row in brief.breadth_notes[:10]:
+            lines.append(f"- {row}")
+
+    if brief.unavailable_series:
+        lines.extend(["", "**Unavailable series (honest gaps):**"])
+        for key, note in list(brief.unavailable_series.items())[:8]:
+            lines.append(f"- {key}: {note}")
+
     if brief.news_highlights:
         lines.append("")
-        lines.append("**Catalysts (live headlines):**")
+        lines.append("**News / catalysts (verified source only):**")
         for item in brief.news_highlights[:5]:
             lines.append(f"- {item}")
     else:
         news_src = brief.metadata.get("news_source", "")
-        if news_src == "unavailable":
+        if news_src in ("unavailable", "fixture-fallback", ""):
             lines.append("")
-            lines.append("**Catalysts:** none — live news feed returned no verified headlines")
+            lines.append(
+                "**News / catalysts:** none — no verified live headlines "
+                "(fixture-fallback never treated as institutional catalysts)"
+            )
+        elif news_src == "fixture":
+            lines.append("")
+            lines.append("**News / catalysts (fixture mode):**")
+            # Fixture mode still surfaces highlights via synthesis when source is fixture
+            if not brief.news_highlights:
+                lines.append("- (fixture news present in pipeline; none ranked into brief)")
+
     if brief.catalyst_symbols:
-        lines.append(f"**Watch:** {', '.join(brief.catalyst_symbols)}")
+        lines.append(f"**Catalyst symbols:** {', '.join(brief.catalyst_symbols)}")
+
+    lines.extend(["", "**Conclusion (intelligence only — no trade tickets):**"])
+    lines.append(f"- **Recommended market posture:** {brief.market_posture or 'n/a'}")
+    if brief.top_opportunities:
+        lines.append("- **Top opportunities (themes):**")
+        for item in brief.top_opportunities:
+            lines.append(f"  - {item}")
+    if brief.major_risks:
+        lines.append("- **Major risks:**")
+        for item in brief.major_risks:
+            lines.append(f"  - {item}")
+    if brief.expected_drivers:
+        lines.append("- **Today's expected market drivers:**")
+        for item in brief.expected_drivers:
+            lines.append(f"  - {item}")
+
     market_src = brief.metadata.get("market_source", "")
     cal_src = brief.metadata.get("calendar_source", "")
     if market_src or cal_src:
         lines.append("")
         lines.append(
-            f"_Sources: market={market_src or 'n/a'}, calendar={cal_src or 'n/a'}, news={brief.metadata.get('news_source', 'n/a')}_"
+            f"_Sources: market={market_src or 'n/a'}, "
+            f"calendar={cal_src or 'n/a'}, "
+            f"news={brief.metadata.get('news_source', 'n/a')}_"
         )
+    lines.append("_Desk note: Market Intelligence does not recommend trades or option structures._")
     return "\n".join(lines)
 
 
@@ -56,7 +113,7 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
         f"**Pre-Market Scout — {plan.date}**",
         f"**Bias:** {plan.overall_market_bias}",
         f"**Environment:** {plan.market_environment_score:.1f}/100",
-        f"**Watchlist:** {', '.join(plan.top_watchlist) if plan.top_watchlist else 'None'}",
+        f"**Top 10 Watchlist:** {', '.join(plan.top_watchlist) if plan.top_watchlist else 'None'}",
         "",
     ]
     highlights = plan.research_summary.get("news_highlights", [])
@@ -76,46 +133,75 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
         if plan.rejection_reasons:
             lines.append("")
             lines.append("**Screened / rejected:**")
-            for rejection in plan.rejection_reasons[:6]:
+            for rejection in plan.rejection_reasons[:8]:
                 lines.append(f"- {rejection.symbol}: {rejection.reason}")
     else:
-        lines.append("**Ranked plays:**")
-        for opp in plan.ranked_opportunities:
-            rr = opp.maximum_reward / opp.maximum_risk if opp.maximum_risk else 0.0
+        lines.append("**Top 5 trade candidates:**")
+        for opp in plan.ranked_opportunities[:5]:
+            strikes = ", ".join(f"${s:.2f}" for s in opp.strike_prices)
             lines.extend(
                 [
-                    f"### {opp.symbol} — {opp.strategy}",
-                    f"- Entry: ${opp.entry_price:.2f} | Stop: ${opp.stop_loss:.2f} | Target: ${opp.profit_target:.2f}",
-                    f"- Risk/Reward: {rr:.1f}:1 | Prob: {opp.probability_of_success:.0%} | Conf: {opp.confidence_score:.0f}/100",
+                    f"### #{opp.rank} {opp.symbol} — {opp.direction} {opp.strategy}",
+                    f"- Thesis: {opp.trade_thesis or 'n/a'}",
+                    f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | Target ${opp.profit_target:.2f}",
+                    f"- Strikes: {strikes} | Exp: {opp.expiration}",
+                    f"- Prob {opp.probability_of_success:.0%} | Conf {opp.confidence_score:.0f} | "
+                    f"Quality {opp.trade_quality_score:.0f}/100",
+                    f"- Risks: {'; '.join(opp.risks[:3]) if opp.risks else 'standard'}",
                 ]
             )
     return "\n".join(lines)
 
 
 def format_cio_plays(report: CIOReport, title: str = "CIO Decision Summary") -> str:
+    p = report.portfolio
     lines = [
         f"**{title} — {report.date}**",
         f"**Market bias:** {report.context.overall_market_bias}",
-        f"**Capital deployed:** {report.portfolio.total_capital_recommended_pct:.0f}% | "
-        f"Cash: {report.portfolio.cash_allocation_pct:.0f}%",
+        f"**Capital allocation:** {p.total_capital_recommended_pct:.0f}% deployed | "
+        f"**Cash:** {p.cash_allocation_pct:.0f}%",
+        f"**Overall portfolio risk:** {p.overall_portfolio_risk} | "
+        f"Est. DD {p.estimated_portfolio_drawdown_pct:.1f}% | "
+        f"Cap efficiency {p.capital_efficiency_score:.0f}",
         "",
     ]
     if report.approved:
-        lines.append("**Approved plays:**")
+        lines.append("**Approved trades** (by conviction):")
         for trade in report.approved:
             lines.extend(
                 [
-                    f"- **{trade.ticker}** — {trade.decision}: {trade.strategy}",
-                    f"  Entry ${trade.entry_price:.2f} | Size {trade.position_size_pct:.0f}% | Conf {trade.confidence_score:.0f}",
+                    f"- **#{trade.conviction_rank} {trade.ticker}** — {trade.decision}: "
+                    f"{trade.direction} {trade.strategy}",
+                    f"  Entry ${trade.entry_price:.2f} | Size {trade.position_size_pct:.0f}% | "
+                    f"Conf {trade.confidence_score:.0f} | Conviction {trade.conviction_score:.0f} | "
+                    f"R:R {trade.reward_to_risk:.1f}",
+                    f"  Works: {(trade.why_it_works or '')[:120]}…",
+                    f"  HF approve: {trade.hedge_fund_approve}",
                 ]
             )
     else:
-        lines.append("**No CIO approvals today.**")
+        lines.append("**Approved trades:** none")
+    if report.modified:
+        lines.append("")
+        lines.append("**Modified trades:**")
+        for trade in report.modified:
+            lines.append(
+                f"- **{trade.ticker}** — {trade.decision}: {trade.strategy} | "
+                f"Size {trade.position_size_pct:.0f}% | Mods: {'; '.join(trade.modifications) or 'n/a'}"
+            )
+    if not report.approved and not report.modified:
+        lines.append("**No CIO approvals today — remain in cash if uncertainty elevated.**")
     if report.rejected:
         lines.append("")
-        lines.append("**Rejected / delayed:**")
-        for item in report.rejected[:5]:
+        lines.append("**Rejected trades:**")
+        for item in report.rejected[:6]:
             lines.append(f"- {item.ticker} — {item.decision}: {item.explanation}")
+    if p.sector_allocation:
+        lines.append("")
+        lines.append(
+            "**Portfolio allocation:** "
+            + ", ".join(f"{k} {v:.0f}%" for k, v in p.sector_allocation.items())
+        )
     return "\n".join(lines)
 
 
@@ -131,7 +217,7 @@ def format_cio_review(report: CIOReport) -> str:
     if report.governance_notes:
         lines.append("")
         lines.append("**Governance:**")
-        for note in report.governance_notes[:3]:
+        for note in report.governance_notes[:4]:
             lines.append(f"- {note}")
     return "\n".join(lines)
 

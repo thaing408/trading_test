@@ -19,9 +19,12 @@ CATEGORY_KEYWORDS = {
     "earnings": ("earnings", "eps", "revenue", "guidance"),
     "analyst": ("upgrade", "downgrade", "price target", "initiates"),
     "sec_filing": ("sec", "10-k", "10-q", "8-k", "filing"),
-    "insider": ("insider", "form 4", "director", "officer"),
+    "insider": ("insider", "form 4", "director", "officer", "insider buying", "insider selling"),
     "ma": ("merger", "acquisition", "buyout", "takeover"),
     "contract": ("contract", "award", "government", "deal"),
+    "ai": ("artificial intelligence", " generative ai", " openai", " llm"),
+    "semiconductor": ("semiconductor", "chipmaker", "foundry", "wafer", "gpu demand"),
+    "geopolitical": ("sanction", "geopolit", "conflict", "tariff", "war ", "ceasefire"),
 }
 
 

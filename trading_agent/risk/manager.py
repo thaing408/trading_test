@@ -1,4 +1,4 @@
-"""Risk management standards enforcement."""
+"""Risk management standards enforcement (institutional Trading Research floors)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,19 @@ def passes_risk_checks(
 ) -> RiskEvaluation:
     reasons: List[str] = []
 
-    if candidate.volume < config.min_volume:
+    if candidate.price < config.min_price:
+        reasons.append(f"Price ${candidate.price:.2f} below minimum ${config.min_price:.2f}")
+    adv = candidate.avg_daily_volume or candidate.volume
+    if candidate.volume < config.min_volume and adv < config.min_avg_daily_volume:
+        reasons.append(
+            f"Volume {candidate.volume} / ADV {adv} below minimum "
+            f"{config.min_volume}/{config.min_avg_daily_volume}"
+        )
+    elif adv and adv < config.min_avg_daily_volume:
+        reasons.append(
+            f"Average daily volume {adv} below minimum {config.min_avg_daily_volume}"
+        )
+    elif candidate.volume < config.min_volume and not candidate.avg_daily_volume:
         reasons.append(f"Volume {candidate.volume} below minimum {config.min_volume}")
     if candidate.relative_volume < config.min_relative_volume:
         reasons.append(
@@ -37,6 +49,18 @@ def passes_risk_checks(
         reasons.append(
             f"Bid-ask spread {candidate.bid_ask_spread_pct}% exceeds max {config.max_bid_ask_spread_pct}%"
         )
+    # Market cap: fail when known and below floor; unknown (0) fails live-quality bar
+    if candidate.market_cap > 0 and candidate.market_cap < config.min_market_cap:
+        reasons.append(
+            f"Market cap ${candidate.market_cap:,.0f} below minimum ${config.min_market_cap:,.0f}"
+        )
+    elif candidate.market_cap <= 0:
+        reasons.append("Market cap unavailable — cannot verify $2B institutional floor")
+    if candidate.institutional_score and candidate.institutional_score < config.min_institutional_score:
+        reasons.append(
+            f"Institutional participation score {candidate.institutional_score} "
+            f"below minimum {config.min_institutional_score}"
+        )
     if options.liquidity_score < config.min_options_liquidity_score:
         reasons.append(
             f"Options liquidity {options.liquidity_score} below minimum {config.min_options_liquidity_score}"
@@ -45,7 +69,8 @@ def passes_risk_checks(
         reasons.append(
             f"Probability of profit {options.probability_of_profit} below minimum {config.min_probability_of_success}"
         )
-    if technical.score < 40:
+    min_tech = getattr(config, "min_technical_score", 40.0)
+    if technical.score < min_tech:
         reasons.append(f"Technical score {technical.score} too weak for entry")
 
     return RiskEvaluation(passed=len(reasons) == 0, reasons=reasons)

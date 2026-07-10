@@ -31,6 +31,8 @@ def test_timeframe_alignment_bullish():
 def test_multi_timeframe_increases_score_when_aligned():
     daily = _uptrend_bars(60, 100)
     hourly = _uptrend_bars(35, 200)
+    m30 = _uptrend_bars(40, 150)
+    m15 = _uptrend_bars(40, 140)
     ta = compute_technical_analysis(
         "TEST",
         daily[0], daily[1], daily[2], daily[3],
@@ -38,9 +40,11 @@ def test_multi_timeframe_increases_score_when_aligned():
         intraday_highs=hourly[1],
         intraday_lows=hourly[2],
         intraday_volumes=hourly[3],
+        bars_30m=m30[0],
+        bars_15m=m15[0],
     )
-    assert "daily" in ta.timeframe_trends
-    assert "weekly" in ta.timeframe_trends
+    for key in ("monthly", "weekly", "daily", "4h", "1h", "30m", "15m"):
+        assert key in ta.timeframe_trends
     assert "intraday" in ta.timeframe_trends
     assert ta.timeframe_alignment == "aligned_bullish"
     assert ta.score >= 60

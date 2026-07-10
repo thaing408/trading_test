@@ -73,3 +73,11 @@ def test_compute_technical_analysis_full():
     assert ta.symbol == "TEST"
     assert 0 <= ta.score <= 100
     assert ta.support < ta.resistance
+    assert ta.ema_9 > 0
+    assert ta.ema_20 > 0
+    assert ta.ema_50 > 0
+    assert "daily" in ta.timeframe_trends
+    assert "weekly" in ta.timeframe_trends
+    assert "monthly" in ta.timeframe_trends
+    assert ta.breakout_state in ("breakout", "breakdown", "none")
+    assert ta.momentum in ("bullish", "bearish", "neutral")
