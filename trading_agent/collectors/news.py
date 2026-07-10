@@ -13,7 +13,7 @@ from trading_agent.models import NewsCatalysts, NewsItem
 
 from .base import load_fixture, safe_fetch
 
-FMP_STOCK_NEWS_URL = "https://financialmodelingprep.com/api/v3/stock_news"
+FMP_STOCK_NEWS_URL = "https://financialmodelingprep.com/stable/news/stock-latest"
 
 CATEGORY_KEYWORDS = {
     "earnings": ("earnings", "eps", "revenue", "guidance"),
@@ -77,19 +77,27 @@ def _fetch_yfinance_news(symbols: List[str]) -> List[NewsItem]:
 
 
 def _fetch_fmp_stock_news(symbols: List[str], api_key: str) -> List[NewsItem]:
-    tickers = ",".join(symbols[:10])
+    watch = {s.upper() for s in symbols[:12]}
     resp = requests.get(
         FMP_STOCK_NEWS_URL,
-        params={"tickers": tickers, "limit": 25, "apikey": api_key},
+        params={"page": 0, "limit": 50, "apikey": api_key},
         timeout=15,
     )
+    if resp.status_code == 402:
+        raise PermissionError("FMP stock news requires a paid plan; using yfinance headlines")
     resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, list):
+        return []
+
     items: List[NewsItem] = []
     seen: set[tuple[str, str]] = set()
-    for row in resp.json():
-        symbol = (row.get("symbol") or "").strip().upper()
-        title = (row.get("title") or "").strip()
+    for row in payload:
+        symbol = (row.get("symbol") or row.get("ticker") or "").strip().upper()
+        title = (row.get("title") or row.get("text") or "").strip()
         if not symbol or not title:
+            continue
+        if watch and symbol not in watch:
             continue
         dedupe_key = (symbol, title.lower())
         if dedupe_key in seen:
@@ -99,7 +107,7 @@ def _fetch_fmp_stock_news(symbols: List[str], api_key: str) -> List[NewsItem]:
             NewsItem(
                 symbol=symbol,
                 headline=title,
-                source=row.get("site", "fmp"),
+                source=row.get("site") or row.get("publisher") or "fmp",
                 category=_classify(title),
             )
         )
@@ -124,7 +132,14 @@ def collect_news_catalysts(config: AgentConfig, symbols: List[str]) -> NewsCatal
     if not items:
         api_key = os.getenv("FMP_API_KEY", "").strip()
         if api_key:
-            fmp_items = safe_fetch(lambda: _fetch_fmp_stock_news(symbols, api_key), [], errors)
+            def _fetch_fmp() -> List[NewsItem]:
+                try:
+                    return _fetch_fmp_stock_news(symbols, api_key)
+                except PermissionError as exc:
+                    errors.append(str(exc))
+                    return []
+
+            fmp_items = safe_fetch(_fetch_fmp, [], errors)
             if fmp_items:
                 return NewsCatalysts(source="fmp", items=fmp_items, errors=errors)
 

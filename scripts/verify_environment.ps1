@@ -120,6 +120,20 @@ if ($channel) {
     Info 'Discord channel' $channel
 }
 
+$fmpKey = $env:FMP_API_KEY
+if ($fmpKey) {
+    try {
+        $r = Invoke-RestMethod -Uri "https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=$fmpKey" -TimeoutSec 15
+        $fmpOk = $null -ne $r -and ($r.Count -gt 0 -or $r.symbol)
+        Check 'FMP API key' $fmpOk $(if ($fmpOk) { 'authenticated (quote OK)' } else { 'key present but quote failed' })
+        Info 'FMP calendar' 'macro calendar needs Starter+; free tier uses earnings calendar fallback'
+    } catch {
+        Check 'FMP API key' $false "request failed: $($_.Exception.Message)"
+    }
+} else {
+    Info 'FMP API key' 'not set (optional — calendar/backup news)'
+}
+
 # Optional automation (does not gate READY for new installs)
 Write-Host ''
 Write-Host '--- Optional automation (informational) ---'

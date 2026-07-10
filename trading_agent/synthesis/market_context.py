@@ -251,7 +251,7 @@ def synthesize_market_context(
         bias = "Neutral — mixed overnight signals; favor defined-risk premium strategies"
 
     # Only append calendar/catalyst when from real sources (never fixture Jobless Claims / fake NVDA print)
-    if high_impact and _is_real_catalyst_source(calendar.source):
+    if high_impact and (_is_real_catalyst_source(calendar.source) or calendar.source == "fmp-earnings"):
         bias += f"; calendar risk: {high_impact[0]}"
     if news_highlights and _is_real_catalyst_source(news.source):
         bias += f"; active catalyst: {news_highlights[0]}"
@@ -264,7 +264,7 @@ def synthesize_market_context(
         provenance.append("sentiment: live yfinance")
     elif market.source == "fixture":
         provenance.append("sentiment: fixture")
-    if _is_real_catalyst_source(calendar.source):
+    if _is_real_catalyst_source(calendar.source) or calendar.source == "fmp-earnings":
         provenance.append(f"calendar: {calendar.source}")
     elif calendar.source == "unavailable":
         provenance.append("calendar: omitted (no live feed)")
