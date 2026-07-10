@@ -76,8 +76,24 @@ class SessionResult:
         return [v for k, v in self.phase_messages.items() if k.startswith("intraday_")]
 
 
+def _configure_stdio() -> None:
+    """Task Scheduler on Windows often uses cp1252; reconfigure so desk output is safe."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 def _log(handle: TextIO | None, message: str) -> None:
-    print(message)
+    try:
+        print(message, flush=True)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(message.encode(encoding, errors="replace").decode(encoding), flush=True)
     if handle:
         handle.write(message + "\n")
         handle.flush()
@@ -158,7 +174,7 @@ def run_session(
     )
     phases_to_run = phase_order[start_index : end_index + 1]
     if config.until_phase is not None:
-        _log(log, f"Phase scope: {start_kind.value} → {config.until_phase.value} ({len(phases_to_run)} phases)")
+        _log(log, f"Phase scope: {start_kind.value} -> {config.until_phase.value} ({len(phases_to_run)} phases)")
 
     _log(log, schedule_log)
 
@@ -312,6 +328,7 @@ def run_session(
 
 
 def run_session_cli(config: SessionConfig) -> int:
+    _configure_stdio()
     log_path = config.log_file
     handle: TextIO | None = None
     if log_path:

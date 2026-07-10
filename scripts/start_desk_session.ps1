@@ -195,6 +195,10 @@ try {
     Write-Log "Starting desk session for $dateArg (from-phase: $fromPhase, until-phase: $untilPhase)"
     Write-Log "Session log: $sessionLog"
 
+    # Task Scheduler defaults to a legacy code page; force UTF-8 for desk output (em dashes, arrows, etc.).
+    $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
+
     # Start-Process gives a reliable exit code under Task Scheduler (pipeline LASTEXITCODE is flaky).
     $stdoutFile = Join-Path $logDir "desk_session_stdout_$dateArg.log"
     $stderrFile = Join-Path $logDir "desk_session_stderr_$dateArg.log"
