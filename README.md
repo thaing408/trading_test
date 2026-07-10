@@ -4,38 +4,66 @@ Multi-phase options trading desk: market intelligence, research, CIO approval, a
 
 **Repo:** https://github.com/thaing408/trading_agent
 
-## Quick start (new machine / new agent)
+## Quick start (new machine / new user)
+
+### Windows
 
 ```powershell
 git clone https://github.com/thaing408/trading_agent.git
 cd trading_agent
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
 
-# 1. Install
-python -m pip install -e ".[dev]"
+The installer prompts for everything needed (Discord bot/webhook **or** safe dry-run), installs the package, writes `.env`, verifies readiness, optionally registers weekday automation, and runs a fixture dry-run of prep phases.
 
-# 2. Configure
-copy .env.example .env
-# Edit .env: set DISCORD_CHANNEL_ID (and DISCORD_TOKEN if not using researcher .env)
+Non-interactive (CI / scripted):
 
-# 3. Verify
-powershell -ExecutionPolicy Bypass -File scripts\verify_environment.ps1
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -NonInteractive -DeliveryMode dry_run -SkipAutomation
+```
 
-# 4. Test (fixture, no Discord)
-python -m trading_agent session --fixture --dry-run --date 2026-07-09 --until-phase preopen
+### macOS
 
-# 5. Automate weekdays 01:55 AM Pacific
-powershell -ExecutionPolicy Bypass -File scripts\setup_desk_automation.ps1
+```bash
+git clone https://github.com/thaing408/trading_agent.git
+cd trading_agent
+bash scripts/install.sh
+```
+
+Non-interactive:
+
+```bash
+bash scripts/install.sh --non-interactive --delivery-mode dry_run --skip-automation
+```
+
+After install:
+
+```powershell
+# Safe prep session (no Discord posts if dry-run)
+python -m trading_agent session --fixture --dry-run --until-phase preopen
+
+# Readiness check
+powershell -ExecutionPolicy Bypass -File scripts\verify_environment.ps1   # Windows
+# or: python -m trading_agent.install_wizard validate-env --env-file .env
 ```
 
 ## Discord setup
 
-The agent posts to Discord via **bot channel** (preferred) or webhook.
+The agent posts via **bot channel** (preferred) or **webhook**. The install wizard collects one of:
 
-| Variable | Required | Source |
+| Mode | What you provide |
+|------|------------------|
+| `dry_run` / `no_discord` | Nothing — local runs only, no posts |
+| `bot` | `DISCORD_TOKEN` + `DISCORD_CHANNEL_ID` |
+| `webhook` | `DISCORD_WEBHOOK_URL` |
+
+| Variable | Required | Notes |
 |----------|----------|--------|
-| `DISCORD_TOKEN` | Yes (bot mode) | `C:\Personal\Scripts\researcher\.env` or local `.env` |
-| `DISCORD_CHANNEL_ID` | Yes | `.env` (default: `#daily-plays`) |
-| `DISCORD_WEBHOOK_URL` | Optional | Overrides bot if set |
+| `DISCORD_TOKEN` | Bot mode | From Discord Developer Portal |
+| `DISCORD_CHANNEL_ID` | Bot mode | Default example: `#daily-plays` |
+| `DISCORD_WEBHOOK_URL` | Webhook mode | Overrides bot if set |
+
+You do **not** need any author-specific path (e.g. a personal `researcher\.env`); put secrets in the repo `.env` created by the installer.
 
 ## Desk schedule (Pacific Time)
 
@@ -49,18 +77,18 @@ The agent posts to Discord via **bot channel** (preferred) or webhook.
 | 13:15 | Performance Review | `performance` |
 | 13:30 | CIO Daily Review | `cio_review` |
 
-**Windows default:** phases 1-4 only (`TRADING_AGENT_UNTIL_PHASE=preopen`) until brokerage is connected.
+**Default for new installs:** phases 1–4 only (`TRADING_AGENT_UNTIL_PHASE=preopen`) until a brokerage account is connected.
 
-**macOS Grok pipeline:** runs all **7 phases** with Schwab positions + Discord via `scripts/macos/`.
+**macOS Grok + Schwab pipeline (optional):** full 7 phases via `scripts/macos/` after install.
 
 ## Commands
 
 ```powershell
-# Full desk day (waits for schedule, posts to Discord)
-python -m trading_agent session --date 2026-07-09
+# Full desk day (waits for schedule, posts to Discord if configured)
+python -m trading_agent session --date 2026-07-10
 
-# First 4 phases only (evaluation mode)
-python -m trading_agent session --date 2026-07-09 --until-phase preopen
+# First 4 phases only (evaluation / prep mode)
+python -m trading_agent session --date 2026-07-10 --until-phase preopen
 
 # Individual phases
 python -m trading_agent premarket
@@ -75,39 +103,24 @@ python -m trading_agent performance --fixture
 
 | Script | Purpose |
 |--------|---------|
+| `scripts/install.ps1` | **Primary** new-user install + optional automation |
 | `scripts/start_desk_session.ps1` | Git pull, install, run session |
-| `scripts/register_desk_task.ps1` | Register Windows Task Scheduler job |
-| `scripts/setup_desk_automation.ps1` | One-shot setup |
+| `scripts/register_desk_task.ps1` | Register wake + desk Task Scheduler jobs |
+| `scripts/setup_desk_automation.ps1` | One-shot wake + task registration |
+| `scripts/enable_pc_wake.ps1` | Enable OS wake timers |
 | `scripts/verify_environment.ps1` | Readiness check |
 
-**Scheduled task:** `TradingAgentDeskSession` — Mon-Fri 01:55 AM Pacific.
+**Scheduled tasks:** `TradingAgentDeskWake` (01:50 AM) + `TradingAgentDeskSession` (01:55 AM) Mon–Fri Pacific. Prefer **Sleep/Hibernate** overnight (not full Shutdown).
 
-### macOS (Grok + Schwab pipeline)
-
-```bash
-git clone https://github.com/thaing408/trading_agent.git ~/trading_agent
-cd ~/trading_agent
-/opt/homebrew/bin/python3.11 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-
-# Configure ~/.grok/discord.env (DISCORD_BOT_TOKEN) then:
-cp scripts/macos/trading-agent.env.example ~/.grok/trading-agent.env
-bash scripts/macos/install-trading-agent-launchd.sh
-
-# Verify (all 7 phases, no Discord)
-.venv/bin/python -m trading_agent session --fixture --dry-run --date 2026-07-09
-```
+### macOS
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/macos/trading-agent-desk.sh` | Git pull, install, Schwab positions, run session |
-| `scripts/macos/trading-agent-positions.sh` | Export Schwab MCP positions JSON |
-| `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` (weekdays 1:55 AM PT) |
+| `scripts/install.sh` | **Primary** new-user install + optional launchd |
+| `scripts/macos/trading-agent-desk.sh` | Git pull, install, optional Schwab positions, session |
+| `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` |
 
-**Discord channels (macOS):** desk posts → `#daily-plays` (`1510184298442002502`); scalp bot and journal stay on separate Grok channels.
-
-Logs: `~/.trading_agent/logs/`
-
+Logs: `~/.trading_agent/logs/`  
 Session artifacts: `~/.trading_agent/sessions/{date}/`
 
 ## Tests
@@ -116,10 +129,18 @@ Session artifacts: `~/.trading_agent/sessions/{date}/`
 python -m pytest -q
 ```
 
+Install wizard unit tests:
+
+```powershell
+python -m pytest tests/test_install_wizard.py -q
+```
+
 ## Environment variables
 
-See `.env.example` for all options. Key vars:
+See `.env.example`. Key vars (written by the installer):
 
 - `TRADING_AGENT_UNTIL_PHASE=preopen` — stop after phase 4
 - `TRADING_AGENT_PYTHON` — explicit Python path for scheduled tasks
-- `TRADING_AGENT_ENV_FILE` — alternate .env path
+- `TRADING_AGENT_DRY_RUN=1` / `TRADING_AGENT_NO_DISCORD=1` — no Discord posts
+- `TRADING_AGENT_ENV_FILE` — alternate env path
+- `TRADING_AGENT_TIMEZONE=America/Los_Angeles`
