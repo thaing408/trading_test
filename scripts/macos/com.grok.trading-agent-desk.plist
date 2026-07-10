@@ -11,11 +11,12 @@
     </array>
     <key>StartCalendarInterval</key>
     <array>
+        <!-- macOS Weekday: 0=Sun … 6=Sat. Include Monday (1) through Friday (5). -->
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
         <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
         <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
         <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
         <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
-        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>1</integer><key>Minute</key><integer>55</integer></dict>
     </array>
     <key>StandardOutPath</key>
     <string>__HOME__/.trading_agent/logs/launchd-desk.out.log</string>

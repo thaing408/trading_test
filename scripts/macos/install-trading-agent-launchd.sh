@@ -9,6 +9,8 @@ GROK_DIR="$HOME/.grok"
 chmod +x "$MACOS_DIR/trading-agent-desk.sh"
 chmod +x "$MACOS_DIR/trading-agent-positions.sh"
 chmod +x "$MACOS_DIR/trading-agent-positions.py"
+chmod +x "$MACOS_DIR/run-argv.py" 2>/dev/null || true
+chmod +x "$MACOS_DIR/desk-healthcheck.sh" 2>/dev/null || true
 
 mkdir -p "$GROK_DIR/scripts" "$GROK_DIR/launchd" "$HOME/.trading_agent/logs" "$HOME/Library/LaunchAgents"
 
@@ -16,7 +18,9 @@ mkdir -p "$GROK_DIR/scripts" "$GROK_DIR/launchd" "$HOME/.trading_agent/logs" "$H
 cp "$MACOS_DIR/trading-agent-desk.sh" "$GROK_DIR/scripts/"
 cp "$MACOS_DIR/trading-agent-positions.sh" "$GROK_DIR/scripts/"
 cp "$MACOS_DIR/trading-agent-positions.py" "$GROK_DIR/scripts/"
-chmod +x "$GROK_DIR/scripts/"*.sh "$GROK_DIR/scripts/"*.py
+cp "$MACOS_DIR/run-argv.py" "$GROK_DIR/scripts/" 2>/dev/null || true
+cp "$MACOS_DIR/desk-healthcheck.sh" "$GROK_DIR/scripts/" 2>/dev/null || true
+chmod +x "$GROK_DIR/scripts/"*.sh "$GROK_DIR/scripts/"*.py 2>/dev/null || true
 
 if [[ ! -f "$GROK_DIR/trading-agent.env" ]]; then
   sed "s|__HOME__|$HOME|g; s|\$HOME|$HOME|g" "$MACOS_DIR/trading-agent.env.example" > "$GROK_DIR/trading-agent.env"
