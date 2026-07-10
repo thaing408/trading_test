@@ -40,6 +40,8 @@ class SessionConfig:
         tz = os.getenv("TRADING_AGENT_TIMEZONE", "America/Los_Angeles")
         until_raw = os.getenv("TRADING_AGENT_UNTIL_PHASE", "").strip()
         until_phase = DeskPhaseKind(until_raw) if until_raw else None
+        from_raw = os.getenv("TRADING_AGENT_FROM_PHASE", "").strip()
+        from_phase = DeskPhaseKind(from_raw) if from_raw else None
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -52,4 +54,5 @@ class SessionConfig:
             plan_file=os.getenv("TRADING_AGENT_PLAN_FILE"),
             log_file=os.getenv("TRADING_AGENT_SESSION_LOG"),
             until_phase=until_phase,
+            from_phase=from_phase,
         )

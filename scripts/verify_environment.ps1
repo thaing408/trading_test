@@ -72,6 +72,10 @@ if ($pyOk) {
     & $Python -c 'import trading_agent; import yfinance; import requests; import dotenv' 2>$null | Out-Null
     $importOk = $LASTEXITCODE -eq 0
     Check 'Package install' $importOk $(if ($importOk) { 'trading_agent importable' } else { 'run: pip install -e .[dev]  or scripts/install.ps1' })
+
+    & $Python -c "from trading_agent.runtime.stdio import configure_stdio, safe_print; configure_stdio(); safe_print('Phase scope: intelligence -> preopen (smoke)')" 2>$null | Out-Null
+    $utfOk = $LASTEXITCODE -eq 0
+    Check 'UTF-8 console smoke' $utfOk $(if ($utfOk) { 'safe_print OK' } else { 'stdio hardening missing — pull latest' })
 }
 
 # Git
@@ -125,8 +129,17 @@ if ($null -ne $task) {
     Info 'Scheduled task' "state=$($task.State) next=$($info.NextRunTime) WakeToRun=$($task.Settings.WakeToRun)"
     $startScript = Join-Path $RepoRoot 'scripts\start_desk_session.ps1'
     $startText = if (Test-Path $startScript) { Get-Content $startScript -Raw } else { '' }
-    $safePull = ($startText -match 'Invoke-LoggedCommand') -and ($startText -match 'from-phase')
+    $safePull = ($startText -match 'Invoke-LoggedCommand') -and ($startText -match 'from-phase') -and ($startText -match 'PYTHONUTF8')
     Info 'Startup script' $(if ($safePull) { 'hardened' } else { 'update scripts/start_desk_session.ps1' })
+
+    $action = $task.Actions | Select-Object -First 1
+    $taskScript = $null
+    $taskWorkDir = $action.WorkingDirectory
+    if ($action.Arguments -match '"([^"]+start_desk_session\.ps1)"') {
+        $taskScript = $matches[1]
+    }
+    $pathOk = ($taskWorkDir -eq $RepoRoot) -and ($taskScript -eq $startScript)
+    Check 'Task paths' $pathOk $(if ($pathOk) { "repo=$RepoRoot" } else { "task points to $taskWorkDir / $taskScript - re-run scripts/setup_desk_automation.ps1" })
 } else {
     Info 'Scheduled task' 'not registered - run scripts/setup_desk_automation.ps1 when ready'
 }

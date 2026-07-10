@@ -5,8 +5,16 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+# Task Scheduler often uses a legacy code page; normalize console + Python I/O.
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    chcp 65001 > $null
+} catch { }
+
 $logDir = Join-Path $env:USERPROFILE ".trading_agent\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$lockFile = Join-Path $logDir "desk_session.lock"
 
 function Write-Log {
     param([string]$Message)
@@ -141,6 +149,17 @@ $dateArg = $today.ToString("yyyy-MM-dd")
 $script:StartupLog = Join-Path $logDir "desk_startup_$dateArg.log"
 $sessionLog = Join-Path $logDir "desk_$dateArg.log"
 
+# Prevent overlapping runs if a prior session is still active.
+if (Test-Path $lockFile) {
+    $lockAge = (Get-Date) - (Get-Item $lockFile).LastWriteTime
+    if ($lockAge.TotalHours -lt 14) {
+        Write-Log "Desk lock present ($([int]$lockAge.TotalMinutes)m old) — another session may still be running. Exiting."
+        exit 0
+    }
+    Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType File -Force -Path $lockFile | Out-Null
+
 try {
     Write-Log "=== Trading desk startup ==="
     Write-Log "Repo: $RepoRoot"
@@ -182,10 +201,29 @@ try {
         Write-Log "WARN: git not on PATH; skipping pull"
     }
 
-    # Non-fatal: package may already be installed
-    Invoke-LoggedCommand "Installing package dependencies ..." {
-        & $Python -m pip install -e ".[dev]" -q
-    } | Out-Null
+    # Non-fatal with retry: package may already be installed
+    $pipOk = $false
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $code = Invoke-LoggedCommand "Installing package dependencies (attempt $attempt/3) ..." {
+            & $Python -m pip install -e ".[dev]" -q
+        }
+        if ($code -eq 0) { $pipOk = $true; break }
+        if ($attempt -lt 3) { Start-Sleep -Seconds 5 }
+    }
+    if (-not $pipOk) {
+        Write-Log "WARN: pip install did not succeed after 3 attempts (continuing with existing install)"
+    }
+
+    Invoke-LoggedCommand "Preflight: import trading_agent + UTF-8 smoke test ..." {
+        & $Python -c @"
+import os
+os.environ.setdefault('PYTHONUTF8', '1')
+from trading_agent.runtime.stdio import configure_stdio, safe_print
+configure_stdio()
+safe_print('Phase scope: intelligence -> preopen (smoke)')
+import trading_agent  # noqa: F401
+"@
+    } -Critical | Out-Null
 
     # Prep-only by default (no brokerage). Always start from intelligence so a late
     # StartWhenAvailable catch-up still runs phases 1-4 instead of skipping them.
@@ -198,6 +236,9 @@ try {
     # Task Scheduler defaults to a legacy code page; force UTF-8 for desk output (em dashes, arrows, etc.).
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
+    if (-not $env:TRADING_AGENT_FROM_PHASE) {
+        $env:TRADING_AGENT_FROM_PHASE = "intelligence"
+    }
 
     # Start-Process gives a reliable exit code under Task Scheduler (pipeline LASTEXITCODE is flaky).
     $stdoutFile = Join-Path $logDir "desk_session_stdout_$dateArg.log"
@@ -230,6 +271,22 @@ try {
 
     $code = $proc.ExitCode
     if ($null -eq $code) { $code = 1 }
+
+    if ($code -ne 0) {
+        Write-Log "WARN: desk session failed (exit $code); retrying once after 30s ..."
+        Start-Sleep -Seconds 30
+        $proc = Start-Process -FilePath $Python `
+            -ArgumentList $argList `
+            -WorkingDirectory $RepoRoot `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile
+        $code = $proc.ExitCode
+        if ($null -eq $code) { $code = 1 }
+    }
+
     Write-Log "Desk session exited with code $code"
     exit $code
 } catch {
@@ -240,4 +297,7 @@ try {
     exit 1
 } finally {
     Disable-DeskAwake
+    if (Test-Path $lockFile) {
+        Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+    }
 }

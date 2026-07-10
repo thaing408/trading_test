@@ -17,6 +17,7 @@ from trading_agent.performance.pipeline import run_performance_pipeline
 from trading_agent.performance.reporter import render_performance_report
 from trading_agent.pipeline import run_pipeline
 from trading_agent.reporter.plan import render_daily_plan
+from trading_agent.runtime.stdio import configure_stdio
 from trading_agent.session.config import SessionConfig
 from trading_agent.session.orchestrator import run_session_cli
 from trading_agent.session.schedule import DeskPhaseKind
@@ -147,6 +148,7 @@ def _run_cio(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
     parser = argparse.ArgumentParser(description="Trading Agent — Full Desk (Phases 1–4)")
     subparsers = parser.add_subparsers(dest="command")
 

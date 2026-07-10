@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -41,13 +42,14 @@ from trading_agent.session.play_formatter import (
     format_preopen_check,
     format_research_plays,
 )
+from trading_agent.runtime.stdio import configure_stdio, safe_write
+from trading_agent.session.phase_runner import resolve_phase_window
 from trading_agent.session.schedule import (
     PT,
     DeskPhaseKind,
     compute_desk_schedule,
     is_regular_session,
     render_desk_schedule_log,
-    resolve_start_phase,
     resolve_trading_date,
     seconds_until,
 )
@@ -76,27 +78,8 @@ class SessionResult:
         return [v for k, v in self.phase_messages.items() if k.startswith("intraday_")]
 
 
-def _configure_stdio() -> None:
-    """Task Scheduler on Windows often uses cp1252; reconfigure so desk output is safe."""
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            pass
-
-
 def _log(handle: TextIO | None, message: str) -> None:
-    try:
-        print(message, flush=True)
-    except UnicodeEncodeError:
-        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
-        print(message.encode(encoding, errors="replace").decode(encoding), flush=True)
-    if handle:
-        handle.write(message + "\n")
-        handle.flush()
+    safe_write(handle, message)
 
 
 def _deliver(
@@ -156,25 +139,22 @@ def run_session(
     phase_messages: dict[str, str] = {}
     wait = config.wait_for_schedule and not config.fixture_mode and not config.dry_run
 
-    start_kind = resolve_start_phase(current, schedule, config.from_phase)
-    phase_order = [
-        DeskPhaseKind.INTELLIGENCE,
-        DeskPhaseKind.RESEARCH,
-        DeskPhaseKind.CIO_APPROVAL,
-        DeskPhaseKind.PREOPEN,
-        DeskPhaseKind.INTRADAY,
-        DeskPhaseKind.PERFORMANCE,
-        DeskPhaseKind.CIO_REVIEW,
-    ]
-    start_index = phase_order.index(start_kind)
-    end_index = (
-        phase_order.index(config.until_phase)
-        if config.until_phase is not None
-        else len(phase_order) - 1
-    )
-    phases_to_run = phase_order[start_index : end_index + 1]
+    start_kind, phases_to_run = resolve_phase_window(config, current, schedule)
     if config.until_phase is not None:
         _log(log, f"Phase scope: {start_kind.value} -> {config.until_phase.value} ({len(phases_to_run)} phases)")
+    if not phases_to_run:
+        _log(
+            log,
+            f"[warn] No phases to run (start={start_kind.value}, until={getattr(config.until_phase, 'value', 'full day')}). "
+            "Check TRADING_AGENT_FROM_PHASE / --from-phase.",
+        )
+        return SessionResult(
+            trading_date=trading_date.isoformat(),
+            schedule_log=schedule_log,
+            phase_messages=phase_messages,
+            plan_context_path=str(session_dir / "daily_plan_context.json"),
+            discord_posts=posts,
+        )
 
     _log(log, schedule_log)
 
@@ -188,135 +168,141 @@ def run_session(
     intraday_flags: dict[str, str] = {}
 
     for phase_kind in phases_to_run:
-        if phase_kind == DeskPhaseKind.INTELLIGENCE:
-            phase = schedule.phases[0]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            brief = run_intelligence_pass(agent_config)
-            save_intelligence(brief, session_dir)
-            message = format_intelligence_brief(brief)
-            phase_messages["intelligence"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+        try:
+            if phase_kind == DeskPhaseKind.INTELLIGENCE:
+                phase = schedule.phases[0]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                brief = run_intelligence_pass(agent_config)
+                save_intelligence(brief, session_dir)
+                message = format_intelligence_brief(brief)
+                phase_messages["intelligence"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
-        elif phase_kind == DeskPhaseKind.RESEARCH:
-            phase = schedule.phases[1]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            plan = run_pipeline(agent_config)
-            plan_context = plan_to_context(plan)
-            plan_path = save_plan_context(plan_context, session_dir)
-            save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
-            watch_symbols = list(plan_context.get("top_watchlist", []))
-            message = format_research_plays(plan)
-            phase_messages["research"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+            elif phase_kind == DeskPhaseKind.RESEARCH:
+                phase = schedule.phases[1]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                plan = run_pipeline(agent_config)
+                plan_context = plan_to_context(plan)
+                plan_path = save_plan_context(plan_context, session_dir)
+                save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
+                watch_symbols = list(plan_context.get("top_watchlist", []))
+                message = format_research_plays(plan)
+                phase_messages["research"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
-        elif phase_kind == DeskPhaseKind.CIO_APPROVAL:
-            if not config.include_cio:
-                continue
-            phase = schedule.phases[2]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            cio_config = CIOConfig.from_env()
-            cio_config.fixture_mode = config.fixture_mode
-            cio_config.portfolio_value = config.portfolio_value
-            cio_config.session_dir = str(session_dir)
-            cio_config.cio_mode = "approval"
-            cio_report = run_cio_pipeline(cio_config)
-            for trade in cio_report.approved:
-                if trade.ticker not in watch_symbols:
-                    watch_symbols.append(trade.ticker)
-            message = format_cio_plays(cio_report, title="CIO Final Approval")
-            phase_messages["cio_approval"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+            elif phase_kind == DeskPhaseKind.CIO_APPROVAL:
+                if not config.include_cio:
+                    continue
+                phase = schedule.phases[2]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                cio_config = CIOConfig.from_env()
+                cio_config.fixture_mode = config.fixture_mode
+                cio_config.portfolio_value = config.portfolio_value
+                cio_config.session_dir = str(session_dir)
+                cio_config.cio_mode = "approval"
+                cio_report = run_cio_pipeline(cio_config)
+                for trade in cio_report.approved:
+                    if trade.ticker not in watch_symbols:
+                        watch_symbols.append(trade.ticker)
+                message = format_cio_plays(cio_report, title="CIO Final Approval")
+                phase_messages["cio_approval"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
-        elif phase_kind == DeskPhaseKind.PREOPEN:
-            phase = schedule.phases[3]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            if plan_path is None:
-                plan_path = session_dir / "daily_plan_context.json"
-            plan_context = load_saved_plan_context(plan_path)
-            intraday_config = IntradayConfig.from_env()
-            intraday_config.fixture_mode = config.fixture_mode
-            intraday_config.use_live_data = not config.fixture_mode
-            intraday_config.plan_file = str(plan_path)
-            intraday_config.positions_file = config.positions_file if config.positions_file else None
-            intraday_config.session_file = config.session_file
-            intraday_config.watch_symbols = watch_symbols
-            preopen_report = run_intraday_pipeline(intraday_config)
-            message = format_preopen_check(plan_context, preopen_report)
-            phase_messages["preopen"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
-
-        elif phase_kind == DeskPhaseKind.INTRADAY:
-            cycles_to_run = config.intraday_cycles
-            if not config.fixture_mode and not config.dry_run:
-                cycles_to_run = len(schedule.intraday_cycles)
-            if plan_path is None:
-                plan_path = session_dir / "daily_plan_context.json"
-            for cycle_index in range(1, cycles_to_run + 1):
-                if wait:
-                    if cycle_index <= len(schedule.intraday_cycles):
-                        target = schedule.intraday_cycles[cycle_index - 1]
-                        _wait_until(
-                            target,
-                            wait=True,
-                            sleep=sleep,
-                            log=log,
-                            label=f"Trading Desk cycle {cycle_index}",
-                        )
-                    elif not is_regular_session(datetime.now(tz), schedule):
-                        _log(log, "Regular session closed — stopping intraday cycles.")
-                        break
-
+            elif phase_kind == DeskPhaseKind.PREOPEN:
+                phase = schedule.phases[3]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                if plan_path is None:
+                    plan_path = session_dir / "daily_plan_context.json"
+                plan_context = load_saved_plan_context(plan_path)
                 intraday_config = IntradayConfig.from_env()
                 intraday_config.fixture_mode = config.fixture_mode
                 intraday_config.use_live_data = not config.fixture_mode
                 intraday_config.plan_file = str(plan_path)
                 intraday_config.positions_file = config.positions_file if config.positions_file else None
                 intraday_config.session_file = config.session_file
-                intraday_config.cycles = cycle_index
                 intraday_config.watch_symbols = watch_symbols
+                preopen_report = run_intraday_pipeline(intraday_config)
+                message = format_preopen_check(plan_context, preopen_report)
+                phase_messages["preopen"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
-                report = run_intraday_pipeline(intraday_config)
-                for rec in report.recommendations:
-                    intraday_flags[rec.symbol] = rec.action
-                message = format_intraday_plays(report, cycle_index)
-                key = f"intraday_{cycle_index}"
-                phase_messages[key] = message
-                _deliver(
-                    message,
-                    f"Trading Desk — cycle {cycle_index}",
-                    config=config,
-                    discord=discord,
-                    log=log,
-                    posts=posts,
-                )
-            if intraday_flags:
-                save_intraday_flags(session_dir, intraday_flags)
+            elif phase_kind == DeskPhaseKind.INTRADAY:
+                cycles_to_run = config.intraday_cycles
+                if not config.fixture_mode and not config.dry_run:
+                    cycles_to_run = len(schedule.intraday_cycles)
+                if plan_path is None:
+                    plan_path = session_dir / "daily_plan_context.json"
+                for cycle_index in range(1, cycles_to_run + 1):
+                    if wait:
+                        if cycle_index <= len(schedule.intraday_cycles):
+                            target = schedule.intraday_cycles[cycle_index - 1]
+                            _wait_until(
+                                target,
+                                wait=True,
+                                sleep=sleep,
+                                log=log,
+                                label=f"Trading Desk cycle {cycle_index}",
+                            )
+                        elif not is_regular_session(datetime.now(tz), schedule):
+                            _log(log, "Regular session closed — stopping intraday cycles.")
+                            break
 
-        elif phase_kind == DeskPhaseKind.PERFORMANCE:
-            phase = schedule.phases[5]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            perf_config = PerformanceConfig.from_env()
-            perf_config.fixture_mode = config.fixture_mode
-            perf_report = run_performance_pipeline(perf_config)
-            save_performance_report(perf_report, session_dir)
-            message = format_performance_plays(perf_report)
-            phase_messages["performance"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                    intraday_config = IntradayConfig.from_env()
+                    intraday_config.fixture_mode = config.fixture_mode
+                    intraday_config.use_live_data = not config.fixture_mode
+                    intraday_config.plan_file = str(plan_path)
+                    intraday_config.positions_file = config.positions_file if config.positions_file else None
+                    intraday_config.session_file = config.session_file
+                    intraday_config.cycles = cycle_index
+                    intraday_config.watch_symbols = watch_symbols
 
-        elif phase_kind == DeskPhaseKind.CIO_REVIEW:
-            if not config.include_cio:
-                continue
-            phase = schedule.phases[6]
-            _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-            cio_config = CIOConfig.from_env()
-            cio_config.fixture_mode = config.fixture_mode
-            cio_config.portfolio_value = config.portfolio_value
-            cio_config.session_dir = str(session_dir)
-            cio_config.cio_mode = "review"
-            cio_report = run_cio_pipeline(cio_config)
-            message = format_cio_review(cio_report)
-            phase_messages["cio_review"] = message
-            _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                    report = run_intraday_pipeline(intraday_config)
+                    for rec in report.recommendations:
+                        intraday_flags[rec.symbol] = rec.action
+                    message = format_intraday_plays(report, cycle_index)
+                    key = f"intraday_{cycle_index}"
+                    phase_messages[key] = message
+                    _deliver(
+                        message,
+                        f"Trading Desk — cycle {cycle_index}",
+                        config=config,
+                        discord=discord,
+                        log=log,
+                        posts=posts,
+                    )
+                if intraday_flags:
+                    save_intraday_flags(session_dir, intraday_flags)
+
+            elif phase_kind == DeskPhaseKind.PERFORMANCE:
+                phase = schedule.phases[5]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                perf_config = PerformanceConfig.from_env()
+                perf_config.fixture_mode = config.fixture_mode
+                perf_report = run_performance_pipeline(perf_config)
+                save_performance_report(perf_report, session_dir)
+                message = format_performance_plays(perf_report)
+                phase_messages["performance"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+
+            elif phase_kind == DeskPhaseKind.CIO_REVIEW:
+                if not config.include_cio:
+                    continue
+                phase = schedule.phases[6]
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                cio_config = CIOConfig.from_env()
+                cio_config.fixture_mode = config.fixture_mode
+                cio_config.portfolio_value = config.portfolio_value
+                cio_config.session_dir = str(session_dir)
+                cio_config.cio_mode = "review"
+                cio_report = run_cio_pipeline(cio_config)
+                message = format_cio_review(cio_report)
+                phase_messages["cio_review"] = message
+                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+        except Exception as exc:
+            label = phase_kind.value
+            _log(log, f"[error] Phase {label} failed: {exc}")
+            _log(log, traceback.format_exc())
+            raise
 
     return SessionResult(
         trading_date=trading_date.isoformat(),
@@ -328,15 +314,22 @@ def run_session(
 
 
 def run_session_cli(config: SessionConfig) -> int:
-    _configure_stdio()
+    configure_stdio()
     log_path = config.log_file
     handle: TextIO | None = None
     if log_path:
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
         handle = open(log_path, "w", encoding="utf-8")
     try:
-        run_session(config, log=handle or sys.stdout)
+        result = run_session(config, log=handle or sys.stdout)
+        if not result.phase_messages:
+            _log(handle, "[warn] Session finished with no phase output")
+            return 1
         return 0
+    except Exception as exc:
+        _log(handle, f"[fatal] Desk session aborted: {exc}")
+        _log(handle, traceback.format_exc())
+        return 1
     finally:
         if handle:
             handle.close()
