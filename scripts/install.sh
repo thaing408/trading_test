@@ -345,17 +345,9 @@ else
   warn "Automation skipped"
 fi
 
-# --- validate env via helper ---
+# --- validate env via helper (merge bridge + discord.env — token may live outside repo .env) ---
 step "Validating configuration (required data collected)"
 VERIFY_EXIT=0
-if "$PY" -m trading_agent.install_wizard validate-env --env-file "$ENV_PATH"; then
-  ok "Env validation READY"
-else
-  fail "Env validation NOT READY — collect Discord credentials or use --delivery-mode dry_run"
-  VERIFY_EXIT=1
-fi
-
-# Structured checklist (must pass for green install)
 CHECK_ARGS=( -m trading_agent.install_wizard checklist --env-file "$ENV_PATH" )
 if [[ -f "$HOME/.grok/trading-agent.env" ]]; then
   CHECK_ARGS+=( --env-file "$HOME/.grok/trading-agent.env" )
@@ -363,14 +355,15 @@ fi
 if [[ -f "$HOME/.grok/discord.env" ]]; then
   CHECK_ARGS+=( --env-file "$HOME/.grok/discord.env" )
 fi
+# Only demand live Discord secrets when user chose bot/webhook delivery
 if [[ "$DELIVERY_MODE" == "bot" || "$DELIVERY_MODE" == "webhook" ]]; then
   CHECK_ARGS+=( --require-live-discord )
 fi
-if ! "$PY" "${CHECK_ARGS[@]}"; then
-  fail "Required-env checklist failed"
-  VERIFY_EXIT=1
-else
+if "$PY" "${CHECK_ARGS[@]}"; then
   ok "Required-env checklist passed"
+else
+  fail "Required-env checklist failed — collect Discord credentials (or use --delivery-mode dry_run)"
+  VERIFY_EXIT=1
 fi
 
 # --- import check ---
