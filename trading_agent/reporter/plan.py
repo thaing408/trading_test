@@ -113,6 +113,12 @@ def render_daily_plan(plan: DailyTradingPlan) -> str:
             f"- News items synthesized: {rs.get('news_items', 0)}",
         ]
     )
+    if rs.get("candlestick_pa_note"):
+        lines.append(f"- Pattern framework: {rs['candlestick_pa_note']}")
+    if rs.get("pattern_signals"):
+        lines.append("- Price action / candlestick signals:")
+        for hit in rs["pattern_signals"][:8]:
+            lines.append(f"  - {hit}")
 
     if plan.research_summary.get("errors"):
         lines.append("\n**Data collection notes:**")

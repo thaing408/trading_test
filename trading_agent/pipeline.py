@@ -48,12 +48,15 @@ def _get_ohlcv(
                     "low": hourly.get("low", []),
                     "volume": hourly.get("volume", []),
                 }
-        return {
+        out = {
             "close": data.get("close", []),
             "high": data.get("high", []),
             "low": data.get("low", []),
             "volume": data.get("volume", []),
         }
+        if data.get("open"):
+            out["open"] = data["open"]
+        return out
 
     import yfinance as yf
 
@@ -61,12 +64,15 @@ def _get_ohlcv(
     hist = ticker.history(period=period, interval=interval)
     if hist.empty:
         return {"close": [], "high": [], "low": [], "volume": []}
-    return {
+    result = {
         "close": hist["Close"].tolist(),
         "high": hist["High"].tolist(),
         "low": hist["Low"].tolist(),
         "volume": hist["Volume"].tolist(),
     }
+    if "Open" in hist.columns:
+        result["open"] = hist["Open"].tolist()
+    return result
 
 
 def _analyze_candidate(
@@ -76,6 +82,7 @@ def _analyze_candidate(
 ) -> Tuple[TechnicalAnalysis, OptionsMetrics]:
     bars_30m: List[float] | None = None
     bars_15m: List[float] | None = None
+    opens: List[float] | None = None
     if config.fixture_mode:
         from trading_agent.collectors.base import load_fixture
 
@@ -84,6 +91,7 @@ def _analyze_candidate(
         highs = data.get("high", [])
         lows = data.get("low", [])
         volumes = data.get("volume", [])
+        opens = data.get("open") or None
         hourly = data.get("hourly", {})
         iv_history = data.get("iv_history", [0.25, 0.28, 0.30, 0.27])
         iv = data.get("iv", 0.28)
@@ -113,6 +121,7 @@ def _analyze_candidate(
         highs = daily["high"]
         lows = daily["low"]
         volumes = daily["volume"]
+        opens = daily.get("open")
         intraday = intraday_ohlcv
         bars_30m = m30.get("close") or None
         bars_15m = m15.get("close") or None
@@ -140,6 +149,7 @@ def _analyze_candidate(
         intraday_volumes=intraday.get("volume"),
         bars_30m=bars_30m,
         bars_15m=bars_15m,
+        opens=opens,
     )
     strike = round(candidate.price * (1.02 if technical.trend == "uptrend" else 0.98), 2)
     options = compute_options_metrics(
@@ -289,6 +299,13 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
     errors.extend(news.errors)
     errors.extend(screener.errors)
 
+    # Aggregate candlestick + institutional PA across analyzed names for research
+    pattern_hits: List[str] = []
+    for cand, tech, _ in analyzed:
+        if tech.pattern_summary and tech.pattern_summary != "none":
+            pattern_hits.append(f"{cand.symbol}: {tech.pattern_summary}")
+    # Also scan strength rejects' technical if available — analyzed only survivors+passed path
+    # Include rejections that still went through analysis (only analyzed list)
     research_summary: Dict[str, Any] = {
         "market_source": market.source,
         "calendar_source": calendar.source,
@@ -309,6 +326,11 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             "min_dollar_volume_avg_30d": strength_params.best_winners.min_dollar_volume_avg_30d,
             "min_dollar_volume_prior_day": strength_params.best_winners.min_dollar_volume_prior_day,
         },
+        "pattern_signals": pattern_hits[:12],
+        "candlestick_pa_note": (
+            "Institutional PA + candles (stop-hunt, fakeout, QML retest, RS flip; "
+            "hammer/engulfing/doji/shooting-star) inform research thesis and risk notes"
+        ),
         "qualified_count": len(qualified),
         "calendar_events": len(calendar.events),
         "news_items": len(news.items),

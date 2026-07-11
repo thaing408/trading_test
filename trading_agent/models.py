@@ -112,6 +112,11 @@ class TechnicalAnalysis:
     ema_200: float = 0.0
     breakout_state: str = "none"  # breakout | breakdown | none
     momentum: str = "neutral"  # bullish | bearish | neutral
+    # Candlestick + institutional PA (PenguinBTC cheat-sheet proxies)
+    candle_patterns: List[str] = field(default_factory=list)
+    pa_signals: List[str] = field(default_factory=list)
+    pattern_summary: str = "none"
+    pattern_notes: List[str] = field(default_factory=list)
 
 
 @dataclass

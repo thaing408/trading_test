@@ -6,6 +6,7 @@ from typing import Dict, List, Sequence
 
 import numpy as np
 
+from trading_agent.analysis.patterns import detect_all_patterns, pattern_score_adjustment
 from trading_agent.models import TechnicalAnalysis
 
 # Canonical TF labels for Trading Research prompt
@@ -292,6 +293,11 @@ def technical_score(ta: Dict[str, float | str]) -> float:
         score += 3
     elif ta.get("momentum") == "bearish":
         score -= 3
+    # Candlestick / institutional PA adjustment (bounded)
+    try:
+        score += float(ta.get("pattern_adj", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        pass
     return max(0.0, min(100.0, score))
 
 
@@ -315,6 +321,7 @@ def compute_technical_analysis(
     bars_4h: Sequence[float] | None = None,
     bars_30m: Sequence[float] | None = None,
     bars_15m: Sequence[float] | None = None,
+    opens: Sequence[float] | None = None,
 ) -> TechnicalAnalysis:
     """Compute technicals. Daily series is primary; lower TFs optional.
 
@@ -370,6 +377,18 @@ def compute_technical_analysis(
     brk = breakout_state(list(closes), list(highs), list(lows))
     mom = momentum_label(list(closes), rsi_val)
 
+    pattern_report = detect_all_patterns(
+        list(closes),
+        list(highs),
+        list(lows),
+        list(volumes) if volumes else None,
+        opens=list(opens) if opens else None,
+    )
+    candle_names = [s.name for s in pattern_report.signals if s.family == "candlestick"]
+    pa_names = [s.name for s in pattern_report.signals if s.family == "institutional_pa"]
+    pattern_notes = [s.note for s in pattern_report.signals if s.note]
+    pattern_adj = pattern_score_adjustment(pattern_report)
+
     ta = TechnicalAnalysis(
         symbol=symbol,
         trend=primary_trend,
@@ -396,6 +415,10 @@ def compute_technical_analysis(
         ema_200=e200,
         breakout_state=brk,
         momentum=mom,
+        candle_patterns=candle_names,
+        pa_signals=pa_names,
+        pattern_summary=pattern_report.summary(),
+        pattern_notes=pattern_notes,
     )
     ta.score = technical_score(
         {
@@ -407,6 +430,7 @@ def compute_technical_analysis(
             "timeframe_alignment": alignment,
             "breakout_state": brk,
             "momentum": mom,
+            "pattern_adj": pattern_adj,
         }
     )
     return ta

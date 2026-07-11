@@ -118,10 +118,14 @@ def _thesis(
         for k, v in technical.timeframe_trends.items()
         if k != "intraday" and v != "unavailable"
     )
+    pattern_bit = ""
+    if technical.pattern_summary and technical.pattern_summary != "none":
+        pattern_bit = f", patterns={technical.pattern_summary}"
     return (
         f"{strategy.direction} {strategy.name} on {candidate.symbol}: "
         f"trend={technical.trend}, momentum={technical.momentum}, "
-        f"breakout={technical.breakout_state}, RS={technical.relative_strength}, "
+        f"breakout={technical.breakout_state}, RS={technical.relative_strength}"
+        f"{pattern_bit}, "
         f"IVR={options.iv_rank}, POP={options.probability_of_profit:.0%}, "
         f"flow={options.institutional_flow_bias}; multi-TF [{tf}]"
     )
@@ -148,9 +152,24 @@ def _risks(
         risks.append("No confirmed breakout/breakdown at entry")
     if options.probability_of_touch > 0.7 and "Credit" in strategy.name:
         risks.append("High probability of touch on short strikes")
+    # Institutional PA traps (cheat-sheet) — caution when conflicting with trade direction
+    for name in technical.pa_signals or []:
+        if "fakeout" in name or "stop_hunt_supply" in name:
+            if strategy.direction == "Bullish" and ("breakout" in name or "supply" in name):
+                risks.append(f"Institutional PA caution: {name} (fakeout/stop-hunt trap risk)")
+        if "stop_hunt_demand" in name and strategy.direction == "Bearish":
+            risks.append(f"Institutional PA caution: {name} (demand liquidity grab)")
+        if name in ("shooting_star",) or name.endswith("bearish"):
+            if strategy.direction == "Bullish":
+                risks.append(f"Bearish PA/candle context: {name}")
+    for name in technical.candle_patterns or []:
+        if name in ("shooting_star", "bearish_engulfing", "doji") and strategy.direction == "Bullish":
+            risks.append(f"Candlestick caution: {name}")
+        if name in ("hammer", "bullish_engulfing") and strategy.direction == "Bearish":
+            risks.append(f"Candlestick caution: {name}")
     if not risks:
         risks.append("Standard gap and event risk into the session")
-    return risks[:5]
+    return risks[:6]
 
 
 def build_opportunities(
@@ -188,6 +207,9 @@ def build_opportunities(
             f"ATR {technical.atr}, BB {technical.bollinger_position}, VWAP {technical.vwap_relation}",
             f"Breakout={technical.breakout_state}, momentum={technical.momentum}, "
             f"volume profile={technical.volume_profile_bias}, RS={technical.relative_strength}",
+            f"Candles={','.join(technical.candle_patterns) or 'none'}; "
+            f"institutional PA={','.join(technical.pa_signals) or 'none'} "
+            f"({technical.pattern_summary})",
             f"Options IV {options.implied_volatility} IVR {options.iv_rank} IVP {options.iv_percentile} "
             f"EM {options.expected_move_pct}% POP {options.probability_of_profit} "
             f"POT {options.probability_of_touch} liq {options.liquidity_score} "
