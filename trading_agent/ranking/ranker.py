@@ -1,4 +1,4 @@
-"""Rank qualified setups by confidence and trade quality."""
+"""Rank qualified setups by setup grade (A+/A first), then quality/confidence."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ from trading_agent.models import (
     ScreenerCandidate,
     TechnicalAnalysis,
     TradeOpportunity,
+)
+from trading_agent.ranking.grades import (
+    GRADE_RANK,
+    assign_setup_grade,
+    grade_sort_key,
 )
 from trading_agent.strategy.selector import StrategySelection, select_strategy
 
@@ -67,35 +72,37 @@ def _trade_params(
     strategy: StrategySelection,
     options: OptionsMetrics,
     technical: TechnicalAnalysis,
+    *,
+    stop_atr_mult: float = 1.0,
+    target_atr_mult: float = 1.5,
+    size_multiplier: float = 1.0,
 ) -> dict:
+    """PT/SL from ATR × grade multipliers; risk/reward scaled by strategy + grade size."""
     atr = technical.atr or price * 0.02
     risk_unit = max(price * 0.02, atr)
     # Institutional floor: CIO min R:R is typically 2:1 — size reward leg accordingly
     if strategy.name in ("Iron Condor", "Bull Put Credit Spread", "Bear Call Credit Spread"):
-        max_risk = round(risk_unit * 1.5, 2)
-        max_reward = round(risk_unit * 3.0, 2)  # defined-risk credit R:R proxy ≥ 2
+        max_risk = round(risk_unit * 1.5 * size_multiplier, 2)
+        max_reward = round(risk_unit * 3.0 * max(size_multiplier, 0.5), 2)
     elif "Spread" in strategy.name or strategy.name in ("Calendar Spread", "Diagonal Spread"):
-        max_risk = round(risk_unit * 1.5, 2)
-        max_reward = round(risk_unit * 3.0, 2)
+        max_risk = round(risk_unit * 1.5 * size_multiplier, 2)
+        max_reward = round(risk_unit * 3.0 * max(size_multiplier, 0.5), 2)
     elif strategy.name in ("Long Call", "Long Put"):
-        max_risk = round(risk_unit * 2.5, 2)
-        max_reward = round(risk_unit * 5.0, 2)
+        max_risk = round(risk_unit * 2.5 * size_multiplier, 2)
+        max_reward = round(risk_unit * 5.0 * max(target_atr_mult / 1.5, 0.5), 2)
     elif strategy.name in ("Covered Call", "Cash Secured Put"):
-        # Premium strategies: reward = credit proxy, risk = assignment buffer — target ≥2:1 quality bar
-        max_risk = round(risk_unit, 2)
-        max_reward = round(risk_unit * 2.2, 2)
+        max_risk = round(risk_unit * size_multiplier, 2)
+        max_reward = round(risk_unit * 2.2 * max(target_atr_mult / 1.5, 0.5), 2)
     else:
-        max_risk = round(risk_unit, 2)
-        max_reward = round(risk_unit * 2.0, 2)
+        max_risk = round(risk_unit * size_multiplier, 2)
+        max_reward = round(risk_unit * 2.0 * max(target_atr_mult / 1.5, 0.5), 2)
 
     if strategy.direction == "Bearish":
-        profit_target = round(price - max_reward * 0.01 * price / 100 * 100, 2)
-        # clearer: move price by ATR fraction
-        profit_target = round(price - atr * 1.5, 2)
-        stop_loss = round(price + atr, 2)
+        profit_target = round(price - atr * target_atr_mult, 2)
+        stop_loss = round(price + atr * stop_atr_mult, 2)
     else:
-        profit_target = round(price + atr * 1.5, 2)
-        stop_loss = round(price - atr, 2)
+        profit_target = round(price + atr * target_atr_mult, 2)
+        stop_loss = round(price - atr * stop_atr_mult, 2)
 
     return {
         "entry_price": round(price, 2),
@@ -104,6 +111,8 @@ def _trade_params(
         "maximum_risk": max_risk,
         "maximum_reward": max_reward,
         "probability_of_success": options.probability_of_profit,
+        "stop_atr_mult": stop_atr_mult,
+        "target_atr_mult": target_atr_mult,
     }
 
 
@@ -112,6 +121,7 @@ def _thesis(
     technical: TechnicalAnalysis,
     options: OptionsMetrics,
     strategy: StrategySelection,
+    grade: str = "",
 ) -> str:
     tf = ", ".join(
         f"{k}={v}"
@@ -121,8 +131,10 @@ def _thesis(
     pattern_bit = ""
     if technical.pattern_summary and technical.pattern_summary != "none":
         pattern_bit = f", patterns={technical.pattern_summary}"
+    grade_bit = f"grade={grade}, " if grade else ""
     return (
         f"{strategy.direction} {strategy.name} on {candidate.symbol}: "
+        f"{grade_bit}"
         f"trend={technical.trend}, momentum={technical.momentum}, "
         f"breakout={technical.breakout_state}, RS={technical.relative_strength}"
         f"{pattern_bit}, "
@@ -136,8 +148,13 @@ def _risks(
     technical: TechnicalAnalysis,
     options: OptionsMetrics,
     strategy: StrategySelection,
+    grade: str = "",
 ) -> List[str]:
     risks: List[str] = []
+    if grade in ("C", "B"):
+        risks.append(f"Setup grade {grade} — take profits earlier; do not treat as runner")
+    if grade == "F":
+        risks.append("Setup grade F — do not deploy capital")
     if technical.timeframe_alignment == "conflicting":
         risks.append("Conflicting multi-timeframe trends")
     if options.iv_rank >= 70:
@@ -152,7 +169,6 @@ def _risks(
         risks.append("No confirmed breakout/breakdown at entry")
     if options.probability_of_touch > 0.7 and "Credit" in strategy.name:
         risks.append("High probability of touch on short strikes")
-    # Institutional PA traps (cheat-sheet) — caution when conflicting with trade direction
     for name in technical.pa_signals or []:
         if "fakeout" in name or "stop_hunt_supply" in name:
             if strategy.direction == "Bullish" and ("breakout" in name or "supply" in name):
@@ -172,34 +188,107 @@ def _risks(
     return risks[:6]
 
 
+def _min_grade_allowed(risk_config: RiskConfig) -> int:
+    min_g = getattr(risk_config, "min_setup_grade", "C") or "C"
+    return GRADE_RANK.get(min_g, GRADE_RANK["C"])
+
+
 def build_opportunities(
     qualified: List[Tuple[ScreenerCandidate, TechnicalAnalysis, OptionsMetrics]],
     risk_config: RiskConfig,
     max_count: int | None = None,
 ) -> List[TradeOpportunity]:
+    """Build ranked opportunities: A+/A first, then B, C. F excluded."""
     limit = max_count if max_count is not None else risk_config.top_candidates
-    scored: List[Tuple[float, ScreenerCandidate, TechnicalAnalysis, OptionsMetrics, StrategySelection]] = []
+    prefer_a = bool(getattr(risk_config, "prefer_a_tier_only", False))
+    max_rank_allowed = _min_grade_allowed(risk_config)
+
+    scored: List[
+        Tuple[
+            str,
+            float,
+            float,
+            float,
+            ScreenerCandidate,
+            TechnicalAnalysis,
+            OptionsMetrics,
+            StrategySelection,
+            object,
+        ]
+    ] = []
 
     for candidate, technical, options in qualified:
         confidence = compute_confidence_score(technical, options, candidate)
         if confidence < risk_config.min_confidence_score:
             continue
         strategy = select_strategy(technical, options, candidate.price)
-        scored.append((confidence, candidate, technical, options, strategy))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    opportunities: List[TradeOpportunity] = []
-
-    for rank, (confidence, candidate, technical, options, strategy) in enumerate(scored[:limit], 1):
-        params = _trade_params(candidate.price, strategy, options, technical)
-        expiry = (datetime.now() + timedelta(days=strategy.expiration_days)).strftime("%Y-%m-%d")
         quality = compute_trade_quality_score(technical, options, candidate, confidence)
-        thesis = _thesis(candidate, technical, options, strategy)
-        risks = _risks(candidate, technical, options, strategy)
+        grade_result = assign_setup_grade(
+            technical,
+            options,
+            candidate,
+            quality,
+            confidence,
+            direction=strategy.direction,
+        )
+        if grade_result.grade == "F":
+            continue
+        if GRADE_RANK.get(grade_result.grade, 99) > max_rank_allowed:
+            continue
+        if prefer_a and not grade_result.is_priority:
+            continue
+        scored.append(
+            (
+                grade_result.grade,
+                grade_result.grade_score,
+                quality,
+                confidence,
+                candidate,
+                technical,
+                options,
+                strategy,
+                grade_result,
+            )
+        )
+
+    # A+/A always before B/C; within grade by grade_score, quality, confidence
+    scored.sort(
+        key=lambda row: grade_sort_key(row[0], row[1], row[2], row[3]),
+    )
+
+    opportunities: List[TradeOpportunity] = []
+    for rank, (
+        grade,
+        grade_score,
+        quality,
+        confidence,
+        candidate,
+        technical,
+        options,
+        strategy,
+        grade_result,
+    ) in enumerate(scored[:limit], 1):
+        params = _trade_params(
+            candidate.price,
+            strategy,
+            options,
+            technical,
+            stop_atr_mult=grade_result.stop_atr_mult,
+            target_atr_mult=grade_result.target_atr_mult,
+            size_multiplier=grade_result.size_multiplier,
+        )
+        expiry = (datetime.now() + timedelta(days=strategy.expiration_days)).strftime("%Y-%m-%d")
+        thesis = _thesis(candidate, technical, options, strategy, grade=grade)
+        risks = _risks(candidate, technical, options, strategy, grade=grade)
         tf_summary = ", ".join(
             f"{k}={v}" for k, v in technical.timeframe_trends.items() if k != "intraday"
         )
         reasons = [
+            f"Setup grade {grade} (score {grade_score:.1f}) — trade priority "
+            f"{'HIGH (A-tier first)' if grade in ('A+', 'A') else 'secondary'}",
+            f"Hold style: {grade_result.hold_style}",
+            f"PT/SL geometry: target {grade_result.target_atr_mult}×ATR, "
+            f"stop {grade_result.stop_atr_mult}×ATR",
             f"Multi-timeframe: {tf_summary} (alignment: {technical.timeframe_alignment})",
             f"EMAs 9/20/50/200: {technical.ema_9:.2f}/{technical.ema_20:.2f}/"
             f"{technical.ema_50:.2f}/{technical.ema_200:.2f}; MA={technical.ma_alignment}",
@@ -218,6 +307,11 @@ def build_opportunities(
             f"RVOL {candidate.relative_volume}x, OI {candidate.open_interest}, "
             f"institutional score {candidate.institutional_score}",
         ]
+        # Surface top grade reasons
+        for gr in grade_result.reasons[:3]:
+            if gr not in reasons:
+                reasons.append(f"Grade factor: {gr}")
+
         opportunities.append(
             TradeOpportunity(
                 rank=rank,
@@ -239,6 +333,10 @@ def build_opportunities(
                 trade_thesis=thesis,
                 trade_quality_score=quality,
                 risks=risks,
+                setup_grade=grade,
+                grade_score=grade_score,
+                hold_style=grade_result.hold_style,
+                grade_reasons=list(grade_result.reasons),
             )
         )
 

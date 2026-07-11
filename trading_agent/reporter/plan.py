@@ -12,9 +12,11 @@ def _render_opportunity(opp: TradeOpportunity) -> str:
     reasons = "\n".join(f"    - {r}" for r in opp.supporting_reasons)
     risks = "\n".join(f"    - {r}" for r in (opp.risks or ["Standard session risk"]))
     return f"""
-### #{opp.rank} — {opp.symbol} ({opp.strategy})
+### #{opp.rank} — {opp.symbol} [{getattr(opp, 'setup_grade', 'C')}] ({opp.strategy})
 
 - **Ticker:** {opp.symbol}
+- **Setup Grade:** {getattr(opp, 'setup_grade', 'C')} ({getattr(opp, 'grade_score', 0):.1f}/100) — A+/A trade first
+- **Hold Style:** {getattr(opp, 'hold_style', '') or 'n/a'}
 - **Direction:** {opp.direction}
 - **Trade Thesis:** {opp.trade_thesis or "n/a"}
 - **Entry Price:** ${opp.entry_price:.2f}

@@ -141,7 +141,11 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
             strikes = ", ".join(f"${s:.2f}" for s in opp.strike_prices)
             lines.extend(
                 [
-                    f"### #{opp.rank} {opp.symbol} — {opp.direction} {opp.strategy}",
+                    f"### #{opp.rank} {opp.symbol} [{getattr(opp, 'setup_grade', 'C')}] — "
+                    f"{opp.direction} {opp.strategy}",
+                    f"- Grade: {getattr(opp, 'setup_grade', 'C')} "
+                    f"({getattr(opp, 'grade_score', 0):.0f}/100) | "
+                    f"{getattr(opp, 'hold_style', '') or 'n/a'}",
                     f"- Thesis: {opp.trade_thesis or 'n/a'}",
                     f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | Target ${opp.profit_target:.2f}",
                     f"- Strikes: {strikes} | Exp: {opp.expiration}",
@@ -166,11 +170,11 @@ def format_cio_plays(report: CIOReport, title: str = "CIO Decision Summary") -> 
         "",
     ]
     if report.approved:
-        lines.append("**Approved trades** (by conviction):")
+        lines.append("**Approved trades** (A+/A first, then by conviction):")
         for trade in report.approved:
             lines.extend(
                 [
-                    f"- **#{trade.conviction_rank} {trade.ticker}** — {trade.decision}: "
+                    f"- **#{trade.conviction_rank} {trade.ticker}** [{getattr(trade, 'setup_grade', 'C')}] — {trade.decision}: "
                     f"{trade.direction} {trade.strategy}",
                     f"  Entry ${trade.entry_price:.2f} | Size {trade.position_size_pct:.0f}% | "
                     f"Conf {trade.confidence_score:.0f} | Conviction {trade.conviction_score:.0f} | "

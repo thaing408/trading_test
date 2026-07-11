@@ -209,6 +209,29 @@ def decide_candidate(
     invalidation = _thesis_invalidation(candidate, context)
     hf = "Yes" if scorecard.hedge_fund_standard and decision == "Approve" else scorecard.hedge_fund_notes
 
+    grade = getattr(candidate, "setup_grade", "C") or "C"
+    hold = getattr(candidate, "hold_style", "") or ""
+    if grade in ("A+", "A"):
+        hold_period = "3-10 sessions (A-tier runner / swing)"
+        size_mult *= 1.0 if grade == "A+" else 0.95
+    elif grade == "B":
+        hold_period = "2-5 sessions (standard)"
+        size_mult *= 0.85
+    elif grade == "C":
+        hold_period = "1-3 sessions (early take-profit)"
+        size_mult *= 0.6
+        if decision == "Approve":
+            modifications.append("Grade C — reduce size and take profit early")
+            decision = "Approve with Modifications"
+    else:
+        hold_period = "0 — grade F no deployment"
+        size_mult = 0.0
+
+    if hold:
+        modifications = list(modifications)
+        if hold not in modifications:
+            modifications.append(f"Hold style ({grade}): {hold}")
+
     approved = ApprovedTrade(
         ticker=candidate.symbol,
         direction=candidate.direction,
@@ -223,7 +246,7 @@ def decide_candidate(
         profit_targets=[candidate.profit_target],
         stop_loss=candidate.stop_loss,
         exit_criteria=invalidation,
-        estimated_holding_period="2-5 sessions",
+        estimated_holding_period=hold_period,
         probability_of_success=candidate.probability_of_success,
         confidence_score=adj_conf,
         risk_rating="Medium",
@@ -245,6 +268,9 @@ def decide_candidate(
         capital_efficiency=scorecard.capital_efficiency,
         estimated_drawdown_pct=scorecard.estimated_trade_drawdown_pct,
         correlation_group=candidate.correlation_group or candidate.sector,
+        setup_grade=grade,
+        grade_score=float(getattr(candidate, "grade_score", 0.0) or 0.0),
+        hold_style=hold,
     )
     apply_risk_rating(approved, rr)
     return decision, approved.decision_explanation, scorecard, scorecard.challenges, approved
@@ -327,9 +353,15 @@ def process_all_candidates(
                 )
             )
 
-    # Rank by conviction (highest first)
-    approved.sort(key=lambda t: t.conviction_score, reverse=True)
-    modified.sort(key=lambda t: t.conviction_score, reverse=True)
+    # A+/A first, then conviction within grade
+    from trading_agent.ranking.grades import GRADE_RANK
+
+    def _cio_sort_key(t: ApprovedTrade):
+        g = getattr(t, "setup_grade", "C") or "C"
+        return (GRADE_RANK.get(g, 99), -t.conviction_score, -float(getattr(t, "grade_score", 0) or 0))
+
+    approved.sort(key=_cio_sort_key)
+    modified.sort(key=_cio_sort_key)
     for i, t in enumerate(approved, 1):
         t.conviction_rank = i
     for i, t in enumerate(modified, 1):

@@ -44,6 +44,9 @@ class TradeCandidate:
     market_cap_tier: str = "large"
     correlation_group: str = ""
     phase1_rank: int = 0
+    setup_grade: str = "C"
+    grade_score: float = 0.0
+    hold_style: str = ""
 
 
 @dataclass
@@ -126,6 +129,9 @@ class ApprovedTrade:
     capital_efficiency: float = 0.0
     estimated_drawdown_pct: float = 0.0
     correlation_group: str = ""
+    setup_grade: str = "C"
+    grade_score: float = 0.0
+    hold_style: str = ""
 
 
 @dataclass

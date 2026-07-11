@@ -161,6 +161,11 @@ class TradeOpportunity:
     trade_thesis: str = ""
     trade_quality_score: float = 0.0
     risks: List[str] = field(default_factory=list)
+    # Setup letter grade (A+/A/B/C/F) — A/A+ ranked first; drives PT/SL geometry
+    setup_grade: str = "C"
+    grade_score: float = 0.0
+    hold_style: str = ""
+    grade_reasons: List[str] = field(default_factory=list)
 
 
 @dataclass

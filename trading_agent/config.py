@@ -26,6 +26,10 @@ class RiskConfig:
     min_technical_score: float = 40.0
     top_watchlist_size: int = 10
     top_candidates: int = 5
+    # Letter grades: A+/A always ranked first. F is never a trade opportunity.
+    # min_setup_grade: lowest letter still allowed into ranked opportunities (default C).
+    min_setup_grade: str = "C"
+    prefer_a_tier_only: bool = False  # if True, only A+/A become ranked opportunities
 
 
 @dataclass

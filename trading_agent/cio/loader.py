@@ -147,6 +147,9 @@ def build_cio_approval_inputs(
                     sector=sector,
                     correlation_group=sector,
                     phase1_rank=opp.rank,
+                    setup_grade=getattr(opp, "setup_grade", "C") or "C",
+                    grade_score=float(getattr(opp, "grade_score", 0.0) or 0.0),
+                    hold_style=getattr(opp, "hold_style", "") or "",
                 )
             )
         return candidates, context
