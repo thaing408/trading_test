@@ -79,42 +79,70 @@ def test_fakeout_failed_breakout():
     assert detect_fakeout(flat, flat, flat) == []
 
 
-def test_rs_flip_support_proxy():
-    # Early high ~100, later trade above, retest near 100 from above
-    closes = [90 + i * 0.5 for i in range(20)] + [105, 104, 103, 101, 100.5, 101.2]
-    highs = [c + 1 for c in closes]
-    lows = [c - 1 for c in closes]
-    # Ensure early high is ~99-100 region
-    highs[5] = 100.0
-    lows[-1] = 99.5
-    closes[-1] = 101.0
+def test_rs_flip_support_pass_and_fail():
+    # Early resistance ~100, later trade above, retest holds as support
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    for i in range(15):
+        c = 90.0 + i * 0.5
+        closes.append(c)
+        highs.append(c + 1.0)
+        lows.append(c - 1.0)
+    highs[10] = 100.0  # early high / resistance
+    for i in range(15):
+        c = 100.0 + i * 1.2
+        closes.append(c)
+        highs.append(c + 1.0)
+        lows.append(c - 1.0)
+    lows[-1] = 99.2
+    closes[-1] = 100.8
+    highs[-1] = 101.5
     hits = detect_rs_flip(highs, lows, closes, lookback=20)
-    assert any("rs_flip" in s.name for s in hits) or hits == hits  # may be sensitive
+    assert any(s.name == "rs_flip_support" for s in hits), f"expected rs_flip_support, got {hits}"
+    assert all(s.family == "institutional_pa" for s in hits)
     # Flat noise must not invent flip
     flat = [50.0] * 25
     assert detect_rs_flip(flat, flat, flat) == []
 
 
-def test_qml_retest_or_empty_on_noise():
-    # Structured series for bullish QML proxy
-    closes = (
-        [100, 102, 104, 106, 108, 110, 112, 115]  # rise to HH
-        + [113, 110, 105, 100, 95]  # LL
-        + [98, 102, 106, 110, 112]  # reclaim
-    )
-    highs = [c + 1.5 for c in closes]
-    lows = [c - 1.5 for c in closes]
-    highs[7] = 116
-    lows[12] = 93
+def test_qml_retest_pass_and_fail():
+    # HH in middle third → LL → reclaim left-structure (QML) level
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    for i in range(8):
+        c = 100.0 + i
+        closes.append(c)
+        highs.append(c + 2.0)
+        lows.append(c - 1.0)
+    highs[6] = 111.0  # left structure / QML zone
+    for i in range(8):
+        c = 108.0 + i * 1.5
+        closes.append(c)
+        highs.append(c + 1.0)
+        lows.append(c - 1.0)
+    highs[10] = 122.0
+    closes[10] = 120.0
+    for j in range(11, 16):
+        closes[j] = 120.0 - (j - 10) * 5.0
+        highs[j] = closes[j] + 1.0
+        lows[j] = closes[j] - 1.0
+    lows[15] = 90.0  # LL after HH
+    for i in range(8):
+        c = 92.0 + i * 3.0
+        closes.append(c)
+        highs.append(c + 1.0)
+        lows.append(c - 1.0)
     hits = detect_qml_retest(highs, lows, closes)
-    # Accept detection or empty if structure threshold not met — but noise must be empty
+    assert any(s.name == "qml_retest" for s in hits), f"expected qml_retest, got {hits}"
+    assert all("qml" in s.name for s in hits)
+    assert all(s.bias == "bullish" for s in hits if s.name == "qml_retest")
+    # Flat / noise must not invent QML
     noise_c = [100.0] * 30
     noise_h = [100.2] * 30
     noise_l = [99.8] * 30
     assert detect_qml_retest(noise_h, noise_l, noise_c) == []
-    # If structured path fires, name must be qml family
-    for s in hits:
-        assert "qml" in s.name
 
 
 def test_detect_all_patterns_and_score_adj():
