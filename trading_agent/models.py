@@ -76,6 +76,9 @@ class ScreenerCandidate:
     market_cap: float = 0.0  # 0 = unknown / not provided
     institutional_score: float = 0.0
     options_volume: int = 0
+    # Pre-market observe/prepare fields (optional; 0 = not provided)
+    gap_pct: float = 0.0
+    premarket_relative_volume: float = 0.0
 
 
 @dataclass

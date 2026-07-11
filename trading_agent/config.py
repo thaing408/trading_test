@@ -53,14 +53,23 @@ class AgentConfig:
     output_file: str | None = None
     risk: RiskConfig = field(default_factory=RiskConfig)
     screener: ScreenerConfig = field(default_factory=ScreenerConfig)
+    # Komar-style strength + pre-market gap/RVOL gates (in addition to institutional floors)
+    apply_strength_gates: bool = True
+    apply_premarket_gap_rvol: bool = True
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
         fixture = os.getenv("TRADING_AGENT_FIXTURE", "").lower() in ("1", "true", "yes")
         live = os.getenv("TRADING_AGENT_LIVE", "1").lower() not in ("0", "false", "no")
         output = os.getenv("TRADING_AGENT_OUTPUT")
+        strength = os.getenv("TRADING_AGENT_STRENGTH_GATES", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
         return cls(
             use_live_data=live and not fixture,
             fixture_mode=fixture,
             output_file=output,
+            apply_strength_gates=strength,
         )

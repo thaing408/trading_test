@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from trading_agent.analysis.options import compute_options_metrics
+from trading_agent.analysis.strength import evaluate_premarket_gates, evaluate_strength_gates
 from trading_agent.analysis.technical import compute_technical_analysis
 from trading_agent.collectors import (
     collect_economic_calendar,
@@ -24,6 +25,7 @@ from trading_agent.models import (
 )
 from trading_agent.ranking.ranker import build_opportunities
 from trading_agent.risk.manager import evaluate_risk
+from trading_agent.screener_params import get_screener_params
 from trading_agent.synthesis.market_context import build_watchlist, synthesize_market_context
 
 
@@ -156,6 +158,18 @@ def _analyze_candidate(
     return technical, options
 
 
+def _candidate_ohlcv(symbol: str, config: AgentConfig) -> Dict[str, List[float]]:
+    """Daily OHLCV for strength gates (fixture or live)."""
+    bars = _get_ohlcv(symbol, config, interval="1d", period="1y")
+    if config.fixture_mode:
+        from trading_agent.collectors.base import load_fixture
+
+        data = load_fixture("ohlcv.json").get(symbol, {})
+        if "open" in data:
+            bars["open"] = data["open"]
+    return bars
+
+
 def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
     market = collect_market_snapshot(config)
     calendar = collect_economic_calendar(config)
@@ -174,8 +188,49 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         bench_closes = load_fixture("ohlcv.json").get("SPY", {}).get("close")
 
     analyzed: List[Tuple[ScreenerCandidate, TechnicalAnalysis, OptionsMetrics]] = []
+    strength_rejected: List[RejectedSetup] = []
+    strength_survivors: List[Tuple[ScreenerCandidate, TechnicalAnalysis, OptionsMetrics]] = []
+    strength_params = get_screener_params()
+
     for candidate in screener.candidates:
         technical, options = _analyze_candidate(candidate, config, bench_closes)
+        if config.apply_strength_gates:
+            bars = _candidate_ohlcv(candidate.symbol, config)
+            rvol = (
+                candidate.premarket_relative_volume
+                if candidate.premarket_relative_volume
+                else candidate.relative_volume
+            )
+            strength = evaluate_strength_gates(
+                bars.get("close", []),
+                bars.get("high", []),
+                bars.get("low", []),
+                bars.get("volume", []),
+                opens=bars.get("open") or None,
+                relative_volume=rvol,
+                gap_pct=candidate.gap_pct if candidate.gap_pct else None,
+                params=strength_params.best_winners,
+            )
+            if not strength.passed:
+                strength_rejected.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason="; ".join(strength.reasons),
+                    )
+                )
+                continue
+            # Optional pre-market gap/RVOL: observe/prepare signal only (not auto-buy).
+            # Hard strength gates already passed; soft-miss does not drop survivors.
+            if config.apply_premarket_gap_rvol and strength.metrics is not None:
+                strength.metrics.relative_volume = rvol
+                if candidate.gap_pct:
+                    strength.metrics.gap_pct = candidate.gap_pct
+                evaluate_premarket_gates(
+                    strength.metrics,
+                    strength_eval=strength,
+                    params=strength_params.pre_market,
+                )
+            strength_survivors.append((candidate, technical, options))
         analyzed.append((candidate, technical, options))
 
     qualified, rejected = evaluate_risk(analyzed, config.risk)
@@ -195,7 +250,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
                 )
             )
 
-    all_rejections = rejected + low_confidence_rejected
+    all_rejections = strength_rejected + rejected + low_confidence_rejected
     stay_in_cash = len(opportunities) == 0
     cash_reason = ""
     if stay_in_cash:
@@ -204,11 +259,26 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             f"({len(all_rejections)} rejected). Recommend staying in cash until higher-quality "
             "opportunities emerge."
         )
+        if strength_rejected:
+            cash_reason += (
+                f" Strength/pre-market screen rejected {len(strength_rejected)} "
+                "(ADR%/52w/EMA/3m/dollar-volume or gap-RVOL gates)."
+            )
         if context.high_impact_events:
             cash_reason += f" High-impact calendar: {context.high_impact_events[0]}."
 
+    # Prefer strength survivors on watchlist when strength gates are active
+    watch_pool = (
+        [c for c, _, _ in strength_survivors]
+        if config.apply_strength_gates and strength_survivors
+        else screener.candidates
+    )
+    if config.apply_strength_gates and not strength_survivors:
+        # All failed strength — still show symbols but rejections name the gates
+        watch_pool = screener.candidates
+
     top_watchlist = build_watchlist(
-        screener.candidates,
+        watch_pool,
         context,
         limit=config.risk.top_watchlist_size,
     )
@@ -225,6 +295,20 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "news_source": news.source,
         "screener_source": screener.source,
         "candidates_screened": len(screener.candidates),
+        "strength_screened": len(screener.candidates) if config.apply_strength_gates else 0,
+        "strength_survivors": len(strength_survivors),
+        "strength_rejected": len(strength_rejected),
+        "strength_profile": strength_params.best_winners.name,
+        "premarket_profile": strength_params.pre_market.name,
+        "screener_params": {
+            "min_adr_pct": strength_params.best_winners.min_adr_pct,
+            "min_pct_above_52w_low": strength_params.best_winners.min_pct_above_52w_low,
+            "ema_fast": strength_params.best_winners.ema_fast,
+            "ema_slow": strength_params.best_winners.ema_slow,
+            "min_performance_3m_pct": strength_params.best_winners.min_performance_3m_pct,
+            "min_dollar_volume_avg_30d": strength_params.best_winners.min_dollar_volume_avg_30d,
+            "min_dollar_volume_prior_day": strength_params.best_winners.min_dollar_volume_prior_day,
+        },
         "qualified_count": len(qualified),
         "calendar_events": len(calendar.events),
         "news_items": len(news.items),

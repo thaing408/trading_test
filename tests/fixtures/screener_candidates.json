@@ -12,7 +12,9 @@
       "avg_daily_volume": 40000000,
       "market_cap": 3200000000000,
       "institutional_score": 78.0,
-      "options_volume": 120000
+      "options_volume": 120000,
+      "gap_pct": 2.5,
+      "premarket_relative_volume": 2.8
     },
     {
       "symbol": "AAPL",
@@ -26,7 +28,9 @@
       "avg_daily_volume": 50000000,
       "market_cap": 3400000000000,
       "institutional_score": 82.0,
-      "options_volume": 90000
+      "options_volume": 90000,
+      "gap_pct": 0.3,
+      "premarket_relative_volume": 1.1
     },
     {
       "symbol": "SPY",
@@ -40,7 +44,9 @@
       "avg_daily_volume": 75000000,
       "market_cap": 500000000000,
       "institutional_score": 90.0,
-      "options_volume": 200000
+      "options_volume": 200000,
+      "gap_pct": 0.1,
+      "premarket_relative_volume": 1.0
     },
     {
       "symbol": "AMD",
@@ -54,7 +60,9 @@
       "avg_daily_volume": 30000000,
       "market_cap": 250000000000,
       "institutional_score": 70.0,
-      "options_volume": 45000
+      "options_volume": 45000,
+      "gap_pct": 3.2,
+      "premarket_relative_volume": 3.0
     },
     {
       "symbol": "TSLA",
@@ -68,7 +76,9 @@
       "avg_daily_volume": 85000000,
       "market_cap": 800000000000,
       "institutional_score": 72.0,
-      "options_volume": 150000
+      "options_volume": 150000,
+      "gap_pct": 1.8,
+      "premarket_relative_volume": 2.5
     },
     {
       "symbol": "XLF",
