@@ -271,6 +271,54 @@ def checklist_ok(items: list[CheckItem]) -> bool:
     return all(i.ok for i in items)
 
 
+def desk_production_env_checks(env: Mapping[str, str]) -> list[CheckItem]:
+    """
+    Gates for Mon–Fri 1:55 live desk (full day, not prep-only dry-run).
+
+    launchd sources ~/.grok/trading-agent.env — UNTIL_PHASE=preopen or DRY_RUN=1
+    would skip intraday/performance or skip Discord.
+    """
+    items: list[CheckItem] = []
+    until = (env.get("TRADING_AGENT_UNTIL_PHASE") or "").strip().lower()
+    if until in ("", "full", "all", "all_phases", "7"):
+        items.append(CheckItem("until_phase_full_day", True, until or "unset (full 7-phase day)"))
+    else:
+        items.append(
+            CheckItem(
+                "until_phase_full_day",
+                False,
+                f"TRADING_AGENT_UNTIL_PHASE={until} caps desk before full day "
+                f"(use full/unset for Monday market)",
+            )
+        )
+
+    dry = _truthy(env.get("TRADING_AGENT_DRY_RUN", ""))
+    no_discord = _truthy(env.get("TRADING_AGENT_NO_DISCORD", ""))
+    if dry:
+        items.append(
+            CheckItem(
+                "not_dry_run",
+                False,
+                "TRADING_AGENT_DRY_RUN=1 — live desk would not post/submit",
+            )
+        )
+    else:
+        items.append(CheckItem("not_dry_run", True, "dry-run off"))
+
+    if no_discord:
+        items.append(
+            CheckItem(
+                "discord_enabled",
+                False,
+                "TRADING_AGENT_NO_DISCORD=1 — desk posts disabled",
+            )
+        )
+    else:
+        items.append(CheckItem("discord_enabled", True, "Discord not opted out"))
+
+    return items
+
+
 def parse_env_file(text: str) -> dict[str, str]:
     """Parse KEY=VALUE lines; ignore comments and blanks."""
     result: dict[str, str] = {}

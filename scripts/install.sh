@@ -27,6 +27,9 @@ SKIP_AUTOMATION=0
 SKIP_FIRST_RUN=0
 SKIP_PIP=0
 USE_VENV=1
+FORCE_ENV=0
+# Launchd bridge env is always full-day production unless explicitly prep-only
+DESK_FULL_DAY=1
 
 usage() {
   cat <<'EOF'
@@ -37,16 +40,23 @@ Usage: bash scripts/install.sh [options]
   --discord-token TOKEN
   --discord-webhook-url URL
   --discord-channel-id ID
-  --until-phase PHASE        preopen (default) | full | ...
+  --until-phase PHASE        full (default for live desk) | preopen | ...
   --python PATH              Python interpreter
   --portfolio-value N
   --timezone TZ
-  --enable-automation        Install launchd agent (macOS)
+  --enable-automation        Install launchd agent (macOS Mon–Fri 1:55)
   --skip-automation
   --skip-first-run
   --skip-pip
   --no-venv                  Install into current Python (no .venv)
+  --force-env                Overwrite existing .env / ~/.grok/trading-agent.env
   -h, --help
+
+Notes:
+  • Existing production env files are NOT overwritten unless --force-env.
+  • dry_run delivery never writes TRADING_AGENT_DRY_RUN into the launchd
+    bridge (~/.grok/trading-agent.env); that file stays full-day live-capable.
+  • TRADING_AGENT_UNTIL_PHASE is omitted from the launchd bridge (full 7 phases).
 EOF
 }
 
@@ -66,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --skip-first-run) SKIP_FIRST_RUN=1; shift ;;
     --skip-pip) SKIP_PIP=1; shift ;;
     --no-venv) USE_VENV=0; shift ;;
+    --force-env) FORCE_ENV=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -195,15 +206,6 @@ case "$DELIVERY_MODE" in
     ;;
 esac
 
-if [[ -z "$UNTIL_PHASE" ]]; then
-  if [[ "$NONINTERACTIVE" -eq 1 ]]; then
-    UNTIL_PHASE="preopen"
-  else
-    echo "Phase scope: preopen = prep 1-4 (recommended without brokerage); full = all 7."
-    UNTIL_PHASE="$(read_default "Until-phase" "preopen")"
-  fi
-fi
-
 if [[ "$SKIP_AUTOMATION" -eq 1 ]]; then
   DO_AUTO=0
 elif [[ "$ENABLE_AUTOMATION" -eq 1 ]]; then
@@ -213,6 +215,24 @@ elif [[ "$NONINTERACTIVE" -eq 1 ]]; then
 else
   DO_AUTO="$(read_yes_no "Install weekday launchd automation (macOS, 01:55 AM PT)?" 0)"
 fi
+
+# Phase scope: live automation always full-day; prep-only only for explicit prep installs
+if [[ -z "$UNTIL_PHASE" ]]; then
+  if [[ "$DO_AUTO" -eq 1 ]]; then
+    UNTIL_PHASE="full"
+  elif [[ "$NONINTERACTIVE" -eq 1 ]]; then
+    # Non-interactive without automation: still default full for desk readiness;
+    # dry_run delivery stays opt-out Discord only (not phase-capped).
+    UNTIL_PHASE="full"
+  else
+    echo "Phase scope: full = all 7 phases (Monday market); preopen = prep 1-4 only."
+    UNTIL_PHASE="$(read_default "Until-phase" "full")"
+  fi
+fi
+# Normalize aliases
+case "$(printf '%s' "$UNTIL_PHASE" | tr '[:upper:]' '[:lower:]')" in
+  full|all|all_phases|7|"") UNTIL_PHASE="full" ;;
+esac
 
 DO_FIRST=1
 if [[ "$SKIP_FIRST_RUN" -eq 1 ]]; then
@@ -235,49 +255,76 @@ fi
 step "Writing environment files"
 ENV_PATH="$REPO_ROOT/.env"
 EXAMPLE_PATH="$REPO_ROOT/.env.example"
-# --flag=value keeps empty strings from eating the next argument
-WRITE_ARGS=(
-  -m trading_agent.install_wizard write-env
-  "--output=$ENV_PATH"
-  "--delivery-mode=$DELIVERY_MODE"
-  "--discord-token=$DISCORD_TOKEN"
-  "--discord-webhook-url=$DISCORD_WEBHOOK_URL"
-  "--discord-channel-id=$DISCORD_CHANNEL_ID"
-  "--until-phase=$UNTIL_PHASE"
-  "--timezone=$TIMEZONE"
-  "--python-path=$PY"
-  "--portfolio-value=$PORTFOLIO_VALUE"
-  --strict
-)
-if [[ -f "$EXAMPLE_PATH" ]]; then
-  WRITE_ARGS+=("--example=$EXAMPLE_PATH")
+WROTE_REPO_ENV=0
+if [[ -f "$ENV_PATH" && "$FORCE_ENV" -ne 1 ]]; then
+  warn "Preserving existing $ENV_PATH (pass --force-env to overwrite)"
+else
+  # --flag=value keeps empty strings from eating the next argument
+  WRITE_ARGS=(
+    -m trading_agent.install_wizard write-env
+    "--output=$ENV_PATH"
+    "--delivery-mode=$DELIVERY_MODE"
+    "--discord-token=$DISCORD_TOKEN"
+    "--discord-webhook-url=$DISCORD_WEBHOOK_URL"
+    "--discord-channel-id=$DISCORD_CHANNEL_ID"
+    "--until-phase=$UNTIL_PHASE"
+    "--timezone=$TIMEZONE"
+    "--python-path=$PY"
+    "--portfolio-value=$PORTFOLIO_VALUE"
+    --strict
+  )
+  if [[ -f "$EXAMPLE_PATH" ]]; then
+    WRITE_ARGS+=("--example=$EXAMPLE_PATH")
+  fi
+  "$PY" "${WRITE_ARGS[@]}"
+  ok "Env written: $ENV_PATH"
+  WROTE_REPO_ENV=1
 fi
-"$PY" "${WRITE_ARGS[@]}"
-ok "Env written: $ENV_PATH"
 
-# Also write ~/.grok/trading-agent.env on macOS for launchd bridge compatibility
+# Launchd bridge env: ALWAYS full-day, never dry-run/no-discord (production desk)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   mkdir -p "$HOME/.grok" "$HOME/.trading_agent/logs"
   GROK_ENV="$HOME/.grok/trading-agent.env"
+  step "Writing launchd bridge env (full 7-phase day; never dry-run)"
+  # Snapshot existing secrets before rewrite
+  PREV_GROK=""
+  if [[ -f "$GROK_ENV" ]]; then
+    PREV_GROK="$(mktemp)"
+    cp "$GROK_ENV" "$PREV_GROK"
+  fi
   {
-    echo "# Synced by scripts/install.sh"
+    echo "# Launchd bridge — full 7-phase desk (managed by install.sh)"
+    echo "# Full day: leave phase/dry-run keys unset so session runs all phases live."
     echo "TRADING_AGENT_PYTHON=$PY"
     echo "TRADING_AGENT_ENV_FILE=$ENV_PATH"
     echo "TRADING_AGENT_TIMEZONE=$TIMEZONE"
-    if [[ "$UNTIL_PHASE" != "full" && -n "$UNTIL_PHASE" ]]; then
-      echo "TRADING_AGENT_UNTIL_PHASE=$UNTIL_PHASE"
+    echo "TRADING_AGENT_POSITIONS_FILE=${TRADING_AGENT_POSITIONS_FILE:-$HOME/.trading_agent/positions.json}"
+    # Channel / tokens: flags win, else preserve previous bridge file
+    if [[ -n "$DISCORD_CHANNEL_ID" ]]; then
+      echo "DISCORD_CHANNEL_ID=$DISCORD_CHANNEL_ID"
+      echo "DISCORD_DESK_CHANNEL_ID=$DISCORD_CHANNEL_ID"
+    elif [[ -n "$PREV_GROK" ]]; then
+      grep '^DISCORD_CHANNEL_ID=' "$PREV_GROK" 2>/dev/null || echo "DISCORD_CHANNEL_ID=1510184298442002502"
+      grep '^DISCORD_DESK_CHANNEL_ID=' "$PREV_GROK" 2>/dev/null || true
+    else
+      echo "DISCORD_CHANNEL_ID=1510184298442002502"
+      echo "DISCORD_DESK_CHANNEL_ID=1510184298442002502"
     fi
-    echo "DISCORD_CHANNEL_ID=$DISCORD_CHANNEL_ID"
     if [[ -n "$DISCORD_TOKEN" ]]; then
       echo "DISCORD_TOKEN=$DISCORD_TOKEN"
-      # Grok bridge often expects DISCORD_BOT_TOKEN
       echo "DISCORD_BOT_TOKEN=$DISCORD_TOKEN"
+    elif [[ -n "$PREV_GROK" ]]; then
+      grep -E '^DISCORD_TOKEN=' "$PREV_GROK" 2>/dev/null || true
+      grep -E '^DISCORD_BOT_TOKEN=' "$PREV_GROK" 2>/dev/null || true
     fi
     if [[ -n "$DISCORD_WEBHOOK_URL" ]]; then
       echo "DISCORD_WEBHOOK_URL=$DISCORD_WEBHOOK_URL"
+    elif [[ -n "$PREV_GROK" ]]; then
+      grep '^DISCORD_WEBHOOK_URL=' "$PREV_GROK" 2>/dev/null || true
     fi
   } > "$GROK_ENV"
-  ok "Also wrote $GROK_ENV"
+  [[ -n "$PREV_GROK" ]] && rm -f "$PREV_GROK"
+  ok "Launchd bridge $GROK_ENV is full-day (no UNTIL_PHASE / no dry-run)"
 fi
 
 # shellcheck disable=SC1090

@@ -80,6 +80,8 @@ def test_live_mode_without_trades_file_is_empty_not_fixture():
     assert "demo fixture" not in text
     assert "NVDA" not in text  # fixture sample trade must not appear
     assert "Data source:" in text
+    assert "empty journal" in text
+    assert "live journal" not in text
 
 
 def test_fixture_mode_still_loads_demo_trades():
@@ -88,3 +90,42 @@ def test_fixture_mode_still_loads_demo_trades():
     assert report.metrics.trade_count == 4
     assert report.metadata.get("trades_source") == "fixture/completed_trades.json"
     assert report.metadata.get("trades_is_fixture") is True
+
+def test_live_journal_label_when_trades_present(tmp_path):
+    from trading_agent.session.play_formatter import format_performance_plays
+    from trading_agent.performance.config import PerformanceConfig
+    from trading_agent.performance.pipeline import run_performance_pipeline
+    import json
+    trades = {
+        "trades": [
+            {
+                "symbol": "QQQ",
+                "entry": 1.0,
+                "exit": 1.3,
+                "profit_loss": 30.0,
+                "holding_time_minutes": 10,
+                "strategy": "Long Call",
+                "technical_setup": "breakout",
+                "news_catalyst": "none",
+                "market_conditions": "bullish",
+                "volatility_environment": "low",
+                "risk_reward_ratio": 1.5,
+                "probability_of_success": 0.5,
+                "confidence_score": 60.0,
+                "position_size": 1,
+                "max_drawdown": 5.0,
+                "max_favorable_excursion": 35.0,
+                "max_adverse_excursion": 5.0,
+            }
+        ]
+    }
+    path = tmp_path / "real_trades.json"
+    path.write_text(json.dumps(trades), encoding="utf-8")
+    report = run_performance_pipeline(
+        PerformanceConfig(fixture_mode=False, trades_file=str(path), history_file=None)
+    )
+    text = format_performance_plays(report)
+    assert report.metrics.trade_count == 1
+    assert "live journal" in text
+    assert "empty journal" not in text
+    assert "demo fixture" not in text

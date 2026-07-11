@@ -231,10 +231,15 @@ def format_performance_plays(report: PerformanceReport) -> str:
     meta = report.metadata or {}
     source = meta.get("trades_source", "unknown")
     is_fixture = bool(meta.get("trades_is_fixture"))
+    if is_fixture:
+        source_note = " ⚠️ **demo fixture — not live P/L**"
+    elif m.trade_count == 0:
+        source_note = " (empty journal — no closed trades loaded)"
+    else:
+        source_note = " (live journal)"
     lines = [
         f"**Performance Review — {report.date}**",
-        f"**Data source:** `{source}`"
-        + (" ⚠️ **demo fixture — not live P/L**" if is_fixture else " (live/empty journal)"),
+        f"**Data source:** `{source}`{source_note}",
         f"**Session P/L:** ${m.total_profit_loss:+.2f} | Win rate: {m.win_rate:.0%} "
         f"({m.winner_count}W/{m.loser_count}L) | trades={m.trade_count}",
         f"**Profit factor:** {m.profit_factor:.2f} | Expectancy: ${m.expectancy:.2f}/trade",

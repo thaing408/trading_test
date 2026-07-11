@@ -64,7 +64,7 @@ set -a
 . "$HOME/.grok/discord.env" 2>/dev/null || true
 set +a
 export DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-${DISCORD_TOKEN:-}}"
-export DISCORD_CHANNEL_ID="${DISCORD_DESK_CHANNEL_ID:-1510184298442002502}"
+export DISCORD_CHANNEL_ID="${DISCORD_DESK_CHANNEL_ID:-${DISCORD_CHANNEL_ID:-1510184298442002502}}"
 
 PYTHON="${TRADING_AGENT_PYTHON:-$REPO/.venv/bin/python}"
 if [ -x "$PYTHON" ] && "$PYTHON" -c "import trading_agent"; then
@@ -76,6 +76,38 @@ if [ -n "${DISCORD_TOKEN:-}" ] && [ -n "${DISCORD_CHANNEL_ID:-}" ]; then
   pass "Discord bot credentials present"
 else
   fail "Discord bot credentials missing"
+fi
+
+# 4b) Production desk must be full-day + not dry-run (Monday market)
+# Process env (from bridge) wins; then secondary .env fills only unset keys (dotenv override=False)
+export DESK_SECONDARY_ENV="${TRADING_AGENT_ENV_FILE:-$REPO/.env}"
+if "$PYTHON" - <<'PY'
+from pathlib import Path
+import os
+from trading_agent.install_wizard import (
+    parse_env_file,
+    desk_production_env_checks,
+    checklist_ok,
+)
+
+merged = {
+    k: v
+    for k, v in os.environ.items()
+    if k.startswith("TRADING_AGENT_") or k.startswith("DISCORD_")
+}
+secondary = Path(os.environ.get("DESK_SECONDARY_ENV", ""))
+if secondary.is_file():
+    for k, v in parse_env_file(secondary.read_text(encoding="utf-8")).items():
+        merged.setdefault(k, v)
+items = desk_production_env_checks(merged)
+for i in items:
+    print(("PASS" if i.ok else "FAIL") + f"  {i.name}: {i.detail}")
+raise SystemExit(0 if checklist_ok(items) else 1)
+PY
+then
+  pass "production desk env (full-day, not dry-run)"
+else
+  fail "production desk env not Monday-ready (UNTIL_PHASE/dry-run/no-discord)"
 fi
 
 # 5) Schwab positions

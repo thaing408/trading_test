@@ -194,3 +194,13 @@ def test_checklist_cli_exit_codes():
     # missing live discord -> fail
     code = _cli(["checklist", "--require-live-discord"])
     assert code == 1
+
+
+def test_desk_production_env_checks_full_day():
+    from trading_agent.install_wizard import desk_production_env_checks, checklist_ok
+
+    assert checklist_ok(desk_production_env_checks({}))
+    assert checklist_ok(desk_production_env_checks({"TRADING_AGENT_UNTIL_PHASE": "full"}))
+    assert not checklist_ok(desk_production_env_checks({"TRADING_AGENT_UNTIL_PHASE": "preopen"}))
+    assert not checklist_ok(desk_production_env_checks({"TRADING_AGENT_DRY_RUN": "1"}))
+    assert not checklist_ok(desk_production_env_checks({"TRADING_AGENT_NO_DISCORD": "true"}))
