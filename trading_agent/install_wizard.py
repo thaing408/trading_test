@@ -159,8 +159,10 @@ def discord_ready_from_env(env: Mapping[str, str]) -> tuple[bool, str]:
         return True, "Discord opted out (dry-run / no-discord)"
 
     webhook = (env.get("DISCORD_WEBHOOK_URL") or "").strip()
-    token = (env.get("DISCORD_TOKEN") or "").strip()
-    channel = (env.get("DISCORD_CHANNEL_ID") or "").strip()
+    token = (env.get("DISCORD_TOKEN") or env.get("DISCORD_BOT_TOKEN") or "").strip()
+    channel = (
+        env.get("DISCORD_CHANNEL_ID") or env.get("DISCORD_DESK_CHANNEL_ID") or ""
+    ).strip()
     if webhook.startswith("https://"):
         return True, "webhook configured"
     if token and channel:
@@ -170,6 +172,103 @@ def discord_ready_from_env(env: Mapping[str, str]) -> tuple[bool, str]:
     if channel and not token and not webhook:
         return False, "DISCORD_TOKEN or DISCORD_WEBHOOK_URL missing"
     return False, "no Discord credentials and dry-run not set"
+
+
+@dataclass
+class CheckItem:
+    """Single preflight item for install / Monday-ready gates."""
+
+    name: str
+    ok: bool
+    detail: str
+
+
+def required_env_checklist(
+    env: Mapping[str, str],
+    *,
+    require_live_discord: bool = False,
+    require_positions_file: bool = False,
+    require_python_path: bool = False,
+    home: Path | None = None,
+) -> list[CheckItem]:
+    """
+    Pure required-data checks for new environments.
+
+    Install scripts call this so success is green only when prerequisites exist.
+    """
+    home = home or Path.home()
+    items: list[CheckItem] = []
+
+    # Discord
+    ok_d, reason_d = discord_ready_from_env(env)
+    if require_live_discord:
+        no_discord = _truthy(env.get("TRADING_AGENT_NO_DISCORD", ""))
+        dry = _truthy(env.get("TRADING_AGENT_DRY_RUN", ""))
+        if no_discord or dry:
+            items.append(
+                CheckItem(
+                    "discord_live",
+                    False,
+                    "live Discord required but dry-run/no-discord is set",
+                )
+            )
+        else:
+            items.append(CheckItem("discord_live", ok_d, reason_d))
+    else:
+        items.append(CheckItem("discord", ok_d, reason_d))
+
+    tz = (env.get("TRADING_AGENT_TIMEZONE") or "").strip()
+    items.append(
+        CheckItem(
+            "timezone",
+            bool(tz),
+            tz or "TRADING_AGENT_TIMEZONE missing",
+        )
+    )
+
+    py = (env.get("TRADING_AGENT_PYTHON") or "").strip()
+    if require_python_path:
+        items.append(
+            CheckItem(
+                "python_path",
+                bool(py) and Path(py).exists(),
+                py if py else "TRADING_AGENT_PYTHON missing",
+            )
+        )
+    else:
+        items.append(
+            CheckItem(
+                "python_path",
+                True,
+                py or "optional (will use repo .venv)",
+            )
+        )
+
+    pos = (env.get("TRADING_AGENT_POSITIONS_FILE") or "").strip()
+    default_pos = home / ".trading_agent" / "positions.json"
+    pos_path = Path(pos) if pos else default_pos
+    if require_positions_file:
+        items.append(
+            CheckItem(
+                "positions_file",
+                pos_path.is_file(),
+                str(pos_path) if pos_path.is_file() else f"missing {pos_path}",
+            )
+        )
+    else:
+        items.append(
+            CheckItem(
+                "positions_file",
+                True,
+                f"optional until export ({pos_path})",
+            )
+        )
+
+    return items
+
+
+def checklist_ok(items: list[CheckItem]) -> bool:
+    return all(i.ok for i in items)
 
 
 def parse_env_file(text: str) -> dict[str, str]:
@@ -319,6 +418,15 @@ def _cli(argv: list[str] | None = None) -> int:
     val_p = sub.add_parser("validate-env", help="Validate an existing .env file")
     val_p.add_argument("--env-file", required=True)
 
+    chk_p = sub.add_parser(
+        "checklist",
+        help="Structured required-env checklist (install / Monday-ready gates)",
+    )
+    chk_p.add_argument("--env-file", action="append", default=[], help="Env file(s) to merge")
+    chk_p.add_argument("--require-live-discord", action="store_true")
+    chk_p.add_argument("--require-positions-file", action="store_true")
+    chk_p.add_argument("--require-python-path", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "write-env":
@@ -355,6 +463,40 @@ def _cli(argv: list[str] | None = None) -> int:
         ok, reason = discord_ready_from_env(env)
         print(f"{'READY' if ok else 'NOT READY'} — {reason}")
         return 0 if ok else 1
+
+    if args.cmd == "checklist":
+        merged: dict[str, str] = {}
+        for path in args.env_file or []:
+            p = Path(path)
+            if p.is_file():
+                merged.update(parse_env_file(p.read_text(encoding="utf-8")))
+        # Also absorb process env for keys already exported by install.sh
+        import os
+
+        for key in (
+            "DISCORD_TOKEN",
+            "DISCORD_BOT_TOKEN",
+            "DISCORD_WEBHOOK_URL",
+            "DISCORD_CHANNEL_ID",
+            "DISCORD_DESK_CHANNEL_ID",
+            "TRADING_AGENT_DRY_RUN",
+            "TRADING_AGENT_NO_DISCORD",
+            "TRADING_AGENT_TIMEZONE",
+            "TRADING_AGENT_PYTHON",
+            "TRADING_AGENT_POSITIONS_FILE",
+        ):
+            if key in os.environ and os.environ[key].strip():
+                merged.setdefault(key, os.environ[key])
+        items = required_env_checklist(
+            merged,
+            require_live_discord=args.require_live_discord,
+            require_positions_file=args.require_positions_file,
+            require_python_path=args.require_python_path,
+        )
+        for item in items:
+            flag = "PASS" if item.ok else "FAIL"
+            print(f"{flag}  {item.name}: {item.detail}")
+        return 0 if checklist_ok(items) else 1
 
     return 2
 

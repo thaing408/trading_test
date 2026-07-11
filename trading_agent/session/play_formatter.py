@@ -228,13 +228,24 @@ def format_cio_review(report: CIOReport) -> str:
 
 def format_performance_plays(report: PerformanceReport) -> str:
     m = report.metrics
+    meta = report.metadata or {}
+    source = meta.get("trades_source", "unknown")
+    is_fixture = bool(meta.get("trades_is_fixture"))
     lines = [
         f"**Performance Review — {report.date}**",
+        f"**Data source:** `{source}`"
+        + (" ⚠️ **demo fixture — not live P/L**" if is_fixture else " (live/empty journal)"),
         f"**Session P/L:** ${m.total_profit_loss:+.2f} | Win rate: {m.win_rate:.0%} "
-        f"({m.winner_count}W/{m.loser_count}L)",
+        f"({m.winner_count}W/{m.loser_count}L) | trades={m.trade_count}",
         f"**Profit factor:** {m.profit_factor:.2f} | Expectancy: ${m.expectancy:.2f}/trade",
         "",
     ]
+    if m.trade_count == 0 and not is_fixture:
+        lines.append(
+            "_No closed trades loaded — P/L and lessons are empty on purpose "
+            "(set TRADING_AGENT_TRADES_FILE for real journal data)._"
+        )
+        lines.append("")
     if m.strategy_performance:
         lines.append("**Strategy P/L:**")
         for strategy, pnl in sorted(m.strategy_performance.items(), key=lambda x: -x[1])[:4]:

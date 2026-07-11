@@ -31,19 +31,25 @@ else
 fi
 
 # 3) launchd loaded + Mon-Fri 1:55
-if launchctl print "gui/$(id -u)/com.grok.trading-agent-desk" >/tmp/desk-launchd.txt 2>&1; then
+LAUNCHD_DUMP="$LOG_DIR/launchd-print-$$.txt"
+if launchctl print "gui/$(id -u)/com.grok.trading-agent-desk" >"$LAUNCHD_DUMP" 2>&1; then
   pass "launchd agent loaded"
-  if grep -q '"Hour" => 1' /tmp/desk-launchd.txt && grep -q '"Minute" => 55' /tmp/desk-launchd.txt; then
+  if grep -q '"Hour" => 1' "$LAUNCHD_DUMP" && grep -q '"Minute" => 55' "$LAUNCHD_DUMP"; then
     pass "schedule 1:55 present"
   else
     fail "1:55 schedule missing"
   fi
-  # Monday = 1
-  if grep -q '"Weekday" => 1' /tmp/desk-launchd.txt; then
+  # Monday = 1 (macOS: 0=Sun … 6=Sat)
+  if grep -q '"Weekday" => 1' "$LAUNCHD_DUMP"; then
     pass "Monday included"
   else
-    warn "Monday not in schedule"
+    fail "Monday not in schedule"
   fi
+  for wd in 2 3 4 5; do
+    if ! grep -q "\"Weekday\" => $wd" "$LAUNCHD_DUMP"; then
+      fail "Weekday $wd missing from schedule"
+    fi
+  done
 else
   fail "launchd agent not loaded"
 fi
@@ -85,21 +91,70 @@ else
 fi
 
 # 6) dry-run first 2 phases (no wait, no discord) — proves pipeline
+SESSION_LOG="$LOG_DIR/healthcheck-session.log"
+POS_ARG=()
+if [ -f "$HOME/.trading_agent/positions.json" ]; then
+  POS_ARG=(--positions "$HOME/.trading_agent/positions.json")
+fi
 if "$PYTHON" -m trading_agent session \
   --date "$(TZ=America/Los_Angeles date '+%Y-%m-%d')" \
   --timezone America/Los_Angeles \
   --dry-run \
   --from-phase intelligence \
   --until-phase research \
-  --positions "$HOME/.trading_agent/positions.json" \
-  --output "$LOG_DIR/healthcheck-session.log"; then
+  "${POS_ARG[@]}" \
+  --output "$SESSION_LOG"; then
   pass "dry-run intelligence→research"
+  # Live Bias must not invent fixture Jobless Claims / demo NVDA beats
+  if grep -q "Jobless Claims" "$SESSION_LOG" 2>/dev/null && \
+     grep -q "fixture-fallback\|Calendar unavailable\|calendar omitted" "$SESSION_LOG" 2>/dev/null; then
+    fail "Bias still embeds fixture calendar while reporting unavailable"
+  elif grep -q "NVDA beats earnings estimates" "$SESSION_LOG" 2>/dev/null; then
+    # Only fail if this is the exact fixture headline in a live dry-run
+    if grep -q "active catalyst:.*NVDA beats earnings estimates" "$SESSION_LOG"; then
+      fail "Bias uses fixture news catalyst (NVDA beats…) in live dry-run"
+    else
+      warn "NVDA earnings text present in log (check if live news)"
+    fi
+  else
+    pass "Bias has no fixture Jobless Claims / demo NVDA catalyst"
+  fi
 else
   fail "dry-run intelligence→research"
 fi
 
-# 7) scalp auto-trade session bars (related bug)
+# 7) Performance live mode must not silently load demo trades
+PERF_OUT="$LOG_DIR/healthcheck-performance.json"
+export PERF_OUT
+if "$PYTHON" - <<'PY'
+from trading_agent.performance.config import PerformanceConfig
+from trading_agent.performance.pipeline import run_performance_pipeline
+from trading_agent.session.play_formatter import format_performance_plays
+import json, os
+from pathlib import Path
+cfg = PerformanceConfig(fixture_mode=False)  # live path
+report = run_performance_pipeline(cfg)
+text = format_performance_plays(report)
+meta = report.metadata or {}
+out = Path(os.environ["PERF_OUT"])
+out.write_text(json.dumps({"metadata": meta, "text": text}, indent=2), encoding="utf-8")
+assert not meta.get("trades_is_fixture"), meta
+src = str(meta.get("trades_source") or "")
+assert src == "none" or not src.startswith("fixture/"), meta
+if meta.get("session_trade_count", 0) == 0:
+    assert "demo fixture" not in text
+    assert "No closed trades" in text or "empty" in text.lower() or src == "none"
+print("performance_live_ok", meta)
+PY
+then
+  pass "Performance live path does not use demo fixture trades"
+else
+  fail "Performance live path still looks like fixture fill"
+fi
+
+# 8) scalp auto-trade session bars (related bug)
 if [ -x "$HOME/schwab-mcp-server/.venv/bin/python" ]; then
+  BARS_ERR="$LOG_DIR/bars-err-$$.txt"
   bars=$("$HOME/schwab-mcp-server/.venv/bin/python" -m schwab_mcp.mcp_stdio auto_trade_qqq '{"dry_run":true}' 2>/dev/null | "$PYTHON" -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -107,14 +162,13 @@ rows=d.get('scan') or []
 counts=[int(r.get('closes_session_count') or 0) for r in rows]
 print(min(counts) if counts else -1)
 print('details', [(r.get('symbol'), r.get('closes_session_count'), r.get('closes_raw_count')) for r in rows], file=sys.stderr)
-" 2>/tmp/bars-err.txt)
+" 2>"$BARS_ERR")
   echo "session_bar min count: $bars"
-  cat /tmp/bars-err.txt 2>/dev/null || true
-  # After hours min can still be >0 for today; 0 is the historical bug
+  cat "$BARS_ERR" 2>/dev/null || true
   if [ "${bars:-0}" -gt 0 ]; then
     pass "auto-trade session bars populated (min=$bars)"
   else
-    warn "auto-trade session bars min=$bars (ok if market closed & no today bars yet; was 0 all RTH before fix)"
+    warn "auto-trade session bars min=$bars (ok if market closed / weekend)"
   fi
 fi
 

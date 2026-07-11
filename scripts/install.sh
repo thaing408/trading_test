@@ -299,13 +299,31 @@ else
 fi
 
 # --- validate env via helper ---
-step "Validating configuration"
+step "Validating configuration (required data collected)"
+VERIFY_EXIT=0
 if "$PY" -m trading_agent.install_wizard validate-env --env-file "$ENV_PATH"; then
   ok "Env validation READY"
-  VERIFY_EXIT=0
 else
-  warn "Env validation reported NOT READY"
+  fail "Env validation NOT READY — collect Discord credentials or use --delivery-mode dry_run"
   VERIFY_EXIT=1
+fi
+
+# Structured checklist (must pass for green install)
+CHECK_ARGS=( -m trading_agent.install_wizard checklist --env-file "$ENV_PATH" )
+if [[ -f "$HOME/.grok/trading-agent.env" ]]; then
+  CHECK_ARGS+=( --env-file "$HOME/.grok/trading-agent.env" )
+fi
+if [[ -f "$HOME/.grok/discord.env" ]]; then
+  CHECK_ARGS+=( --env-file "$HOME/.grok/discord.env" )
+fi
+if [[ "$DELIVERY_MODE" == "bot" || "$DELIVERY_MODE" == "webhook" ]]; then
+  CHECK_ARGS+=( --require-live-discord )
+fi
+if ! "$PY" "${CHECK_ARGS[@]}"; then
+  fail "Required-env checklist failed"
+  VERIFY_EXIT=1
+else
+  ok "Required-env checklist passed"
 fi
 
 # --- import check ---
@@ -339,6 +357,27 @@ if [[ "$DO_FIRST" -eq 1 ]]; then
   fi
 fi
 
+# --- post-install healthcheck (macOS desk path) ---
+HEALTH_EXIT=0
+if [[ "$(uname -s)" == "Darwin" && -x "$REPO_ROOT/scripts/macos/desk-healthcheck.sh" ]]; then
+  step "Running desk healthcheck (Monday-ready gate)"
+  set +e
+  TRADING_AGENT_REPO="$REPO_ROOT" bash "$REPO_ROOT/scripts/macos/desk-healthcheck.sh"
+  HEALTH_EXIT=$?
+  set -e
+  if [[ "$HEALTH_EXIT" -eq 0 ]]; then
+    ok "Desk healthcheck PASS"
+  else
+    # Soft-fail when automation was not installed yet; hard-fail if user asked for automation
+    if [[ "$DO_AUTO" -eq 1 ]]; then
+      fail "Desk healthcheck FAIL (automation enabled — must pass)"
+      VERIFY_EXIT=1
+    else
+      warn "Desk healthcheck FAIL (install launchd with --enable-automation for full Monday gate)"
+    fi
+  fi
+fi
+
 echo ""
 echo "============================================"
 if [[ "$VERIFY_EXIT" -eq 0 && "$FIRST_EXIT" -eq 0 ]]; then
@@ -346,12 +385,13 @@ if [[ "$VERIFY_EXIT" -eq 0 && "$FIRST_EXIT" -eq 0 ]]; then
 elif [[ "$VERIFY_EXIT" -eq 0 ]]; then
   echo " INSTALL COMPLETE — env READY (first run had issues)"
 else
-  echo " INSTALL FINISHED WITH WARNINGS"
+  echo " INSTALL FINISHED WITH FAILURES (not green)"
 fi
 echo "============================================"
 echo "Next:"
 echo "  $PY -m trading_agent session --fixture --dry-run --until-phase preopen"
-echo "  bash scripts/macos/install-trading-agent-launchd.sh   # macOS automation"
+echo "  bash scripts/macos/install-trading-agent-launchd.sh   # macOS Mon–Fri 1:55 AM PT"
+echo "  bash scripts/macos/desk-healthcheck.sh                # Monday-ready report"
 echo ""
 
 if [[ "$VERIFY_EXIT" -ne 0 ]]; then exit "$VERIFY_EXIT"; fi

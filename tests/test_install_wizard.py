@@ -11,11 +11,13 @@ from trading_agent.install_wizard import (
     DEFAULT_UNTIL_PHASE,
     InstallAnswers,
     answers_from_mapping,
+    checklist_ok,
     discord_ready_from_env,
     normalize_delivery_mode,
     normalize_phase,
     parse_env_file,
     render_env_file,
+    required_env_checklist,
     validate_answers,
     write_env_file,
     _cli,
@@ -163,3 +165,32 @@ def test_cli_validate_env_ready(tmp_path: Path):
 
     env_path.write_text("DISCORD_CHANNEL_ID=1\n", encoding="utf-8")
     assert _cli(["validate-env", "--env-file", str(env_path)]) == 1
+
+
+def test_required_env_checklist_fails_without_discord_when_live_required():
+    items = required_env_checklist(
+        {"TRADING_AGENT_TIMEZONE": "America/Los_Angeles"},
+        require_live_discord=True,
+    )
+    assert not checklist_ok(items)
+    names = {i.name: i for i in items}
+    assert names["discord_live"].ok is False
+
+
+def test_required_env_checklist_passes_dry_run_opt_out():
+    items = required_env_checklist(
+        {
+            "TRADING_AGENT_DRY_RUN": "1",
+            "TRADING_AGENT_NO_DISCORD": "1",
+            "TRADING_AGENT_TIMEZONE": "America/Los_Angeles",
+            "DISCORD_CHANNEL_ID": DEFAULT_CHANNEL_ID,
+        },
+        require_live_discord=False,
+    )
+    assert checklist_ok(items)
+
+
+def test_checklist_cli_exit_codes():
+    # missing live discord -> fail
+    code = _cli(["checklist", "--require-live-discord"])
+    assert code == 1

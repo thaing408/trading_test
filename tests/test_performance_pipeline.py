@@ -64,3 +64,27 @@ def test_confidence_refinement_in_report():
     text = render_performance_report(report)
     assert "## Confidence Refinement" in text
     assert report.refinement.notes
+
+
+def test_live_mode_without_trades_file_is_empty_not_fixture():
+    """Live Performance must not silently load tests/fixtures/completed_trades.json."""
+    from trading_agent.session.play_formatter import format_performance_plays
+
+    config = PerformanceConfig(fixture_mode=False, trades_file=None, history_file=None)
+    report = run_performance_pipeline(config)
+    assert report.metrics.trade_count == 0
+    assert report.metrics.total_profit_loss == 0.0
+    assert report.metadata.get("trades_source") == "none"
+    assert report.metadata.get("trades_is_fixture") is False
+    text = format_performance_plays(report)
+    assert "demo fixture" not in text
+    assert "NVDA" not in text  # fixture sample trade must not appear
+    assert "Data source:" in text
+
+
+def test_fixture_mode_still_loads_demo_trades():
+    config = PerformanceConfig(fixture_mode=True)
+    report = run_performance_pipeline(config)
+    assert report.metrics.trade_count == 4
+    assert report.metadata.get("trades_source") == "fixture/completed_trades.json"
+    assert report.metadata.get("trades_is_fixture") is True
