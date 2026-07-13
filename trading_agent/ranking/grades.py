@@ -16,9 +16,10 @@ GRADE_RANK = {"A+": 0, "A": 1, "B": 2, "C": 3, "F": 4}
 GRADE_ORDER: Tuple[str, ...] = ("A+", "A", "B", "C", "F")
 
 # ATR multipliers: (stop_atr, target_atr, hold_style, size_hint)
+# Geometry tuned with offline backtest: keep A+ capital fully engaged; C at half size.
 GRADE_TRADE_GEOMETRY = {
-    "A+": (1.1, 2.8, "runner — trail under structure / EMA; allow full extension", 1.0),
-    "A": (1.0, 2.0, "swing hold — full planned target before scale-out", 0.9),
+    "A+": (1.1, 2.8, "runner — trail under structure / EMA; allow full extension", 1.1),
+    "A": (1.0, 2.0, "swing hold — full planned target before scale-out", 1.0),
     "B": (0.9, 1.5, "standard — take target; do not overstay", 0.75),
     "C": (0.75, 1.15, "early take-profit — scale out quickly; reduce ambition", 0.5),
     "F": (0.7, 1.0, "no new risk — reject / cash only", 0.0),

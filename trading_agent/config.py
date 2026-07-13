@@ -9,11 +9,17 @@ from typing import List
 
 @dataclass
 class RiskConfig:
-    """Institutional Trading Research floors (prompt minimums)."""
+    """Institutional Trading Research floors (prompt minimums).
+
+    Defaults validated by offline multi-regime backtest (`trading_agent.backtest`):
+    strict_a_tier_book3 beat baseline C-book, high-confidence, and wide_book5 on
+    capital-preservation score (higher expectancy, higher win rate, lower drawdown).
+    wide_book5 had higher raw trade count but worse expectancy and deeper DD.
+    """
 
     max_risk_per_trade_pct: float = 2.0
     min_probability_of_success: float = 0.45
-    min_confidence_score: float = 55.0
+    min_confidence_score: float = 60.0  # backtest: 60 A-tier book > open conf-55 C-book
     max_bid_ask_spread_pct: float = 3.0  # tight bid/ask
     min_open_interest: int = 1_000
     min_volume: int = 2_000_000  # session volume floor
@@ -23,13 +29,13 @@ class RiskConfig:
     min_price: float = 20.0
     min_market_cap: float = 2_000_000_000.0  # $2B
     min_institutional_score: float = 40.0
-    min_technical_score: float = 40.0
+    min_technical_score: float = 45.0  # aligned with winning sweep arm
     top_watchlist_size: int = 10
-    top_candidates: int = 5
+    # backtest: book3 scored above book5 (less churn, lower max DD)
+    top_candidates: int = 3
     # Letter grades: A+/A always ranked first. F is never a trade opportunity.
-    # min_setup_grade: lowest letter still allowed into ranked opportunities (default C).
-    min_setup_grade: str = "C"
-    prefer_a_tier_only: bool = False  # if True, only A+/A become ranked opportunities
+    min_setup_grade: str = "B"  # floor when not A-only; F still excluded
+    prefer_a_tier_only: bool = True  # backtest winner: A+/A only
 
 
 @dataclass

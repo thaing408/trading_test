@@ -134,10 +134,11 @@ def select_strategy(
             bias="bearish",
             direction="Bearish",
         )
+    # Mild bullish credit default — never Neutral (fill models treat non-bull as short)
     return StrategySelection(
         name="Bull Put Credit Spread",
         strike_prices=[round(price * 0.97, 2), round(price * 0.92, 2)],
         expiration_days=30,
-        bias="neutral",
-        direction="Neutral",
+        bias="bullish",
+        direction="Bullish",
     )

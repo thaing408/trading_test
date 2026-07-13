@@ -23,6 +23,23 @@ from trading_agent.session.orchestrator import run_session_cli
 from trading_agent.session.schedule import DeskPhaseKind
 
 
+def _run_backtest(args: argparse.Namespace) -> int:
+    from trading_agent.backtest.engine import default_sweep_configs, run_backtest, run_config_sweep
+    from trading_agent.backtest.report import render_comparison, render_period_report
+
+    if args.single and not args.sweep:
+        result = run_backtest(default_sweep_configs()[0])
+        text = render_period_report(result)
+    else:
+        sweep = run_config_sweep()
+        text = render_comparison(sweep)
+    print(text)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    return 0
+
+
 def _run_premarket(args: argparse.Namespace) -> int:
     config = AgentConfig.from_env()
     if args.fixture:
@@ -208,6 +225,22 @@ def main(argv: list[str] | None = None) -> int:
     cio.add_argument("--portfolio-value", type=float, default=100_000, help="Portfolio value for allocation")
     cio.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
 
+    backtest = subparsers.add_parser(
+        "backtest",
+        help="Offline multi-day research+CIO backtest and config comparison",
+    )
+    backtest.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Compare multiple risk/grade configs (default if neither flag set)",
+    )
+    backtest.add_argument(
+        "--single",
+        action="store_true",
+        help="Run only the baseline config",
+    )
+    backtest.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
+
     parser.add_argument("--fixture", action="store_true", help="(legacy) fixture mode for premarket")
     parser.add_argument("--output", "-o", metavar="FILE", help="(legacy) output file")
 
@@ -221,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_performance(args)
     if args.command == "cio":
         return _run_cio(args)
+    if args.command == "backtest":
+        return _run_backtest(args)
     if args.command == "premarket":
         return _run_premarket(args)
 

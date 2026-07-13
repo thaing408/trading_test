@@ -124,7 +124,11 @@ def _fixture_news() -> NewsCatalysts:
 
 
 def collect_news_catalysts(config: AgentConfig, symbols: List[str]) -> NewsCatalysts:
-    """Live mode never injects fixture headlines into bias (empty if none found)."""
+    """Live mode never injects fixture headlines into bias (empty if none found).
+
+    Provider order (env-overridable via TRADING_AGENT_NEWS_PROVIDERS):
+    yfinance → finnhub → tiingo → fmp → unavailable (no silent fixture fill).
+    """
     if config.fixture_mode or not config.use_live_data:
         return _fixture_news()
 
@@ -132,23 +136,43 @@ def collect_news_catalysts(config: AgentConfig, symbols: List[str]) -> NewsCatal
     errors: List[str] = []
     items = safe_fetch(lambda: _fetch_yfinance_news(symbols), [], errors)
 
-    if not items:
-        api_key = os.getenv("FMP_API_KEY", "").strip()
-        if api_key:
-            def _fetch_fmp() -> List[NewsItem]:
-                try:
-                    return _fetch_fmp_stock_news(symbols, api_key)
-                except PermissionError as exc:
-                    errors.append(str(exc))
-                    return []
+    if items:
+        return NewsCatalysts(source="yfinance", items=items, errors=errors)
 
-            fmp_items = safe_fetch(_fetch_fmp, [], errors)
-            if fmp_items:
-                return NewsCatalysts(source="fmp", items=fmp_items, errors=errors)
+    # Secondary HTTP providers (Finnhub, Tiingo) via pluggable layer
+    try:
+        from trading_agent.providers.config import ProviderConfig
+        from trading_agent.providers.news_providers import fetch_news_multi
 
-    if not items:
-        if not errors:
-            errors.append("No live news headlines; catalysts omitted from bias (no fixture fill)")
-        return NewsCatalysts(source="unavailable", items=[], errors=errors)
+        multi = fetch_news_multi(symbols, ProviderConfig.from_env())
+        errors.extend(multi.errors)
+        if multi.ok and multi.headlines:
+            converted = [
+                NewsItem(
+                    symbol=h.symbol,
+                    headline=h.headline,
+                    source=h.source,
+                    category=h.category,
+                )
+                for h in multi.headlines
+            ]
+            return NewsCatalysts(source=multi.source, items=converted, errors=errors)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"secondary news providers: {exc}")
 
-    return NewsCatalysts(source="yfinance", items=items, errors=errors)
+    api_key = os.getenv("FMP_API_KEY", "").strip()
+    if api_key:
+        def _fetch_fmp() -> List[NewsItem]:
+            try:
+                return _fetch_fmp_stock_news(symbols, api_key)
+            except PermissionError as exc:
+                errors.append(str(exc))
+                return []
+
+        fmp_items = safe_fetch(_fetch_fmp, [], errors)
+        if fmp_items:
+            return NewsCatalysts(source="fmp", items=fmp_items, errors=errors)
+
+    if not errors:
+        errors.append("No live news headlines; catalysts omitted from bias (no fixture fill)")
+    return NewsCatalysts(source="unavailable", items=[], errors=errors)

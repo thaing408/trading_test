@@ -70,6 +70,10 @@ def _synthesis():
 
 
 def test_roll_when_near_expiration():
+    # Relative expiry so the test does not rot when the calendar date advances
+    from datetime import timedelta
+
+    exp = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
     pos = OpenPosition(
         symbol="NVDA",
         strategy="Debit Call Spread",
@@ -77,7 +81,7 @@ def test_roll_when_near_expiration():
         stop_loss=125.0,
         profit_target=140.0,
         strike_prices=[130.0, 135.0],
-        expiration="2026-07-11",
+        expiration=exp,
         original_probability=0.55,
         original_confidence=68.0,
     )

@@ -113,6 +113,35 @@ python -m trading_agent performance --fixture
 Logs: `~/.trading_agent/logs/`  
 Session artifacts: `~/.trading_agent/sessions/{date}/`
 
+## Market data & brokerage providers
+
+The desk uses a **pluggable multi-provider layer** (`trading_agent/providers/`) mapped to the seven phases.
+
+| Default | Role |
+|---------|------|
+| **yfinance** | Primary free quotes / OHLCV / news |
+| **Finnhub, Alpha Vantage, Twelve Data, Tiingo, Marketstack** | Env-gated secondary HTTP market data / news |
+| **Alpaca, Tradier** | Optional brokerage positions (fail-closed if keys missing) |
+| **IBKR TWS** | Optional advanced brokerage (flag only; requires Gateway) |
+
+See **[docs/provider_phase_mapping.md](docs/provider_phase_mapping.md)** for the full OBJECTIVE source → phase table.
+
+Useful env vars: `FINNHUB_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `TIINGO_API_KEY`, `TWELVE_DATA_API_KEY`, `MARKETSTACK_API_KEY`, `ALPACA_API_KEY` + `ALPACA_SECRET_KEY`, `TRADIER_ACCESS_TOKEN` + `TRADIER_ACCOUNT_ID`, `TRADING_AGENT_QUOTE_PROVIDERS`, `TRADING_AGENT_NEWS_PROVIDERS`.
+
+Live path **never** silent-fills fixture headlines when keys are missing (`source=unavailable`).
+
+## Backtest (offline research + CIO)
+
+```powershell
+# Compare risk/grade configs on fixture OHLCV (no API keys)
+python -m trading_agent backtest
+
+# Baseline only
+python -m trading_agent backtest --single
+```
+
+Findings and shipped knobs: [docs/backtest_findings.md](docs/backtest_findings.md).
+
 ## Tests
 
 ```powershell

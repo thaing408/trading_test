@@ -182,6 +182,53 @@ def _from_fixture() -> MarketSnapshot:
     )
 
 
+def _enrich_equity_quotes_from_secondary(
+    etfs: Dict[str, Any],
+    sector_rotation: Dict[str, Any],
+    errors: List[str],
+) -> str | None:
+    """Fill missing equity ETF/sector quotes via Finnhub/Alpha Vantage/etc.
+
+    Returns secondary source label if any quotes applied, else None.
+    """
+    missing = []
+    for name, sym in {**ETF_TICKERS, **{k: k for k in sector_rotation or {}}}.items():
+        bucket = etfs if name in ETF_TICKERS else sector_rotation
+        if name not in bucket or not bucket.get(name):
+            missing.append((name, sym if name in ETF_TICKERS else name))
+    # Also any empty etf keys
+    for name, sym in ETF_TICKERS.items():
+        if name not in etfs or not etfs.get(name):
+            if (name, sym) not in missing:
+                missing.append((name, sym))
+    if not missing:
+        return None
+    try:
+        from trading_agent.providers.config import ProviderConfig
+        from trading_agent.providers.quotes import fetch_quotes_multi
+
+        symbols = list({sym for _, sym in missing})
+        result = fetch_quotes_multi(symbols, ProviderConfig.from_env())
+        errors.extend(result.errors)
+        if not result.ok:
+            return None
+        applied = 0
+        for name, sym in missing:
+            q = result.quotes.get(sym)
+            if not q:
+                continue
+            payload = {"symbol": sym, "last": q.last, "change_pct": q.change_pct}
+            if name in ETF_TICKERS:
+                etfs[name] = payload
+            else:
+                sector_rotation[name] = payload
+            applied += 1
+        return result.source if applied else None
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"secondary quotes: {exc}")
+        return None
+
+
 def collect_market_snapshot(config: AgentConfig) -> MarketSnapshot:
     if config.fixture_mode or not config.use_live_data:
         return _from_fixture()
@@ -197,6 +244,11 @@ def collect_market_snapshot(config: AgentConfig) -> MarketSnapshot:
     sector_rotation = _fetch_group(MARKET_TICKERS["sector_rotation"], errors)
     etfs = _fetch_group(MARKET_TICKERS["etfs"], errors)
     treasury_yields = _fetch_group(MARKET_TICKERS["treasury_yields"], errors)
+
+    secondary = _enrich_equity_quotes_from_secondary(etfs, sector_rotation, errors)
+    source = "yfinance"
+    if secondary:
+        source = f"yfinance+{secondary}"
 
     breadth: Dict[str, Any] = {
         key: {"status": "unavailable", "note": note}
@@ -222,7 +274,7 @@ def collect_market_snapshot(config: AgentConfig) -> MarketSnapshot:
         unavailable["VIX_TERM"] = "VIX3M term structure proxy not fetched"
 
     return MarketSnapshot(
-        source="yfinance",
+        source=source,
         futures=futures,
         international=international,
         bonds=bonds,
