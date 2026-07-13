@@ -107,7 +107,8 @@ python -m trading_agent performance --fixture
 |--------|---------|
 | `scripts/install.sh` | **Primary** new-user install + optional launchd |
 | `scripts/macos/trading-agent-desk.sh` | Git pull, install, optional Schwab positions, session |
-| `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` |
+| `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` (Mon–Fri 1:55 AM PT) |
+| `scripts/macos/install-morning-check-launchd.sh` | Install `com.grok.morning-check` (Mon–Fri 6:35 AM PT; no Saturday) |
 
 Logs: `~/.trading_agent/logs/`  
 Session artifacts: `~/.trading_agent/sessions/{date}/`
