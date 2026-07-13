@@ -312,6 +312,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "news_source": news.source,
         "screener_source": screener.source,
         "candidates_screened": len(screener.candidates),
+        "rejected_count": len(all_rejections),
         "strength_screened": len(screener.candidates) if config.apply_strength_gates else 0,
         "strength_survivors": len(strength_survivors),
         "strength_rejected": len(strength_rejected),

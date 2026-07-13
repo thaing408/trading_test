@@ -38,12 +38,33 @@ def _render_opportunity(opp: TradeOpportunity) -> str:
 """
 
 
-def _render_rejections(rejections: List[RejectedSetup]) -> str:
-    if not rejections:
-        return "\n_No setups were screened out — all candidates passed initial filters or none were evaluated._\n"
+def _render_rejections(
+    rejections: List[RejectedSetup],
+    *,
+    scanned: int | None = None,
+    qualified: int | None = None,
+    max_shown: int = 50,
+) -> str:
+    total = len(rejections or [])
+    shown = list(rejections or [])[:max_shown]
     lines = ["\n## Rejected Lower-Quality Setups\n"]
-    for r in rejections:
+    if scanned is not None or qualified is not None:
+        lines.append(
+            f"**Scan summary:** scanned **{scanned if scanned is not None else 'n/a'}** | "
+            f"qualified **{qualified if qualified is not None else 'n/a'}** | "
+            f"rejected **{total}** | showing **{len(shown)}**"
+        )
+        lines.append("")
+    if total == 0:
+        lines.append(
+            "_No setups were screened out — all candidates passed initial filters or none were evaluated._"
+        )
+        return "\n".join(lines) + "\n"
+    lines.append(f"Showing {len(shown)} of {total} rejection reason(s):\n")
+    for r in shown:
         lines.append(f"- **{r.symbol}:** {r.reason}")
+    if total > len(shown):
+        lines.append(f"\n_…and {total - len(shown)} more rejection(s) not listed._")
     return "\n".join(lines) + "\n"
 
 
@@ -99,7 +120,19 @@ def render_daily_plan(plan: DailyTradingPlan) -> str:
         for opp in plan.ranked_opportunities:
             lines.append(_render_opportunity(opp).strip())
 
-    lines.append(_render_rejections(plan.rejection_reasons).strip())
+    scanned = rs.get("candidates_screened")
+    if scanned is None:
+        scanned = len(plan.rejection_reasons or []) + len(plan.ranked_opportunities or [])
+    qualified = rs.get("qualified_count")
+    if qualified is None:
+        qualified = len(plan.ranked_opportunities or [])
+    lines.append(
+        _render_rejections(
+            plan.rejection_reasons,
+            scanned=int(scanned),
+            qualified=int(qualified),
+        ).strip()
+    )
 
     lines.extend(
         [
@@ -109,8 +142,9 @@ def render_daily_plan(plan: DailyTradingPlan) -> str:
             f"- Calendar source: {rs.get('calendar_source', 'N/A')}",
             f"- News source: {rs.get('news_source', 'N/A')}",
             f"- Screener source: {rs.get('screener_source', 'N/A')}",
-            f"- Candidates screened: {rs.get('candidates_screened', 0)}",
-            f"- Qualified after risk filter: {rs.get('qualified_count', 0)}",
+            f"- Candidates screened: {rs.get('candidates_screened', scanned)}",
+            f"- Qualified after risk filter: {rs.get('qualified_count', qualified)}",
+            f"- Rejected (with reasons): {len(plan.rejection_reasons or [])}",
             f"- Calendar events reviewed: {rs.get('calendar_events', 0)}",
             f"- News items synthesized: {rs.get('news_items', 0)}",
         ]

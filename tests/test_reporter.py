@@ -58,3 +58,12 @@ def test_fixture_plan_trade_fields_when_opportunities_exist():
         for field in REQUIRED_TRADE_FIELDS:
             assert field in report, f"Missing trade field: {field}"
         assert plan.ranked_opportunities[0].strategy
+
+
+def test_fixture_plan_rejection_section_has_counts():
+    plan = run_pipeline(AgentConfig(fixture_mode=True, use_live_data=False))
+    report = render_daily_plan(plan)
+    screened = plan.research_summary.get("candidates_screened", 0)
+    assert f"scanned **{screened}**" in report or f"Candidates screened: {screened}" in report
+    n_rej = len(plan.rejection_reasons)
+    assert f"rejected **{n_rej}**" in report or f"Rejected (with reasons): {n_rej}" in report

@@ -103,20 +103,82 @@ def format_intelligence_brief(brief: IntelligenceBrief) -> str:
     return "\n".join(lines)
 
 
+# Discord length: show a capped list but always report totals.
+_MAX_REJECT_REASONS_SHOWN = 8
+
+
 def format_research_plays(plan: DailyTradingPlan) -> str:
     text = format_premarket_plays(plan)
     return text.replace("**Pre-Market Scout", "**Trading Research", 1)
 
 
+def _scanned_count(plan: DailyTradingPlan) -> int:
+    """Names evaluated/screened that day (from pipeline research_summary)."""
+    rs = plan.research_summary or {}
+    if rs.get("candidates_screened") is not None:
+        try:
+            return int(rs["candidates_screened"])
+        except (TypeError, ValueError):
+            pass
+    # Fallback when summary omitted (constructed plans in tests)
+    return len(plan.rejection_reasons or []) + len(plan.ranked_opportunities or [])
+
+
+def _qualified_count(plan: DailyTradingPlan) -> int:
+    rs = plan.research_summary or {}
+    if rs.get("qualified_count") is not None:
+        try:
+            return int(rs["qualified_count"])
+        except (TypeError, ValueError):
+            pass
+    return len(plan.ranked_opportunities or [])
+
+
+def format_rejection_summary(
+    plan: DailyTradingPlan,
+    *,
+    max_shown: int = _MAX_REJECT_REASONS_SHOWN,
+) -> list[str]:
+    """Discord-facing scan + rejection block (used for cash and non-cash paths)."""
+    rejects = list(plan.rejection_reasons or [])
+    total = len(rejects)
+    shown = rejects[: max(0, max_shown)]
+    scanned = _scanned_count(plan)
+    qualified = _qualified_count(plan)
+    lines = [
+        f"**Scan summary:** scanned **{scanned}** | qualified **{qualified}** | "
+        f"rejected **{total}** | showing **{len(shown)}** reason(s)",
+    ]
+    if total == 0:
+        lines.append(
+            "_No rejections — all screened names passed gates, or none were evaluated._"
+        )
+        return lines
+    lines.append(f"**Rejected setups ({total} total, displaying {len(shown)}):**")
+    for rejection in shown:
+        reason = (rejection.reason or "").strip() or "no reason recorded"
+        lines.append(f"- **{rejection.symbol}:** {reason}")
+    if total > len(shown):
+        lines.append(f"_…and **{total - len(shown)}** more rejection(s) not shown._")
+    return lines
+
+
 def format_premarket_plays(plan: DailyTradingPlan) -> str:
+    scanned = _scanned_count(plan)
+    cap = (plan.research_summary or {}).get("top_candidates_cap") or 5
+    try:
+        cap = int(cap)
+    except (TypeError, ValueError):
+        cap = 5
     lines = [
         f"**Pre-Market Scout — {plan.date}**",
         f"**Bias:** {plan.overall_market_bias}",
         f"**Environment:** {plan.market_environment_score:.1f}/100",
+        f"**Scanned:** {scanned} name(s)",
         f"**Top 10 Watchlist:** {', '.join(plan.top_watchlist) if plan.top_watchlist else 'None'}",
         "",
     ]
-    highlights = plan.research_summary.get("news_highlights", [])
+    highlights = (plan.research_summary or {}).get("news_highlights", [])
     if highlights:
         lines.append("**Catalysts:**")
         for item in highlights[:5]:
@@ -128,16 +190,13 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
             [
                 "**RECOMMENDATION: STAY IN CASH**",
                 plan.cash_recommendation_reason or "No setups passed risk standards.",
+                "",
             ]
         )
-        if plan.rejection_reasons:
-            lines.append("")
-            lines.append("**Screened / rejected:**")
-            for rejection in plan.rejection_reasons[:8]:
-                lines.append(f"- {rejection.symbol}: {rejection.reason}")
+        lines.extend(format_rejection_summary(plan))
     else:
-        lines.append("**Top 5 trade candidates:**")
-        for opp in plan.ranked_opportunities[:5]:
+        lines.append(f"**Top {cap} trade candidates:**")
+        for opp in plan.ranked_opportunities[:cap]:
             strikes = ", ".join(f"${s:.2f}" for s in opp.strike_prices)
             lines.extend(
                 [
@@ -154,6 +213,9 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
                     f"- Risks: {'; '.join(opp.risks[:3]) if opp.risks else 'standard'}",
                 ]
             )
+        # Approvals and rejections both visible on Discord when opportunities exist
+        lines.append("")
+        lines.extend(format_rejection_summary(plan))
     return "\n".join(lines)
 
 
@@ -195,11 +257,20 @@ def format_cio_plays(report: CIOReport, title: str = "CIO Decision Summary") -> 
             )
     if not report.approved and not report.modified:
         lines.append("**No CIO approvals today — remain in cash if uncertainty elevated.**")
-    if report.rejected:
+    rejected = list(report.rejected or [])
+    if rejected or getattr(p, "rejected_count", 0):
+        total_r = len(rejected)
+        shown_r = rejected[:6]
         lines.append("")
-        lines.append("**Rejected trades:**")
-        for item in report.rejected[:6]:
+        lines.append(
+            f"**Rejected trades ({total_r} total, showing {len(shown_r)}):**"
+        )
+        if not shown_r:
+            lines.append("_No rejection detail list (count only)._")
+        for item in shown_r:
             lines.append(f"- {item.ticker} — {item.decision}: {item.explanation}")
+        if total_r > len(shown_r):
+            lines.append(f"_…and **{total_r - len(shown_r)}** more rejection(s) not shown._")
     if p.sector_allocation:
         lines.append("")
         lines.append(
