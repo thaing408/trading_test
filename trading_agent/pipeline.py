@@ -211,8 +211,25 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
 
     qualified, rejected = evaluate_risk(analyzed, config.risk)
 
+    # Discipline rails on production path: RiskConfig limits + open book + stop-out book
+    import os
+
+    from trading_agent.discipline.rails import build_session_risk_state
+
+    rail_rejections: List[RejectedSetup] = []
+    session_state = build_session_risk_state(
+        config.risk,
+        positions_path=os.getenv("TRADING_AGENT_POSITIONS_FILE") or None,
+        stopout_path=os.getenv("TRADING_AGENT_STOPOUT_FILE") or None,
+        fixture_mode=bool(config.fixture_mode),
+    )
     low_confidence_rejected: List[RejectedSetup] = []
-    opportunities: List[TradeOpportunity] = build_opportunities(qualified, config.risk)
+    opportunities: List[TradeOpportunity] = build_opportunities(
+        qualified,
+        config.risk,
+        session_state=session_state,
+        rail_rejections=rail_rejections,
+    )
 
     for candidate, technical, options in qualified:
         from trading_agent.ranking.ranker import compute_confidence_score
@@ -226,7 +243,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
                 )
             )
 
-    all_rejections = strength_rejected + rejected + low_confidence_rejected
+    all_rejections = strength_rejected + rejected + low_confidence_rejected + rail_rejections
     stay_in_cash = len(opportunities) == 0
     cash_reason = ""
     if stay_in_cash:

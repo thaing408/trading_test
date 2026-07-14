@@ -105,6 +105,16 @@ def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
         rec = evaluate_position(pos, snapshot, synthesis, config.risk, better_opp)
         recommendations.append(rec)
         all_notifications.extend(rec.alerts)
+        # Durable stop-out book for research cool-down (no revenge re-entry)
+        if rec.action == "Exit" and any(
+            a.alert_type == "stop_loss_triggered" for a in rec.alerts
+        ):
+            try:
+                from trading_agent.discipline.rails import record_stopout_event
+
+                record_stopout_event(pos.symbol, reason="stop_loss")
+            except Exception:
+                pass
 
     risk_eval = _evaluate_risk_limits(positions, snapshot, config.risk)
     portfolio_alerts = _risk_limit_notifications(risk_eval)

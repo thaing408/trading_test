@@ -22,7 +22,17 @@ Mechanisms derived from four process books, wired into `trading_agent` (not pros
 - `require_playbook_checklist` (default True)
 - `require_edge_package` (default True)
 - `enforce_mtf_gate` (default True)
+- `enforce_discipline_rails` (default True)
 - `max_concurrent_plays` / `max_aggregate_risk_pct` / `stop_cooldown_minutes`
+
+## Production wire (desk path)
+
+1. `pipeline.run_pipeline` → `build_session_risk_state(config.risk)` loads:
+   - open symbols from `TRADING_AGENT_POSITIONS_FILE` (or brokerage via plan_loader)
+   - stop-outs from `TRADING_AGENT_STOPOUT_FILE` or `~/.trading_agent/stopouts.json`
+2. `build_opportunities(..., session_state=..., rail_rejections=...)` **always** applies rails;
+   when `session_state` is None it seeds limits from `RiskConfig` via `session_state_from_risk_config`.
+3. Intraday Exit on `stop_loss_triggered` → `record_stopout_event(symbol)` for cool-down.
 
 ## CLI / library checks
 

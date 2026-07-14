@@ -199,6 +199,7 @@ def build_opportunities(
     max_count: int | None = None,
     *,
     session_state: object | None = None,
+    rail_rejections: List | None = None,
 ) -> List[TradeOpportunity]:
     """Build ranked opportunities: A+/A first, then B, C. F excluded.
 
@@ -206,11 +207,17 @@ def build_opportunities(
     - Shannon MTF gate inside assign_setup_grade
     - Bellafiore named playbook checklist
     - Douglas edge package completeness
-    - Cool-down / concurrent risk rails when session_state provided
+    - Cool-down / concurrent / aggregate risk rails always (SessionRiskState
+      seeded from RiskConfig; desk pipeline injects stop-out book + open book)
     """
     from trading_agent.discipline.edge import validate_edge_package
     from trading_agent.discipline.playbook import require_playbook_pass
-    from trading_agent.discipline.rails import SessionRiskState, check_discipline_rails
+    from trading_agent.discipline.rails import (
+        SessionRiskState,
+        check_discipline_rails,
+        session_state_from_risk_config,
+    )
+    from trading_agent.models import RejectedSetup
 
     limit = max_count if max_count is not None else risk_config.top_candidates
     prefer_a = bool(getattr(risk_config, "prefer_a_tier_only", False))
@@ -218,6 +225,14 @@ def build_opportunities(
     require_pb = bool(getattr(risk_config, "require_playbook_checklist", True))
     require_edge = bool(getattr(risk_config, "require_edge_package", True))
     enforce_mtf = bool(getattr(risk_config, "enforce_mtf_gate", True))
+    enforce_rails = bool(getattr(risk_config, "enforce_discipline_rails", True))
+
+    # Always apply RiskConfig limits on the auto-trade path (not optional).
+    if session_state is None or not isinstance(session_state, SessionRiskState):
+        state: SessionRiskState = session_state_from_risk_config(risk_config)
+    else:
+        state = session_state
+        state.apply_risk_config(risk_config)
 
     scored: List[dict] = []
 
@@ -287,20 +302,27 @@ def build_opportunities(
         if require_edge and not edge.ok:
             continue
 
-        # Risk % for rails: use config per-trade cap scaled by grade size (not feelings)
-        proposed_risk_pct = float(risk_config.max_risk_per_trade_pct) * float(
-            grade_result.size_multiplier or 1.0
+        # Risk % for rails: fixed config per-trade cap (Douglas: no feeling size-up)
+        proposed_risk_pct = min(
+            float(risk_config.max_risk_per_trade_pct),
+            float(risk_config.max_risk_per_trade_pct)
+            * float(grade_result.size_multiplier or 1.0),
         )
-        # Cap at max_risk_per_trade so size_mult >1 does not auto-violate rails
-        proposed_risk_pct = min(proposed_risk_pct, float(risk_config.max_risk_per_trade_pct))
 
-        if session_state is not None and isinstance(session_state, SessionRiskState):
+        if enforce_rails:
             rail = check_discipline_rails(
                 symbol=candidate.symbol,
                 proposed_risk_pct=proposed_risk_pct,
-                state=session_state,
+                state=state,
             )
             if not rail.allowed:
+                if rail_rejections is not None:
+                    rail_rejections.append(
+                        RejectedSetup(
+                            symbol=candidate.symbol,
+                            reason="Discipline rails: " + "; ".join(rail.reasons),
+                        )
+                    )
                 continue
 
         mtf_reason = ""
