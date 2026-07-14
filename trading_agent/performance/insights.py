@@ -93,6 +93,16 @@ def generate_insights(
     except Exception:
         pass
 
+    # SMB top-ten deliberate practice prompts (Steenbarger Enhancing + observer)
+    try:
+        from trading_agent.discipline.smb_books import smb_process_habit_lines
+
+        for line in smb_process_habit_lines():
+            if line not in habits:
+                habits.append(line)
+    except Exception:
+        pass
+
     if not improvements:
         improvements.append("Maintain current risk/reward filters and position sizing")
 

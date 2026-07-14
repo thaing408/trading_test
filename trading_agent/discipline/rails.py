@@ -60,6 +60,9 @@ class SessionRiskState:
     max_new_risk_pct: float = 6.0  # aggregate open risk % of equity
     max_risk_per_trade_pct: float = 2.0
     cooldown_minutes: int = 60
+    # Kiev / Wizards session flags (optional; set by desk when daily loss hits)
+    daily_loss_halt: bool = False
+    win_streak: int = 0
 
     def apply_risk_config(self, risk_config: "RiskConfig") -> "SessionRiskState":
         """Copy RiskConfig discipline limits onto this state (always used on desk path)."""

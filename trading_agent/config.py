@@ -44,6 +44,10 @@ class RiskConfig:
     max_aggregate_risk_pct: float = 6.0
     stop_cooldown_minutes: int = 60
     enforce_discipline_rails: bool = True  # cool-down / concurrent / aggregate risk
+    # SMB top-ten book gates (Livermore, Wizards, O'Neil, Dalton, Kiev, Kahneman…)
+    enforce_smb_book_gates: bool = True
+    oneil_min_rvol: float = 1.5
+    oneil_min_rs: float = 0.0  # 0 = inactive RS floor
 
 
 @dataclass

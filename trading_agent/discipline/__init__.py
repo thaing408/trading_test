@@ -1,4 +1,4 @@
-"""Book-informed auto-trade discipline (Douglas, Steenbarger, Shannon, Bellafiore)."""
+"""Book-informed auto-trade discipline (SMB top-ten + Shannon + desk rails)."""
 
 from trading_agent.discipline.edge import (
     EdgePackage,
@@ -38,8 +38,16 @@ from trading_agent.discipline.rails import (
     session_state_from_risk_config,
     symbol_in_cooldown,
 )
+from trading_agent.discipline.smb_books import (
+    SMB_TOP_TEN,
+    apply_smb_book_gates,
+    smb_process_habit_lines,
+)
 
 __all__ = [
+    "SMB_TOP_TEN",
+    "apply_smb_book_gates",
+    "smb_process_habit_lines",
     "PLAYBOOK_CATALOG",
     "ChecklistResult",
     "EdgePackage",

@@ -217,6 +217,7 @@ def build_opportunities(
         check_discipline_rails,
         session_state_from_risk_config,
     )
+    from trading_agent.discipline.smb_books import apply_smb_book_gates
     from trading_agent.models import RejectedSetup
 
     limit = max_count if max_count is not None else risk_config.top_candidates
@@ -226,6 +227,7 @@ def build_opportunities(
     require_edge = bool(getattr(risk_config, "require_edge_package", True))
     enforce_mtf = bool(getattr(risk_config, "enforce_mtf_gate", True))
     enforce_rails = bool(getattr(risk_config, "enforce_discipline_rails", True))
+    enforce_smb = bool(getattr(risk_config, "enforce_smb_book_gates", True))
 
     # Always apply RiskConfig limits on the auto-trade path (not optional).
     if session_state is None or not isinstance(session_state, SessionRiskState):
@@ -309,6 +311,54 @@ def build_opportunities(
             * float(grade_result.size_multiplier or 1.0),
         )
 
+        # SMB top-ten book gates (Livermore, Wizards, O'Neil, Dalton, Kiev, Kahneman…)
+        smb_ctx = {
+            "direction": strategy.direction,
+            "trend": technical.trend,
+            "breakout_state": technical.breakout_state,
+            "relative_volume": candidate.relative_volume,
+            "relative_strength": technical.relative_strength,
+            "rsi": technical.rsi,
+            "adx": technical.adx,
+            "entry_price": params["entry_price"],
+            "stop_loss": params["stop_loss"],
+            "profit_target": params["profit_target"],
+            "price": candidate.price,
+            "support": technical.support,
+            "resistance": technical.resistance,
+            "setup_id": setup_id,
+            "playbook_setup_id": setup_id,
+            # Kiev: only treat checklist as failed when playbook is required
+            "checklist_passed": (
+                True
+                if not require_pb
+                else bool(checklist.passed)
+                if checklist is not None
+                else False
+            ),
+            "proposed_risk_pct": proposed_risk_pct,
+            "base_risk_pct": float(risk_config.max_risk_per_trade_pct),
+            "daily_loss_halt": bool(getattr(state, "daily_loss_halt", False)),
+            "revenge_reentry": False,
+            "win_streak": int(getattr(state, "win_streak", 0) or 0),
+        }
+        smb = apply_smb_book_gates(
+            smb_ctx,
+            max_risk_per_trade_pct=float(risk_config.max_risk_per_trade_pct),
+            min_rvol=float(getattr(risk_config, "oneil_min_rvol", 1.5) or 1.5),
+            min_rs=float(getattr(risk_config, "oneil_min_rs", 0.0) or 0.0),
+            enabled=enforce_smb,
+        )
+        if enforce_smb and not smb.ok:
+            if rail_rejections is not None:
+                rail_rejections.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason=smb.summary,
+                    )
+                )
+            continue
+
         mtf_reason = ""
         for gr in grade_result.reasons:
             if "Shannon" in gr or "multi-timeframe" in gr.lower() or "HTF" in gr:
@@ -335,6 +385,7 @@ def build_opportunities(
                 "edge_summary": edge.summary,
                 "mtf_gate_reason": mtf_reason,
                 "proposed_risk_pct": proposed_risk_pct,
+                "smb_summary": smb.summary,
             }
         )
 
@@ -405,6 +456,7 @@ def build_opportunities(
             f"{'HIGH (A-tier first)' if grade in ('A+', 'A') else 'secondary'}",
             f"Playbook: {row['playbook_name'] or row['setup_id'] or 'n/a'} — {row['checklist_summary']}",
             f"Edge: {row['edge_summary']}",
+            f"SMB books: {row.get('smb_summary') or 'n/a'}",
             f"Hold style: {grade_result.hold_style}",
             f"PT/SL geometry: target {grade_result.target_atr_mult}×ATR, "
             f"stop {grade_result.stop_atr_mult}×ATR",
