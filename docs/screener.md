@@ -38,3 +38,18 @@ set TRADING_AGENT_STRENGTH_MODE=soft
 
 ## Parallel fetch
 `ScreenerConfig.fetch_workers` (default 6) for live Yahoo multi-symbol scan.
+
+## Intraday discovery refresh (Pacific Time)
+
+Morning research/CIO still builds the day plan once. During RTH the desk also runs
+**light discovery** (rescreen + re-rank, update `daily_plan_context.json`) at:
+
+| PT | ET | Role |
+|----|-----|------|
+| **07:00** | 10:00 | Post-open range set |
+| **09:30** | 12:30 | Midday rotation |
+| **11:00** | 14:00 | Afternoon check before 13:00 PT close |
+
+- Not a full CIO rebuild every 15m — only these slots (or catch-up if late).
+- Disable: `TRADING_AGENT_DISCOVERY_REFRESH=0`
+- Module: `trading_agent.session.discovery`

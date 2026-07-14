@@ -33,6 +33,11 @@ from trading_agent.session.context import (
     save_performance_report,
     save_plan_context,
 )
+from trading_agent.session.discovery import (
+    due_discovery_slots,
+    format_discovery_refresh,
+    run_discovery_refresh,
+)
 from trading_agent.session.intelligence import run_intelligence_pass
 from trading_agent.session.play_formatter import (
     format_cio_plays,
@@ -263,6 +268,9 @@ def run_session(
                     1,
                 )
                 cycle_index = 0
+                discovery_done: set[str] = set()
+                # Fixture/dry-run: fire one discovery after first cycle so path is exercised
+                fixture_discovery_done = False
                 while True:
                     cycle_index += 1
                     has_pos = session_has_open_positions(config)
@@ -302,6 +310,58 @@ def run_session(
                             f"open_positions={has_pos} "
                             f"baseline={baseline} in_position={fast}",
                         )
+
+                    # --- Light discovery refresh at fixed PT slots (or once in fixture) ---
+                    if getattr(config, "enable_discovery_refresh", True):
+                        now_pt = datetime.now(tz)
+                        slots = schedule.discovery_refreshes or ()
+                        due = due_discovery_slots(slots, now=now_pt, already_run=discovery_done)
+                        if (
+                            not live_adaptive
+                            and not fixture_discovery_done
+                            and cycle_index >= 1
+                            and slots
+                        ):
+                            # Dry/fixture: run first slot once so discovery path is covered
+                            due = [slots[0]]
+                            fixture_discovery_done = True
+                        for slot in due:
+                            key = slot.strftime("%H:%M")
+                            label = f"Discovery refresh {key} PT"
+                            _log(log, f"=== {label} ===")
+                            try:
+                                if plan_path and plan_path.exists():
+                                    plan_context = load_saved_plan_context(plan_path)
+                                disc = run_discovery_refresh(
+                                    agent_config,
+                                    session_dir=session_dir,
+                                    prior_context=plan_context,
+                                    slot_label=key + " PT",
+                                    scheduled_at=slot,
+                                )
+                                plan_context = disc.context
+                                plan_path = session_dir / "daily_plan_context.json"
+                                watch_symbols = list(
+                                    dict.fromkeys(
+                                        list(disc.watchlist)
+                                        + list(watch_symbols)
+                                        + list(disc.new_symbols)
+                                    )
+                                )
+                                dmsg = format_discovery_refresh(disc)
+                                phase_messages[f"discovery_{key.replace(':', '')}"] = dmsg
+                                _deliver(
+                                    dmsg,
+                                    label,
+                                    config=config,
+                                    discord=discord,
+                                    log=log,
+                                    posts=posts,
+                                )
+                            except Exception as disc_exc:  # noqa: BLE001
+                                _log(log, f"[warn] Discovery refresh {key} failed: {disc_exc}")
+                                _log(log, traceback.format_exc())
+                            discovery_done.add(key)
 
                     intraday_config = IntradayConfig.from_env()
                     intraday_config.fixture_mode = config.fixture_mode

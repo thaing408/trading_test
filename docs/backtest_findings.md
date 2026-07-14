@@ -39,6 +39,19 @@ With SMB + Investopedia TA + playbook + MTF + rails **ON**:
 - Default scan universe **~113** liquid symbols; soft strength + scan floors feed more watchlist names.
 - Trade path still RiskConfig RVOL 2.0 / ADV 2M + book gates — more scanned ≠ more auto-trades.
 
+### Intraday discovery refresh (PST) — shipped
+Light rescreen during RTH (not continuous full research):
+
+| PT | ET | Role |
+|----|-----|------|
+| 07:00 | 10:00 | Post-open |
+| 09:30 | 12:30 | Midday |
+| 11:00 | 14:00 | Afternoon |
+
+- Module: `session/discovery.py`; wired into desk intraday loop.
+- Offline multi-regime WR **unchanged** by discovery schedule (still synthetic day path).
+- Disable: `TRADING_AGENT_DISCOVERY_REFRESH=0`
+
 ## Historical sweep (pre book-discipline wiring)
 
 | Rank | Config | Trades | Expectancy | Win rate | Max DD |

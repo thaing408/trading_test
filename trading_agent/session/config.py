@@ -31,6 +31,8 @@ class SessionConfig:
     log_file: str | None = None
     from_phase: DeskPhaseKind | None = None
     until_phase: DeskPhaseKind | None = None
+    # Light discovery rescreens at fixed PT slots during RTH (see schedule.DISCOVERY_*)
+    enable_discovery_refresh: bool = True
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -50,6 +52,12 @@ class SessionConfig:
         until_phase = DeskPhaseKind(until_raw) if until_raw else None
         from_raw = os.getenv("TRADING_AGENT_FROM_PHASE", "").strip()
         from_phase = DeskPhaseKind(from_raw) if from_raw else None
+        disc = os.getenv("TRADING_AGENT_DISCOVERY_REFRESH", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -64,4 +72,5 @@ class SessionConfig:
             log_file=os.getenv("TRADING_AGENT_SESSION_LOG"),
             until_phase=until_phase,
             from_phase=from_phase,
+            enable_discovery_refresh=disc,
         )

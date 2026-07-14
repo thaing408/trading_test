@@ -25,6 +25,16 @@ DESK_CLOSE_PT = time(13, 0)
 PERFORMANCE_TIME = time(13, 15)
 CIO_REVIEW_TIME = time(13, 30)
 
+# Light discovery refresh slots (Pacific Time) during RTH — not full CIO rebuilds.
+# 07:00 PT = 10:00 ET (post-open range set)
+# 09:30 PT = 12:30 ET (midday rotation)
+# 11:00 PT = 14:00 ET (afternoon opportunity check before close)
+DISCOVERY_REFRESH_TIMES_PT: tuple[time, ...] = (
+    time(7, 0),
+    time(9, 30),
+    time(11, 0),
+)
+
 
 class DeskPhaseKind(str, Enum):
     INTELLIGENCE = "intelligence"
@@ -60,6 +70,7 @@ class DeskSchedule:
     intraday_cycles: tuple[datetime, ...]
     market_open: datetime
     market_close: datetime
+    discovery_refreshes: tuple[datetime, ...] = ()
 
 
 def resolve_trading_date(
@@ -111,6 +122,12 @@ def compute_desk_schedule(
         cycles.append(cursor)
         cursor += timedelta(minutes=interval_minutes)
 
+    discovery: list[datetime] = []
+    for t in DISCOVERY_REFRESH_TIMES_PT:
+        dt = datetime.combine(trading_date, t, tzinfo=tz)
+        if open_dt < dt < close_dt:
+            discovery.append(dt)
+
     phases = (
         DeskPhase(DeskPhaseKind.INTELLIGENCE, "Market Intelligence Team", intelligence),
         DeskPhase(DeskPhaseKind.RESEARCH, "Trading Research Team", research),
@@ -128,6 +145,7 @@ def compute_desk_schedule(
         intraday_cycles=tuple(cycles),
         market_open=open_dt,
         market_close=close_dt,
+        discovery_refreshes=tuple(discovery),
     )
 
 
@@ -185,9 +203,22 @@ def render_desk_schedule_log(schedule: DeskSchedule, interval_minutes: int) -> s
         f"- In-position PT/SL interval: {DEFAULT_IN_POSITION_INTERVAL_MINUTES} minutes "
         f"(while open positions exist; adaptive)",
         f"- Intraday cycle count (baseline grid): {len(schedule.intraday_cycles)}",
+        f"- Discovery refresh slots (PT): {len(schedule.discovery_refreshes)} "
+        f"(light rescreen — not full CIO rebuild)",
         "",
-        "## Intraday cycle times (PT, baseline grid)",
+        "## Discovery refresh times (PT)",
     ]
+    for index, slot in enumerate(schedule.discovery_refreshes, start=1):
+        lines.append(
+            f"{index}. {slot.strftime('%H:%M %Z')} "
+            f"({slot.astimezone(ET).strftime('%H:%M %Z')} ET)"
+        )
+    lines.extend(
+        [
+            "",
+            "## Intraday cycle times (PT, baseline grid)",
+        ]
+    )
     for index, cycle in enumerate(schedule.intraday_cycles, start=1):
         lines.append(f"{index}. {cycle.strftime('%H:%M %Z')}")
     return "\n".join(lines) + "\n"
