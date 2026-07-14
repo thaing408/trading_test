@@ -105,3 +105,22 @@ python -m trading_agent odte --dte 3 --interval 15m --backtest --puts-only
 # Brief only
 python -m trading_agent odte --mode weekly
 ```
+
+---
+
+# Breakout vs mean reversion (desk styles)
+
+| Style | Bet | Desk command | Notes |
+|-------|-----|--------------|--------|
+| **mean_reversion** (default) | Fade RSI extreme at S/R | `odte --style mean_reversion` / 0DTE Shen / multi-DTE RSI | Opposite of chasing the break |
+| **breakout** | Continuation after OR high/low break | `odte --style breakout --backtest --source schwab` | Aligns with 888 TI breakout philosophy |
+
+```bash
+# Mean reversion 0DTE (default style)
+python -m trading_agent odte --style mean_reversion --backtest --period 10d --source schwab
+
+# Breakout OR continuation on 15m (live Schwab)
+python -m trading_agent odte --style breakout --backtest --period 10d --source schwab
+```
+
+Do not mix styles on the same signal without re-labeling risk (false break ≠ RSI fade).

@@ -97,11 +97,14 @@ def fetch_qqq_1m(
             )
 
             if src in ("schwab", "tos") or schwab_available():
-                # Schwab minute history max ~10 day period
+                # Schwab minute history: periodType=day allows 1–5 or 10 (not 6–9)
                 schwab_period = period
                 if period.endswith("d") and period[:-1].isdigit():
                     n = int(period[:-1])
-                    schwab_period = f"{min(max(n, 1), 10)}d"
+                    n = max(1, min(n, 10))
+                    if 6 <= n <= 9:
+                        n = 10
+                    schwab_period = f"{n}d"
                 else:
                     schwab_period = "10d"
                 df = fetch_schwab_ohlcv_dataframe(
@@ -491,6 +494,7 @@ def run_odte_backtest(
         by_exit=dict(by_exit),
         trades=trades,
         assumptions=[
+            "Style: mean_reversion (fade RSI extremes at levels — not OR breakout continuation)",
             f"1m bars period={period}; source={getattr(df, 'attrs', {}).get('data_source', data_source)}",
             f"Synthetic premium ${entry_prem:.2f}; delta={delta} $prem per $1 underlying",
             f"Bracket TP +{cfg.take_profit_pct:.0%} / SL -{cfg.stop_loss_pct * 100:.1f}% on premium",
@@ -510,6 +514,7 @@ def run_odte_backtest(
         ],
         metadata={
             "period": period,
+            "style": "mean_reversion",
             "data_source": getattr(df, "attrs", {}).get("data_source", data_source),
             "put_rsi": cfg.put_rsi,
             "call_rsi": cfg.call_rsi,

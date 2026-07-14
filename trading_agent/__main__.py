@@ -25,9 +25,50 @@ from trading_agent.session.schedule import DeskPhaseKind
 
 def _run_odte(args: argparse.Namespace) -> int:
     from trading_agent.odte.playbook import OdtePlaybookConfig, format_odte_brief, run_odte_playbook
+    from trading_agent.strategy.style import TradingStyle, format_style_brief, parse_trading_style
 
+    style = parse_trading_style(getattr(args, "style", None))
     mode = (getattr(args, "mode", None) or "0dte").strip().lower()
     dte = int(getattr(args, "dte", 0) or 0)
+
+    # Explicit breakout style → OR continuation path (HTF)
+    if style is TradingStyle.BREAKOUT or mode == "breakout":
+        from trading_agent.odte.breakout import (
+            BreakoutPlaybookConfig,
+            format_breakout_brief,
+            render_breakout_backtest,
+            run_breakout_backtest,
+        )
+
+        interval = getattr(args, "interval", None) or "15m"
+        period = "60d" if args.period == "7d" else args.period
+        if dte <= 0 and mode in ("2dte", "3dte", "weekly"):
+            dte = {"2dte": 2, "3dte": 3, "weekly": 5}.get(mode, 5)
+        cfg = BreakoutPlaybookConfig(
+            symbol=args.symbol.upper(),
+            account_size=float(args.account),
+            target_dte=dte or 5,
+            bar_interval=interval,
+            puts_only=bool(getattr(args, "puts_only", False)),
+        )
+        source = getattr(args, "source", "auto") or "auto"
+        if getattr(args, "backtest", False):
+            result = run_breakout_backtest(
+                cfg.symbol, period=period, cfg=cfg, data_source=source
+            )
+            text = render_breakout_backtest(result)
+            print(text)
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            return 0
+        text = format_breakout_brief(cfg.symbol, cfg=cfg)
+        print(text)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     # --dte 2/3/5/7 or --mode weekly|2dte|3dte|multidte implies multi-DTE path
     if mode in ("weekly", "2dte", "3dte", "multidte", "multi") or dte > 0:
         from trading_agent.odte.multidte import (
@@ -63,13 +104,17 @@ def _run_odte(args: argparse.Namespace) -> int:
                 cfg=cfg,
                 data_source=source,
             )
-            text = render_multidte_backtest(result)
+            text = format_style_brief(TradingStyle.MEAN_REVERSION) + render_multidte_backtest(
+                result
+            )
             print(text)
             if args.output:
                 with open(args.output, "w", encoding="utf-8") as handle:
                     handle.write(text)
             return 0
-        text = format_multidte_brief(cfg.symbol, cfg=cfg)
+        text = format_style_brief(TradingStyle.MEAN_REVERSION) + format_multidte_brief(
+            cfg.symbol, cfg=cfg
+        )
         print(text)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as handle:
@@ -94,7 +139,7 @@ def _run_odte(args: argparse.Namespace) -> int:
             cfg=cfg,
             data_source=source,
         )
-        text = render_odte_backtest(result)
+        text = format_style_brief(TradingStyle.MEAN_REVERSION) + render_odte_backtest(result)
         print(text)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as handle:
@@ -103,7 +148,7 @@ def _run_odte(args: argparse.Namespace) -> int:
 
     cfg = OdtePlaybookConfig(symbol=args.symbol.upper(), account_size=float(args.account))
     brief = run_odte_playbook(cfg)
-    text = format_odte_brief(brief)
+    text = format_style_brief(TradingStyle.MEAN_REVERSION) + format_odte_brief(brief)
     print(text)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:
@@ -315,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
 
     odte = subparsers.add_parser(
         "odte",
-        help="QQQ/SPY options playbook: 0DTE (1m) or multi-DTE weeklies/2–3DTE (15m+)",
+        help="QQQ/SPY playbooks: mean-reversion (Shen 0DTE/multi-DTE) or breakout (OR continuation)",
     )
     odte.add_argument("--symbol", default="QQQ", help="ETF symbol (QQQ or SPY)")
     odte.add_argument("--account", type=float, default=1000.0, help="Account size for risk template")
@@ -323,13 +368,27 @@ def main(argv: list[str] | None = None) -> int:
     odte.add_argument(
         "--period",
         default="7d",
-        help="History period (0DTE default 7d; multi-DTE prefers 60d on yfinance)",
+        help="History period (0DTE default 7d; multi-DTE/breakout prefers 60d on yfinance)",
+    )
+    odte.add_argument(
+        "--style",
+        default="mean_reversion",
+        choices=[
+            "mean_reversion",
+            "mean-reversion",
+            "mr",
+            "fade",
+            "breakout",
+            "bo",
+            "continuation",
+        ],
+        help="mean_reversion=RSI/level fade (default); breakout=OR high/low continuation",
     )
     odte.add_argument(
         "--mode",
         default="0dte",
-        choices=["0dte", "weekly", "2dte", "3dte", "multidte", "multi"],
-        help="0dte=1m Shen path; weekly/2dte/3dte/multidte=HTF multi-day expiry path",
+        choices=["0dte", "weekly", "2dte", "3dte", "multidte", "multi", "breakout"],
+        help="0dte=1m Shen; weekly/2dte/3dte=HTF multi-DTE fade; breakout=OR continuation",
     )
     odte.add_argument(
         "--dte",

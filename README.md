@@ -167,3 +167,14 @@ See `.env.example`. Key vars (written by the installer):
 - `SCHWAB_TOKEN_PATH` — override Schwab OAuth token path
 - `TRADING_AGENT_INTRADAY_INTERVAL` — baseline desk cycle minutes when **flat** (default **15**)
 - `TRADING_AGENT_INTRADAY_IN_POSITION_INTERVAL` — PT/SL re-check minutes while **open positions** exist (default **3**, must be &lt; baseline)
+
+### Breakout vs mean reversion (QQQ playbooks)
+
+```bash
+# Mean reversion (default): Shen 0DTE / multi-DTE RSI fades at levels
+python -m trading_agent odte --style mean_reversion --backtest --period 10d --source schwab
+
+# Breakout: opening-range high/low *continuation* (15m HTF)
+python -m trading_agent odte --style breakout --backtest --period 10d --source schwab
+python -m trading_agent odte --mode breakout   # same path
+```

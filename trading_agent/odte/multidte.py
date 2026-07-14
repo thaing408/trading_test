@@ -424,6 +424,7 @@ def run_multidte_backtest(
         by_exit=dict(by_exit),
         trades=trades,
         assumptions=[
+            "Style: mean_reversion (HTF RSI fade at levels — not OR breakout continuation)",
             f"Multi-DTE HTF backtest period={period} interval={cfg.bar_interval} source={src}",
             f"Target DTE≈{cfg.target_dte} (label exp ~{exp_label}); not OCC chain selection",
             f"Synthetic premium ${entry_prem:.2f}; delta={delta} (milder than 0DTE 0.55)",
@@ -436,6 +437,7 @@ def run_multidte_backtest(
         metadata={
             "period": period,
             "mode": "multidte",
+            "style": "mean_reversion",
             "target_dte": cfg.target_dte,
             "bar_interval": cfg.bar_interval,
             "data_source": src,

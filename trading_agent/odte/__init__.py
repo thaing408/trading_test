@@ -1,4 +1,4 @@
-"""QQQ/SPY options playbooks: 0DTE (Shen 1m) + multi-DTE weeklies/2–3DTE (HTF)."""
+"""QQQ/SPY options playbooks: mean-reversion (Shen/multi-DTE) + breakout (OR continuation)."""
 
 from trading_agent.odte.playbook import (
     OdtePlaybookConfig,
@@ -11,6 +11,11 @@ from trading_agent.odte.multidte import (
     format_multidte_brief,
     run_multidte_backtest,
 )
+from trading_agent.odte.breakout import (
+    BreakoutPlaybookConfig,
+    format_breakout_brief,
+    run_breakout_backtest,
+)
 
 __all__ = [
     "OdtePlaybookConfig",
@@ -20,4 +25,7 @@ __all__ = [
     "MultidtePlaybookConfig",
     "format_multidte_brief",
     "run_multidte_backtest",
+    "BreakoutPlaybookConfig",
+    "format_breakout_brief",
+    "run_breakout_backtest",
 ]
