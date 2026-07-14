@@ -36,10 +36,16 @@ class OdtePlaybookConfig:
     # Risk template (scaled from $1k / $250 max example)
     account_size: float = 1_000.0
     max_position_pct: float = 0.25
-    take_profit_pct: float = 0.20
-    stop_loss_pct: float = 0.125
+    # Tighter TP / slightly wider SL vs article 20/12.5 — higher hit-rate on Schwab/TOS + Yahoo 1m A/B
+    take_profit_pct: float = 0.15
+    stop_loss_pct: float = 0.18
     window_start_et: time = time(9, 30)
     window_end_et: time = time(11, 15)
+    # Whole-$ + structural (PD/PM/OR). TOS 10d A/B: whole+TP15/SL18 WR 28.6% vs legacy 21.4%;
+    # structural-only cut sample and underperformed on that window (set False to restrict).
+    use_whole_dollar_levels: bool = True
+    # Require close back on the right side of the level (rejection / bounce bar)
+    require_rejection_close: bool = False
 
 
 @dataclass
@@ -118,6 +124,56 @@ def whole_dollar_levels(price: float, n: int = 4) -> tuple[List[float], List[flo
         above = [ceil_px + i for i in range(0, n)]
         below = [floor_px - i for i in range(0, n)]
     return [float(x) for x in above], [float(x) for x in below]
+
+
+def signal_side_for_touch(
+    kind: str,
+    rsi: float,
+    cfg: OdtePlaybookConfig,
+) -> Optional[str]:
+    """Map level kind + RSI to CALL/PUT or None (shared by live brief + backtest)."""
+    if kind == "resistance" and rsi >= cfg.put_rsi:
+        return "PUT"
+    if kind == "support" and rsi <= cfg.call_rsi:
+        return "CALL"
+    if kind == "both":
+        if rsi >= cfg.put_rsi:
+            return "PUT"
+        if rsi <= cfg.call_rsi:
+            return "CALL"
+    return None
+
+
+def is_structural_level_name(name: str) -> bool:
+    """True for PDH/PDL/PMH/PML/ORH/ORL (not whole-dollar rails)."""
+    upper = name.strip().upper()
+    if upper.startswith("WHOLE"):
+        return False
+    return upper in {"PDH", "PDL", "PMH", "PML", "ORH", "ORL"}
+
+
+def level_allowed_for_entry(name: str, cfg: OdtePlaybookConfig) -> bool:
+    """Gate whole-dollar rails when use_whole_dollar_levels is False."""
+    if cfg.use_whole_dollar_levels:
+        return True
+    return is_structural_level_name(name)
+
+
+def rejection_close_ok(
+    kind: str,
+    close: float,
+    level: float,
+    *,
+    require: bool,
+) -> bool:
+    """If require=True, PUT/resistance needs close ≤ level; CALL/support close ≥ level."""
+    if not require:
+        return True
+    if kind == "resistance":
+        return close <= level
+    if kind == "support":
+        return close >= level
+    return True
 
 
 def _in_window(now_et: datetime, cfg: OdtePlaybookConfig) -> bool:
@@ -235,6 +291,8 @@ def _evaluate_setups(
     setups: List[OdteSetup] = []
     price = levels.last
     for name, lvl, kind in _level_map(levels):
+        if not level_allowed_for_entry(name, cfg):
+            continue
         near = abs(price - lvl) <= cfg.level_tol
         if not near:
             continue
@@ -367,9 +425,10 @@ def format_odte_brief(brief: OdteSessionBrief) -> str:
         f"- Whole $ below: {', '.join(f'{x:.0f}' for x in L.whole_below)}",
         "",
         "**Signal rules (QQQ same as SPY playbook):**",
-        "- PUT: first touch of resistance + RSI ≥ 74",
-        "- CALL: first touch of support + RSI ≤ 26",
-        "- Window only 6:30–8:15 PT; 1-strike OTM; set bracket on fill",
+        "- PUT: first touch of resistance + RSI ≥ put_rsi (default 74)",
+        "- CALL: first touch of support + RSI ≤ call_rsi (default 26)",
+        "- Prefer structural levels (PDH/PDL/PMH/PML/ORH/ORL); whole-$ optional; "
+        "window 6:30–8:15 PT; 1-strike OTM; bracket on fill",
         "",
     ]
     if brief.setups:

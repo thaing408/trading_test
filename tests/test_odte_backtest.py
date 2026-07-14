@@ -41,7 +41,12 @@ def test_run_odte_backtest_on_synthetic_frames():
     d1 = datetime(2026, 7, 7, 9, 30)
     df = pd.concat([_synth_day(d0), _synth_day(d1)])
     # Force RSI path: prepend enough closes via copy — recompute using engine on df
-    cfg = OdtePlaybookConfig(symbol="QQQ", put_rsi=74, call_rsi=40)  # looser call for synth
+    cfg = OdtePlaybookConfig(
+        symbol="QQQ",
+        put_rsi=74,
+        call_rsi=40,  # looser call for synth
+        use_whole_dollar_levels=True,  # synth path needs whole-$ rails
+    )
     # Soften call threshold so synthetic path can fire
     result = run_odte_backtest("QQQ", period="7d", cfg=cfg, df=df, max_trades_per_day=2)
     assert result.symbol == "QQQ"
@@ -51,6 +56,22 @@ def test_run_odte_backtest_on_synthetic_frames():
     text = render_odte_backtest(result)
     assert "Win rate" in text
     assert "Trades" in text
+
+
+def test_structural_only_skips_whole_dollar_entries():
+    """Default config (structural only) must not open trades tagged whole $."""
+    d0 = datetime(2026, 7, 6, 9, 30)
+    d1 = datetime(2026, 7, 7, 9, 30)
+    df = pd.concat([_synth_day(d0, n=150), _synth_day(d1, n=150)])
+    cfg = OdtePlaybookConfig(
+        symbol="QQQ",
+        put_rsi=50,
+        call_rsi=50,
+        use_whole_dollar_levels=False,
+    )
+    result = run_odte_backtest("QQQ", period="7d", cfg=cfg, df=df, max_trades_per_day=5)
+    for t in result.trades:
+        assert not t.level_name.lower().startswith("whole"), t.level_name
 
 
 def test_rsi_used_in_backtest_path():

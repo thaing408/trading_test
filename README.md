@@ -163,3 +163,5 @@ See `.env.example`. Key vars (written by the installer):
 - `TRADING_AGENT_DRY_RUN=1` / `TRADING_AGENT_NO_DISCORD=1` — no Discord posts
 - `TRADING_AGENT_ENV_FILE` — alternate env path
 - `TRADING_AGENT_TIMEZONE=America/Los_Angeles`
+- `TRADING_AGENT_MARKET_DATA=auto|schwab|yfinance` — OHLCV for TR strength/technicals (default **auto**: Schwab `~/.schwab-mcp/token.json`, else yfinance)
+- `SCHWAB_TOKEN_PATH` — override Schwab OAuth token path

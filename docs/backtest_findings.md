@@ -36,33 +36,72 @@ Underlying-path options proxy, not full chain. Rankings are relative under docum
 # QQQ 0DTE Shen-style playbook (live 1m)
 
 ## Method
-- Entry: `python -m trading_agent odte --symbol QQQ --backtest --period 7d`
-- Rules: first touch of whole-$ / PDH-PDL / PMH-PML / OR levels + 1m RSI extreme (≈74/26) in **9:30–11:15 ET**
-- Synthetic premium $1.00; delta≈0.55 × underlying $ move; bracket **+20% TP / −12.5% SL**
+- Entry: `python -m trading_agent odte --symbol QQQ --backtest --period 10d --source schwab`  
+  (or `--source yfinance`; `auto` prefers Schwab/TOS when `~/.schwab-mcp/token.json` is present)
+- Rules: first touch of whole-$ / PDH-PDL / PMH-PML / OR + 1m RSI extreme (≈74/26) in **9:30–11:15 ET**
+- Synthetic premium $1.00; delta≈0.55 × underlying $ move; bracket **+15% TP / −18% SL** (was +20% / −12.5%)
 - Max 3 trades/day; one position at a time; contracts=2 × 100
-- **Data limit:** Yahoo 1m history ≈ **7–8 days max** per request (60d not available)
+- **Data:** Schwab Market Data API = thinkorswim feed; Yahoo 1m ≈ **7–8d** max; Schwab minute ≈ **10d** max
 
-## Results (as of 2026-07-13 run)
+## A/B on Schwab/TOS 1m (2026-06-26 → 2026-07-10, 13 430 bars)
 
-| Metric | Value |
-|--------|--------|
-| Days | 7 |
-| Trades | 11 |
-| Winners / Losers | 2 / 9 |
-| **Win rate (success rate)** | **18.2%** |
-| Total P/L | −$145 |
-| Expectancy | −$13.18 / trade |
-| Avg premium P/L % | −6.6% |
-| Profit factor | 0.36 |
-| Max drawdown | $160 |
-| CALL | n=6 · WR 16.7% · −$85 |
-| PUT | n=5 · WR 20.0% · −$60 |
-| Exits | stop_loss 9 · take_profit 2 |
+| Rules | Trades | **Win rate** | P/L | Expectancy | Exits |
+|-------|--------|--------------|-----|------------|-------|
+| **Legacy** whole-$ + TP20/SL12.5 | 14 | **21.4%** | −$155 | −$11.07 | SL11 / TP3 |
+| Structural-only + TP15/SL18 | 9 | 11.1% | −$258 | −$28.67 | SL8 / TP1 |
+| **Shipped** whole-$ + **TP15/SL18** | 14 | **28.6%** | −$240 | −$17.14 | SL10 / TP4 |
+
+- **WR lift (TOS 10d):** 21.4% → **28.6%** (+7.2pp) with same trade count (14), non-empty sample.
+- Structural-only **hurt** on this longer TOS window (cut winners with whole-$ losers still net worse).
+- Last ~7d of same TOS file: legacy 33.3% (n=3) vs whole+TP15/SL18 **66.7%** (n=3) vs structural-only 100% (n=1 — too thin).
+
+## Yahoo 1m note (earlier 7d ending ~2026-07-13)
+On a short Yahoo window, structural-only + TP15/SL18 briefly showed **18.2% → 60%** (n=11 → 5). That slice is **not** confirmed on the full TOS 10d sample — TOS is the authoritative broker feed for re-tuning defaults.
+
+## Shipped defaults (after TOS A/B)
+1. `use_whole_dollar_levels=True` (keep whole-$ + structural)
+2. `take_profit_pct=0.15`, `stop_loss_pct=0.18`
+3. CLI: `--source schwab|tos|yfinance|auto`, `--legacy-rules` for A/B
+4. Helpers: `signal_side_for_touch`, `level_allowed_for_entry`, `rejection_close_ok`
 
 ## Interpretation
-- Under this premium proxy, the Shen-style QQQ 0DTE book was **net losing** over the latest week: stops hit ~4.5× more often than targets.
-- Sample is **small** (11 trades) and **not** full options IV/chain pricing — live P/L will differ with IV crush and spreads.
-- Relative to the offline multi-regime desk book (**strict_a_tier_book3** ~75% WR on synthetic OHLCV), this intraday 0DTE path needs more data or rule filters before treating as shippable.
+- Under synthetic premium, **easier TP / slightly wider SL** raised hit-rate on TOS without zeroing trades.
+- Book is still **net losing** on expectancy for the 10d TOS sample (wider SL costs more on losers) — WR improved, expectancy did not; size small.
+- Not full options IV/chain pricing — live 0DTE P/L differs with IV crush and spreads.
 
-## Sample losing pattern
-Many whole-dollar / OR first-touches with RSI already extreme still faded through the −12.5% premium stop within the morning window (e.g. 2026-07-06/07/09/13 clusters).
+## CLI examples
+```bash
+# TOS/Schwab feed (improved defaults)
+python -m trading_agent odte --symbol QQQ --backtest --period 10d --source schwab
+
+# Legacy rules on same feed
+python -m trading_agent odte --symbol QQQ --backtest --period 10d --source schwab --legacy-rules
+
+# Puts-only 0DTE (higher WR on TOS/Yahoo A/B)
+python -m trading_agent odte --symbol QQQ --backtest --period 10d --source schwab --puts-only
+```
+
+---
+
+# QQQ multi-DTE (weeklies / 2–3 DTE) on higher TF
+
+## Method
+- Entry: `python -m trading_agent odte --mode weekly --backtest --source schwab`  
+  or `--dte 2|3|5 --interval 15m`
+- Bars: **15m** (default), window **09:45–14:00 ET**, optional rejection close
+- Target DTE label 2 / 3 / 5 (weekly) — educational expiry tag, not OCC chain pick
+- Synthetic premium with **delta≈0.40** (milder than 0DTE 0.55); bracket default **+25% / −20%**
+- Motivation: fast QQQ + 0DTE gamma is a churn factory; HTF structure + more extrinsic
+
+## CLI
+```bash
+# Weekly-style (DTE≈5) 15m on Schwab/TOS
+python -m trading_agent odte --mode weekly --backtest --source schwab --period 10d
+
+# 2DTE / 3DTE
+python -m trading_agent odte --mode 2dte --backtest --source auto
+python -m trading_agent odte --dte 3 --interval 15m --backtest --puts-only
+
+# Brief only
+python -m trading_agent odte --mode weekly
+```

@@ -35,44 +35,10 @@ def _get_ohlcv(
     interval: str = "1d",
     period: str = "3mo",
 ) -> Dict[str, List[float]]:
-    if config.fixture_mode:
-        from trading_agent.collectors.base import load_fixture
+    """OHLCV for TR strength gates + technicals (Schwab-first when configured/auto)."""
+    from trading_agent.market_data import get_ohlcv
 
-        data = load_fixture("ohlcv.json").get(symbol, {})
-        if interval == "1h":
-            hourly = data.get("hourly", {})
-            if hourly:
-                return {
-                    "close": hourly.get("close", []),
-                    "high": hourly.get("high", []),
-                    "low": hourly.get("low", []),
-                    "volume": hourly.get("volume", []),
-                }
-        out = {
-            "close": data.get("close", []),
-            "high": data.get("high", []),
-            "low": data.get("low", []),
-            "volume": data.get("volume", []),
-        }
-        if data.get("open"):
-            out["open"] = data["open"]
-        return out
-
-    import yfinance as yf
-
-    ticker = yf.Ticker(symbol)
-    hist = ticker.history(period=period, interval=interval)
-    if hist.empty:
-        return {"close": [], "high": [], "low": [], "volume": []}
-    result = {
-        "close": hist["Close"].tolist(),
-        "high": hist["High"].tolist(),
-        "low": hist["Low"].tolist(),
-        "volume": hist["Volume"].tolist(),
-    }
-    if "Open" in hist.columns:
-        result["open"] = hist["Open"].tolist()
-    return result
+    return get_ohlcv(symbol, config, interval=interval, period=period)
 
 
 def _analyze_candidate(

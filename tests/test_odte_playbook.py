@@ -3,7 +3,11 @@
 from trading_agent.odte.playbook import (
     OdtePlaybookConfig,
     format_odte_brief,
+    is_structural_level_name,
+    level_allowed_for_entry,
+    rejection_close_ok,
     rsi_series,
+    signal_side_for_touch,
     whole_dollar_levels,
 )
 
@@ -51,3 +55,32 @@ def test_format_brief_structure_with_empty_setups():
     assert "PDH" in text and "718" in text
     assert "RSI" in text
     assert "No entry now" in text or "No entry" in text
+
+
+def test_signal_side_for_touch_respects_rsi_gates():
+    cfg = OdtePlaybookConfig(put_rsi=74, call_rsi=26)
+    assert signal_side_for_touch("resistance", 80, cfg) == "PUT"
+    assert signal_side_for_touch("resistance", 60, cfg) is None
+    assert signal_side_for_touch("support", 20, cfg) == "CALL"
+    assert signal_side_for_touch("support", 40, cfg) is None
+
+
+def test_level_allowed_structural_flag_blocks_whole_dollar():
+    cfg = OdtePlaybookConfig(use_whole_dollar_levels=False)
+    assert level_allowed_for_entry("ORH", cfg)
+    assert level_allowed_for_entry("PDL", cfg)
+    assert not level_allowed_for_entry("whole $715", cfg)
+    assert is_structural_level_name("PMH")
+    assert not is_structural_level_name("whole $720")
+    cfg_on = OdtePlaybookConfig(use_whole_dollar_levels=True)
+    assert level_allowed_for_entry("whole $715", cfg_on)
+    # shipped default after TOS A/B keeps whole-$ rails
+    assert OdtePlaybookConfig().use_whole_dollar_levels is True
+
+
+def test_rejection_close_ok():
+    assert rejection_close_ok("resistance", 100.0, 101.0, require=True)  # close below resistance
+    assert not rejection_close_ok("resistance", 102.0, 101.0, require=True)
+    assert rejection_close_ok("support", 101.0, 100.0, require=True)
+    assert not rejection_close_ok("support", 99.0, 100.0, require=True)
+    assert rejection_close_ok("resistance", 102.0, 101.0, require=False)

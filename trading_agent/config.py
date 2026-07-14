@@ -66,6 +66,8 @@ class AgentConfig:
     # Komar-style strength + pre-market gap/RVOL gates (in addition to institutional floors)
     apply_strength_gates: bool = True
     apply_premarket_gap_rvol: bool = True
+    # OHLCV for TR strength/technicals: auto | schwab | yfinance
+    market_data_provider: str = "auto"
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -77,9 +79,13 @@ class AgentConfig:
             "false",
             "no",
         )
+        provider = (
+            os.getenv("TRADING_AGENT_MARKET_DATA", "auto").strip().lower() or "auto"
+        )
         return cls(
             use_live_data=live and not fixture,
             fixture_mode=fixture,
             output_file=output,
             apply_strength_gates=strength,
+            market_data_provider=provider,
         )

@@ -1,11 +1,11 @@
-"""Backtest Shen-style 0DTE level+RSI playbook on QQQ (or SPY) 1-minute data.
+"""Multi-DTE QQQ/SPY playbook: weeklies / 2DTE / 3DTE on higher timeframes.
 
-Assumptions (labeled in reports):
-- Synthetic option premium starts at $1.00; dPremium ≈ delta × dUnderlying ($).
-- Bracket: +take_profit_pct / −stop_loss_pct on that premium (default +15% / −18%).
-- Structural levels (PD/PM/OR) by default; whole-dollar rails optional via config.
-- One position at a time; first-touch per level per day; entries only in ET window.
-- Not full options-chain pricing (no IV surface) — success rate is relative to this model.
+Motivation (from 0DTE 1m A/B on Schwab/TOS):
+- Fast QQQ makes 1m RSI + 0DTE gamma a low-quality churn factory.
+- Prefer 15m/30m structure, target DTE 2–7 (weeklies), optional puts-only.
+
+Synthetic premium model is labeled in reports — same style as 0DTE backtest but
+milder delta (more extrinsic / less same-day gamma proxy).
 """
 
 from __future__ import annotations
@@ -18,8 +18,21 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
+from trading_agent.odte.backtest import (
+    OdteBacktestResult,
+    OdteTrade,
+    _day_slice,
+    _in_window,
+    _opening_range,
+    _premarket_hl,
+    _prior_day_hl,
+    _session_days,
+    _simulate_premium_path,
+    _to_et_index,
+)
 from trading_agent.odte.playbook import (
     OdtePlaybookConfig,
+    is_structural_level_name,
     level_allowed_for_entry,
     rejection_close_ok,
     rsi_series,
@@ -31,64 +44,62 @@ ET = ZoneInfo("America/New_York")
 
 
 @dataclass
-class OdteTrade:
-    day: str
-    side: str  # CALL | PUT
-    level_name: str
-    level: float
-    entry_time: str
-    exit_time: str
-    entry_spot: float
-    exit_spot: float
-    entry_prem: float
-    exit_prem: float
-    exit_reason: str
-    pnl_pct: float
-    pnl_dollars: float
-    rsi_at_entry: float
+class MultidtePlaybookConfig(OdtePlaybookConfig):
+    """Extends 0DTE config with multi-day expiry + HTF defaults."""
+
+    # Target option horizon (calendar days to expiry label — not chain-selected)
+    target_dte: int = 5  # weekly-ish; use 2 or 3 for shorter
+    # Bar interval for signals (higher TF than 0DTE 1m)
+    bar_interval: str = "15m"
+    # Wider entry window for multi-DTE (full morning + early afternoon ET)
+    window_start_et: time = time(9, 45)  # skip first 15m open noise
+    window_end_et: time = time(14, 0)
+    # Milder RSI for 15m (less extreme than 1m 74/26)
+    put_rsi: float = 70.0
+    call_rsi: float = 30.0
+    # Wider level tolerance on 15m
+    level_tol: float = 0.60
+    or_minutes: int = 30  # first 30m range on 15m (~2 bars) approximated via bar count in backtest
+    # Bracket: give multi-DTE room (still synthetic)
+    take_profit_pct: float = 0.25
+    stop_loss_pct: float = 0.20
+    use_whole_dollar_levels: bool = True
+    require_rejection_close: bool = True
+    # 0DTE + multi-DTE TOS A/B: CALL first-touches dragged WR — default puts-only
+    puts_only: bool = True
+    # Synthetic delta lower than 0DTE (less same-day gamma)
+    premium_delta: float = 0.40
 
 
-@dataclass
-class OdteBacktestResult:
-    symbol: str
-    days: int
-    trade_count: int
-    winners: int
-    losers: int
-    win_rate: float
-    total_pnl: float
-    expectancy: float
-    profit_factor: float
-    max_drawdown: float
-    avg_pnl_pct: float
-    by_side: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    by_exit: Dict[str, int] = field(default_factory=dict)
-    trades: List[OdteTrade] = field(default_factory=list)
-    assumptions: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+def next_friday_dte(asof: date | None = None) -> int:
+    """Calendar days until next Friday (weekly options convention)."""
+    d = asof or datetime.now(ET).date()
+    # Friday = 4
+    days_ahead = (4 - d.weekday()) % 7
+    if days_ahead == 0:
+        # already Friday → this week's weekly is 0DTE-ish; prefer next week for "weekly swing"
+        days_ahead = 7
+    return days_ahead
 
 
-def _to_et_index(df):
-    idx = df.index
-    if getattr(idx, "tz", None) is None:
-        return idx.tz_localize(ET)
-    return idx.tz_convert(ET)
+def recommend_expiration_label(target_dte: int, asof: date | None = None) -> str:
+    """Human label for target expiry (not a broker OCC symbol)."""
+    d = asof or datetime.now(ET).date()
+    exp = d + timedelta(days=max(target_dte, 0))
+    return exp.isoformat()
 
 
-def fetch_qqq_1m(
+def fetch_htf_bars(
     symbol: str = "QQQ",
-    period: str = "7d",
+    period: str = "60d",
+    interval: str = "15m",
     *,
     source: str = "auto",
 ):
-    """Load 1m OHLCV for ODTE backtest.
-
-    source:
-      - auto: Schwab/TOS when token available, else yfinance
-      - schwab | tos: Schwab Market Data API (same feed as thinkorswim)
-      - yfinance | yf: Yahoo Finance
-    """
+    """Load higher-timeframe OHLCV (15m/30m/5m) from Schwab or yfinance."""
     src = (source or "auto").strip().lower()
+    interval = (interval or "15m").strip().lower()
+
     if src in ("auto", "schwab", "tos"):
         try:
             from trading_agent.market_data.schwab_ohlcv import (
@@ -97,149 +108,74 @@ def fetch_qqq_1m(
             )
 
             if src in ("schwab", "tos") or schwab_available():
-                # Schwab minute history max ~10 day period
-                schwab_period = period
+                # Schwab minute history is periodType=day, max ~10
+                schwab_period = "10d"
                 if period.endswith("d") and period[:-1].isdigit():
-                    n = int(period[:-1])
-                    schwab_period = f"{min(max(n, 1), 10)}d"
-                else:
-                    schwab_period = "10d"
+                    schwab_period = f"{min(max(int(period[:-1]), 1), 10)}d"
                 df = fetch_schwab_ohlcv_dataframe(
-                    symbol, interval="1m", period=schwab_period, extended_hours=True
+                    symbol,
+                    interval=interval if interval != "1h" else "30m",
+                    period=schwab_period,
+                    extended_hours=False,
                 )
                 if df is not None and not df.empty:
                     df = df.copy()
                     df.index = _to_et_index(df)
                     df.attrs["data_source"] = "schwab"
+                    df.attrs["bar_interval"] = interval
                     return df
                 if src in ("schwab", "tos"):
-                    raise ValueError(f"No Schwab 1m history for {symbol}")
+                    raise ValueError(f"No Schwab {interval} history for {symbol}")
         except Exception:
             if src in ("schwab", "tos"):
                 raise
-            # auto → fall through to yfinance
 
     import yfinance as yf
 
+    # yfinance 15m max ~60d
     t = yf.Ticker(symbol)
-    df = t.history(period=period, interval="1m", auto_adjust=True)
+    yf_interval = "60m" if interval in ("1h", "60m") else interval
+    df = t.history(period=period, interval=yf_interval, auto_adjust=True)
     if df is None or df.empty:
-        raise ValueError(f"No 1m history for {symbol}")
+        raise ValueError(f"No {interval} history for {symbol}")
     df = df.copy()
     df.index = _to_et_index(df)
     df.attrs["data_source"] = "yfinance"
+    df.attrs["bar_interval"] = interval
     return df
 
 
-def _session_days(df) -> List[date]:
-    days = sorted({ts.date() for ts in df.index})
-    return days
+def _or_bars_for_interval(interval: str, or_minutes: int) -> int:
+    """How many bars ≈ opening-range minutes."""
+    mins = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60, "1h": 60}.get(
+        interval.lower(), 15
+    )
+    return max(1, int(round(or_minutes / mins)))
 
 
-def _day_slice(df, d: date):
-    mask = [ts.date() == d for ts in df.index]
-    return df.loc[mask]
-
-
-def _prior_day_hl(df, d: date) -> Tuple[Optional[float], Optional[float]]:
-    days = _session_days(df)
-    if d not in days:
-        return None, None
-    i = days.index(d)
-    if i == 0:
-        return None, None
-    prev = _day_slice(df, days[i - 1])
-    if prev.empty:
-        return None, None
-    return float(prev["High"].max()), float(prev["Low"].min())
-
-
-def _opening_range(day_df, or_minutes: int = 5) -> Tuple[Optional[float], Optional[float]]:
-    rth = day_df.between_time(time(9, 30), time(16, 0))
-    if rth.empty:
-        return None, None
-    # first or_minutes bars
-    head = rth.iloc[: max(or_minutes, 1)]
-    return float(head["High"].max()), float(head["Low"].min())
-
-
-def _premarket_hl(day_df) -> Tuple[Optional[float], Optional[float]]:
-    pre = day_df.between_time(time(4, 0), time(9, 29))
-    if pre.empty:
-        return None, None
-    return float(pre["High"].max()), float(pre["Low"].min())
-
-
-def _in_window(ts: datetime, start: time, end: time) -> bool:
-    t = ts.timetz().replace(tzinfo=None) if False else ts.time()
-    return start <= t <= end
-
-
-def _simulate_premium_path(
-    side: str,
-    entry_spot: float,
-    highs: Sequence[float],
-    lows: Sequence[float],
-    closes: Sequence[float],
-    times: Sequence[Any],
-    *,
-    entry_prem: float,
-    tp_prem: float,
-    sl_prem: float,
-    delta: float,
-) -> Tuple[float, float, str, Any]:
-    """Walk bars after entry; return exit_prem, exit_spot, reason, exit_time."""
-    for h, l, c, tm in zip(highs, lows, closes, times):
-        if side == "CALL":
-            # Best premium path uses favorable extreme first (conservative: check SL on low, TP on high)
-            prem_hi = entry_prem + delta * (h - entry_spot)
-            prem_lo = entry_prem + delta * (l - entry_spot)
-            if prem_lo <= sl_prem:
-                return sl_prem, l, "stop_loss", tm
-            if prem_hi >= tp_prem:
-                return tp_prem, h, "take_profit", tm
-            prem_c = entry_prem + delta * (c - entry_spot)
-        else:
-            prem_hi = entry_prem + delta * (entry_spot - l)  # put benefits from low
-            prem_lo = entry_prem + delta * (entry_spot - h)
-            if prem_lo <= sl_prem:
-                return sl_prem, h, "stop_loss", tm
-            if prem_hi >= tp_prem:
-                return tp_prem, l, "take_profit", tm
-            prem_c = entry_prem + delta * (entry_spot - c)
-        # continue
-    # time stop at last bar
-    c = closes[-1] if closes else entry_spot
-    tm = times[-1] if times else None
-    if side == "CALL":
-        prem = entry_prem + delta * (c - entry_spot)
-    else:
-        prem = entry_prem + delta * (entry_spot - c)
-    return max(prem, 0.01), c, "time_exit", tm
-
-
-def run_odte_backtest(
+def run_multidte_backtest(
     symbol: str = "QQQ",
     *,
-    period: str = "7d",
-    cfg: OdtePlaybookConfig | None = None,
-    delta: float = 0.55,
+    period: str = "60d",
+    cfg: MultidtePlaybookConfig | None = None,
     entry_prem: float = 1.0,
     contracts: int = 2,
-    max_trades_per_day: int = 3,
+    max_trades_per_day: int = 2,
     df=None,
     data_source: str = "auto",
 ) -> OdteBacktestResult:
-    """Backtest playbook on 1m bars.
-
-    contracts: number of contracts (×100 multiplier for $ P/L from premium).
-    delta: $ premium change per $1 underlying (synthetic 0DTE leverage).
-    data_source: auto | schwab | tos | yfinance (used when df is None).
-    """
-    cfg = cfg or OdtePlaybookConfig(symbol=symbol)
+    """Backtest HTF level+RSI multi-DTE playbook (synthetic premium)."""
+    cfg = cfg or MultidtePlaybookConfig(symbol=symbol)
     cfg.symbol = symbol
+    delta = float(cfg.premium_delta)
+
     if df is None:
-        df = fetch_qqq_1m(symbol, period=period, source=data_source)
+        df = fetch_htf_bars(
+            symbol,
+            period=period,
+            interval=cfg.bar_interval,
+            source=data_source,
+        )
 
     closes_all = df["Close"].astype(float).tolist()
     rsi_all = rsi_series(closes_all, cfg.rsi_length)
@@ -250,20 +186,23 @@ def run_odte_backtest(
     equity = cfg.account_size
     curve = [equity]
     days = _session_days(df)
+    or_bars = _or_bars_for_interval(cfg.bar_interval, cfg.or_minutes)
 
     for d in days:
         day_df = _day_slice(df, d)
-        rth = day_df.between_time(cfg.window_start_et, time(16, 0))
-        if len(rth) < cfg.rsi_length + 5:
+        rth = day_df.between_time(time(9, 30), time(16, 0))
+        if len(rth) < cfg.rsi_length + 3:
             continue
         pdh, pdl = _prior_day_hl(df, d)
         if pdh is None:
             continue
-        orh, orl = _opening_range(day_df, cfg.or_minutes)
+        # opening range from first N RTH bars
+        head = rth.iloc[:or_bars]
+        orh = float(head["High"].max()) if not head.empty else None
+        orl = float(head["Low"].min()) if not head.empty else None
         pmh, pml = _premarket_hl(day_df)
 
-        # levels that can trigger
-        touched: set[float] = set()  # first-touch tracker by rounded level
+        touched: set[float] = set()
         open_trade: Optional[dict] = None
         day_trades = 0
 
@@ -279,9 +218,7 @@ def run_odte_backtest(
             lo = float(row["Low"])
             rsi = float(row["rsi"])
 
-            # manage open trade
             if open_trade is not None:
-                # collect path from entry index
                 j0 = open_trade["i"]
                 if i <= j0:
                     continue
@@ -298,12 +235,10 @@ def run_odte_backtest(
                     sl_prem=entry_prem * (1 - cfg.stop_loss_pct),
                     delta=delta,
                 )
-                # Only close if TP/SL hit on this bar or last bar of window
                 hit = reason in ("take_profit", "stop_loss")
                 end_window = i == len(times) - 1
                 if hit or end_window:
                     if not hit and end_window:
-                        # recompute mark at close of this bar
                         if open_trade["side"] == "CALL":
                             ep = entry_prem + delta * (price - open_trade["entry_spot"])
                         else:
@@ -313,8 +248,6 @@ def run_odte_backtest(
                         reason = "time_exit"
                         etm = ts
                     pnl_pct = (ep - entry_prem) / entry_prem
-                    # $ P/L: premium $ × 100 × contracts
-                    risk_dollars = entry_prem * 100 * contracts
                     pnl_dollars = (ep - entry_prem) * 100 * contracts
                     trades.append(
                         OdteTrade(
@@ -338,7 +271,7 @@ def run_odte_backtest(
                     curve.append(equity)
                     open_trade = None
                     if hit:
-                        continue  # can look for new entry same bar after exit — skip for simplicity
+                        continue
                 else:
                     continue
 
@@ -349,7 +282,7 @@ def run_odte_backtest(
 
             candidates: List[Tuple[str, float, str]] = []
             if cfg.use_whole_dollar_levels:
-                above, below = whole_dollar_levels(price, n=6)
+                above, below = whole_dollar_levels(price, n=4)
                 for x in above:
                     candidates.append((f"whole ${x:.0f}", x, "resistance"))
                 for x in below:
@@ -365,17 +298,14 @@ def run_odte_backtest(
             if pml is not None:
                 candidates.append(("PML", pml, "support"))
 
-            # first touch: high/low tags level this bar, and level not yet touched today
             for name, lvl, kind in candidates:
                 if not level_allowed_for_entry(name, cfg):
                     continue
                 key = round(float(lvl), 2)
                 if key in touched:
                     continue
-                tagged = lo <= key <= hi
-                if not tagged:
+                if not (lo <= key <= hi):
                     continue
-                # mark touch (even if RSI/rejection fails — first touch is consumed)
                 touched.add(key)
                 if not rejection_close_ok(
                     kind, price, key, require=cfg.require_rejection_close
@@ -383,6 +313,8 @@ def run_odte_backtest(
                     continue
                 side = signal_side_for_touch(kind, rsi, cfg)
                 if side is None:
+                    continue
+                if cfg.puts_only and side == "CALL":
                     continue
                 open_trade = {
                     "side": side,
@@ -396,7 +328,6 @@ def run_odte_backtest(
                 day_trades += 1
                 break
 
-        # force close if still open after window
         if open_trade is not None:
             rest = bars.iloc[open_trade["i"] + 1 :]
             if rest.empty:
@@ -453,7 +384,6 @@ def run_odte_backtest(
     gl = abs(sum(t.pnl_dollars for t in losers))
     pf = gw / gl if gl else float(gw > 0)
 
-    # max DD on equity curve
     peak = curve[0]
     max_dd = 0.0
     for v in curve:
@@ -475,6 +405,9 @@ def run_odte_backtest(
     for t in trades:
         by_exit[t.exit_reason] += 1
 
+    exp_label = recommend_expiration_label(cfg.target_dte)
+    src = getattr(df, "attrs", {}).get("data_source", data_source)
+
     return OdteBacktestResult(
         symbol=symbol,
         days=len(days),
@@ -491,85 +424,78 @@ def run_odte_backtest(
         by_exit=dict(by_exit),
         trades=trades,
         assumptions=[
-            f"1m bars period={period}; source={getattr(df, 'attrs', {}).get('data_source', data_source)}",
-            f"Synthetic premium ${entry_prem:.2f}; delta={delta} $prem per $1 underlying",
+            f"Multi-DTE HTF backtest period={period} interval={cfg.bar_interval} source={src}",
+            f"Target DTE≈{cfg.target_dte} (label exp ~{exp_label}); not OCC chain selection",
+            f"Synthetic premium ${entry_prem:.2f}; delta={delta} (milder than 0DTE 0.55)",
             f"Bracket TP +{cfg.take_profit_pct:.0%} / SL -{cfg.stop_loss_pct * 100:.1f}% on premium",
-            f"Contracts={contracts} (×100 multiplier); max {max_trades_per_day} trades/day",
-            "First touch of level + RSI extreme + 9:30–11:15 ET window only",
-            (
-                "Levels: structural PD/PM/OR only"
-                if not cfg.use_whole_dollar_levels
-                else "Levels: structural PD/PM/OR + whole-dollar rails"
-            ),
-            (
-                "Require rejection close on signal bar"
-                if cfg.require_rejection_close
-                else "No rejection-close filter"
-            ),
-            "Not full options IV/chain model — relative success rate under this proxy",
+            f"Window {cfg.window_start_et.strftime('%H:%M')}–{cfg.window_end_et.strftime('%H:%M')} ET; "
+            f"max {max_trades_per_day}/day; puts_only={cfg.puts_only}",
+            f"Rejection close={cfg.require_rejection_close}; whole-$={cfg.use_whole_dollar_levels}",
+            "Not full options IV/chain — relative success rate under this proxy",
         ],
         metadata={
             "period": period,
-            "data_source": getattr(df, "attrs", {}).get("data_source", data_source),
-            "put_rsi": cfg.put_rsi,
-            "call_rsi": cfg.call_rsi,
-            "use_whole_dollar_levels": cfg.use_whole_dollar_levels,
-            "require_rejection_close": cfg.require_rejection_close,
-            "take_profit_pct": cfg.take_profit_pct,
-            "stop_loss_pct": cfg.stop_loss_pct,
+            "mode": "multidte",
+            "target_dte": cfg.target_dte,
+            "bar_interval": cfg.bar_interval,
+            "data_source": src,
+            "puts_only": cfg.puts_only,
+            "premium_delta": delta,
             "bars": len(df),
         },
     )
 
 
-def render_odte_backtest(result: OdteBacktestResult) -> str:
-    lines = [
+def render_multidte_backtest(result: OdteBacktestResult) -> str:
+    from trading_agent.odte.backtest import render_odte_backtest
+
+    text = render_odte_backtest(result)
+    # Retitle for multi-DTE
+    dte = result.metadata.get("target_dte", "?")
+    iv = result.metadata.get("bar_interval", "?")
+    text = text.replace(
         f"# {result.symbol} 0DTE Playbook Backtest",
-        "",
-        "## Assumptions",
-    ]
-    for a in result.assumptions:
-        lines.append(f"- {a}")
-    lines.extend(
-        [
-            "",
-            "## Results",
-            f"- **Days covered:** {result.days}",
-            f"- **Trades:** {result.trade_count}",
-            f"- **Winners / Losers:** {result.winners} / {result.losers}",
-            f"- **Win rate (success rate):** **{result.win_rate:.1%}**",
-            f"- **Total P/L:** ${result.total_pnl:+,.2f}",
-            f"- **Expectancy:** ${result.expectancy:+,.2f} / trade",
-            f"- **Avg P/L % (premium):** {result.avg_pnl_pct:+.1%}",
-            f"- **Profit factor:** {result.profit_factor:.2f}",
-            f"- **Max drawdown:** ${result.max_drawdown:,.2f}",
-            "",
-            "## By side",
-        ]
+        f"# {result.symbol} Multi-DTE Playbook Backtest (DTE≈{dte}, {iv})",
     )
-    for side, stats in result.by_side.items():
-        lines.append(
-            f"- **{side}:** n={int(stats['count'])} | WR {stats['win_rate']:.1%} | "
-            f"P/L ${stats['total_pnl']:+,.2f}"
-        )
-    if not result.by_side:
-        lines.append("- _No trades_")
-    lines.append("")
-    lines.append("## Exits")
-    for k, v in sorted(result.by_exit.items(), key=lambda x: -x[1]):
-        lines.append(f"- {k}: {v}")
-    lines.extend(["", "## Sample trades (up to 15)"])
-    for t in result.trades[:15]:
-        lines.append(
-            f"- {t.day} {t.side} {t.level_name} @ {t.level:.2f} | "
-            f"RSI {t.rsi_at_entry:.0f} | {t.exit_reason} | "
-            f"{t.pnl_pct:+.1%} | ${t.pnl_dollars:+.2f}"
-        )
-    if not result.trades:
-        lines.append("- _No trades matched the playbook filters in this sample._")
-    lines.append("")
+    return text
+
+
+def format_multidte_brief(
+    symbol: str = "QQQ",
+    *,
+    cfg: MultidtePlaybookConfig | None = None,
+    last: Optional[float] = None,
+    rsi_htf: Optional[float] = None,
+) -> str:
+    """Static-style brief for multi-DTE desk (levels filled when last provided)."""
+    cfg = cfg or MultidtePlaybookConfig(symbol=symbol)
+    exp = recommend_expiration_label(cfg.target_dte)
+    fri = next_friday_dte()
+    lines = [
+        f"**{cfg.symbol} Multi-DTE Playbook** (weeklies / 2–3 DTE on HTF)",
+        f"_Target DTE≈{cfg.target_dte} → label exp ~{exp} | next Friday in ~{fri}d_",
+        f"_Bars: {cfg.bar_interval} | window "
+        f"{cfg.window_start_et.strftime('%H:%M')}–{cfg.window_end_et.strftime('%H:%M')} ET_",
+        "",
+        "**Why not 0DTE as core:** fast QQQ + 1m noise; prefer structure on 15m+ with more extrinsic.",
+        "",
+        "**Rules:**",
+        f"- PUT: resistance first-touch + RSI≥{cfg.put_rsi:.0f}"
+        + (" (puts-only mode)" if cfg.puts_only else ""),
+        f"- CALL: support first-touch + RSI≤{cfg.call_rsi:.0f}"
+        + (" — disabled" if cfg.puts_only else ""),
+        f"- Levels: PD/PM/OR"
+        + (" + whole-$" if cfg.use_whole_dollar_levels else " only")
+        + ("; require rejection close" if cfg.require_rejection_close else ""),
+        f"- Bracket template: TP +{cfg.take_profit_pct:.0%} / SL -{cfg.stop_loss_pct * 100:.1f}% "
+        f"(synthetic; size ≤ {cfg.max_position_pct:.0%} of ${cfg.account_size:.0f})",
+        "",
+    ]
+    if last is not None:
+        lines.append(f"**Last:** ${last:.2f}" + (f" | HTF RSI: {rsi_htf:.1f}" if rsi_htf is not None else ""))
+        above, below = whole_dollar_levels(last, n=3)
+        lines.append(f"- Whole $ near: above {above[:3]} / below {below[:3]}")
     lines.append(
-        "_Success rate = winners / trades under synthetic premium model. "
-        "Live options P/L will differ with IV crush and spreads._"
+        "_Educational desk scaffold — not auto-execution; confirm chain liquidity & IV._"
     )
     return "\n".join(lines) + "\n"

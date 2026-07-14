@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, List
+import re
+from typing import Any, Iterable, List, Sequence
 
 import requests
 
@@ -27,6 +28,27 @@ CATEGORY_KEYWORDS = {
     "geopolitical": ("sanction", "geopolit", "conflict", "tariff", "war ", "ceasefire"),
 }
 
+# Company-name aliases so "Apple raises..." still attributes to AAPL.
+# Keep aliases specific enough to avoid false positives (word-boundary matched).
+SYMBOL_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "AAPL": ("apple",),
+    "MSFT": ("microsoft",),
+    "GOOGL": ("google", "alphabet"),
+    "GOOG": ("google", "alphabet"),
+    "AMZN": ("amazon",),
+    "META": ("facebook", "meta platforms"),
+    "NVDA": ("nvidia",),
+    "TSLA": ("tesla",),
+    "AMD": ("advanced micro devices",),
+    "INTC": ("intel",),
+    "TSM": ("tsmc", "taiwan semiconductor"),
+    "AVGO": ("broadcom",),
+    "QCOM": ("qualcomm",),
+    "JPM": ("jpmorgan", "jp morgan", "j.p. morgan"),
+    "XOM": ("exxon",),
+    "CVX": ("chevron",),
+}
+
 
 def _classify(headline: str) -> str:
     lower = headline.lower()
@@ -34,6 +56,41 @@ def _classify(headline: str) -> str:
         if any(k in lower for k in keywords):
             return category
     return "general"
+
+
+def _token_in_text(token: str, text: str) -> bool:
+    """Case-insensitive whole-token match (handles $AAPL, (AAPL), AAPL:)."""
+    if not token or not text:
+        return False
+    pattern = rf"(?<![A-Za-z0-9])\$?{re.escape(token)}(?![A-Za-z0-9])"
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+
+def headline_mentions_symbol(symbol: str, headline: str) -> bool:
+    """True only if the headline clearly refers to this symbol (ticker or alias)."""
+    sym = (symbol or "").strip().upper()
+    if not sym or not headline:
+        return False
+    if _token_in_text(sym, headline):
+        return True
+    for alias in SYMBOL_NAME_ALIASES.get(sym, ()):
+        if _token_in_text(alias, headline):
+            return True
+    return False
+
+
+def mentioned_watch_symbols(headline: str, watch: Sequence[str]) -> List[str]:
+    """Return watch symbols clearly named in the headline (stable order)."""
+    found: List[str] = []
+    seen: set[str] = set()
+    for raw in watch:
+        sym = (raw or "").strip().upper()
+        if not sym or sym in seen:
+            continue
+        if headline_mentions_symbol(sym, headline):
+            seen.add(sym)
+            found.append(sym)
+    return found
 
 
 def _article_field(article: dict[str, Any], *keys: str) -> str:
@@ -51,36 +108,59 @@ def _article_field(article: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _append_items(
+    items: List[NewsItem],
+    seen: set[tuple[str, str]],
+    symbols: Iterable[str],
+    headline: str,
+    source: str,
+) -> None:
+    category = _classify(headline)
+    for symbol in symbols:
+        dedupe_key = (symbol, headline.lower())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        items.append(
+            NewsItem(
+                symbol=symbol,
+                headline=headline,
+                source=source,
+                category=category,
+            )
+        )
+
+
 def _fetch_yfinance_news(symbols: List[str]) -> List[NewsItem]:
+    """Pull per-ticker yfinance rails but only keep headlines that name the symbol.
+
+    Yahoo often co-tags sector stories (e.g. TSMC revenue) onto mega-cap rails like
+    AAPL. We never attribute a headline to the query symbol unless the title
+    mentions that ticker/company; if it names other watch symbols, retag to those.
+    """
     import yfinance as yf
 
+    watch = [s.strip().upper() for s in symbols[:12] if s and str(s).strip()]
     items: List[NewsItem] = []
     seen: set[tuple[str, str]] = set()
-    for symbol in symbols[:12]:
+    for symbol in watch:
         ticker = yf.Ticker(symbol)
         news = getattr(ticker, "news", None) or []
         for article in news[:4]:
             title = _article_field(article, "title")
             if not title:
                 continue
-            dedupe_key = (symbol, title.lower())
-            if dedupe_key in seen:
+            targets = mentioned_watch_symbols(title, watch)
+            if not targets:
                 continue
-            seen.add(dedupe_key)
             publisher = _article_field(article, "publisher", "provider", "source") or "yfinance"
-            items.append(
-                NewsItem(
-                    symbol=symbol,
-                    headline=title,
-                    source=publisher,
-                    category=_classify(title),
-                )
-            )
+            _append_items(items, seen, targets, title, publisher)
     return items
 
 
 def _fetch_fmp_stock_news(symbols: List[str], api_key: str) -> List[NewsItem]:
-    watch = {s.upper() for s in symbols[:12]}
+    watch_list = [s.strip().upper() for s in symbols[:12] if s and str(s).strip()]
+    watch = set(watch_list)
     resp = requests.get(
         FMP_STOCK_NEWS_URL,
         params={"page": 0, "limit": 50, "apikey": api_key},
@@ -96,24 +176,21 @@ def _fetch_fmp_stock_news(symbols: List[str], api_key: str) -> List[NewsItem]:
     items: List[NewsItem] = []
     seen: set[tuple[str, str]] = set()
     for row in payload:
-        symbol = (row.get("symbol") or row.get("ticker") or "").strip().upper()
+        feed_symbol = (row.get("symbol") or row.get("ticker") or "").strip().upper()
         title = (row.get("title") or row.get("text") or "").strip()
-        if not symbol or not title:
+        if not title:
             continue
-        if watch and symbol not in watch:
+        # Prefer symbols named in the headline; fall back to FMP symbol only if
+        # the title actually refers to that name (avoids co-tagged junk).
+        targets = mentioned_watch_symbols(title, watch_list)
+        if not targets and feed_symbol and feed_symbol in watch and headline_mentions_symbol(
+            feed_symbol, title
+        ):
+            targets = [feed_symbol]
+        if not targets:
             continue
-        dedupe_key = (symbol, title.lower())
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        items.append(
-            NewsItem(
-                symbol=symbol,
-                headline=title,
-                source=row.get("site") or row.get("publisher") or "fmp",
-                category=_classify(title),
-            )
-        )
+        source = row.get("site") or row.get("publisher") or "fmp"
+        _append_items(items, seen, targets, title, str(source))
     return items
 
 

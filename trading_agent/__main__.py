@@ -26,11 +26,74 @@ from trading_agent.session.schedule import DeskPhaseKind
 def _run_odte(args: argparse.Namespace) -> int:
     from trading_agent.odte.playbook import OdtePlaybookConfig, format_odte_brief, run_odte_playbook
 
+    mode = (getattr(args, "mode", None) or "0dte").strip().lower()
+    dte = int(getattr(args, "dte", 0) or 0)
+    # --dte 2/3/5/7 or --mode weekly|2dte|3dte|multidte implies multi-DTE path
+    if mode in ("weekly", "2dte", "3dte", "multidte", "multi") or dte > 0:
+        from trading_agent.odte.multidte import (
+            MultidtePlaybookConfig,
+            format_multidte_brief,
+            render_multidte_backtest,
+            run_multidte_backtest,
+        )
+
+        if mode == "2dte":
+            dte = dte or 2
+        elif mode == "3dte":
+            dte = dte or 3
+        elif mode in ("weekly", "multidte", "multi"):
+            dte = dte or 5
+        dte = dte or 5
+        interval = getattr(args, "interval", None) or "15m"
+        # multi-DTE: default 60d for yfinance when user left 0DTE default period
+        period = "60d" if args.period == "7d" else args.period
+        cfg = MultidtePlaybookConfig(
+            symbol=args.symbol.upper(),
+            account_size=float(args.account),
+            target_dte=dte,
+            bar_interval=interval,
+            # MultidtePlaybookConfig defaults puts_only=True; flag is explicit opt-in no-op
+            puts_only=True if getattr(args, "puts_only", False) else True,
+        )
+        source = getattr(args, "source", "auto") or "auto"
+        if getattr(args, "backtest", False):
+            result = run_multidte_backtest(
+                cfg.symbol,
+                period=period,
+                cfg=cfg,
+                data_source=source,
+            )
+            text = render_multidte_backtest(result)
+            print(text)
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            return 0
+        text = format_multidte_brief(cfg.symbol, cfg=cfg)
+        print(text)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     if getattr(args, "backtest", False):
         from trading_agent.odte.backtest import render_odte_backtest, run_odte_backtest
 
         cfg = OdtePlaybookConfig(symbol=args.symbol.upper(), account_size=float(args.account))
-        result = run_odte_backtest(cfg.symbol, period=args.period, cfg=cfg)
+        if getattr(args, "legacy_rules", False):
+            # Pre-improvement defaults for A/B comparison on same bars
+            cfg.use_whole_dollar_levels = True
+            cfg.take_profit_pct = 0.20
+            cfg.stop_loss_pct = 0.125
+        if getattr(args, "puts_only", False):
+            cfg.call_rsi = -1.0  # disable CALL entries
+        source = getattr(args, "source", "auto") or "auto"
+        result = run_odte_backtest(
+            cfg.symbol,
+            period=args.period,
+            cfg=cfg,
+            data_source=source,
+        )
         text = render_odte_backtest(result)
         print(text)
         if args.output:
@@ -252,12 +315,49 @@ def main(argv: list[str] | None = None) -> int:
 
     odte = subparsers.add_parser(
         "odte",
-        help="0DTE levels+RSI playbook brief (default QQQ; Shen-style)",
+        help="QQQ/SPY options playbook: 0DTE (1m) or multi-DTE weeklies/2–3DTE (15m+)",
     )
     odte.add_argument("--symbol", default="QQQ", help="ETF symbol (QQQ or SPY)")
     odte.add_argument("--account", type=float, default=1000.0, help="Account size for risk template")
-    odte.add_argument("--backtest", action="store_true", help="Run 1m historical backtest (win rate)")
-    odte.add_argument("--period", default="7d", help="yfinance 1m period for backtest (e.g. 7d)")
+    odte.add_argument("--backtest", action="store_true", help="Run historical backtest (win rate)")
+    odte.add_argument(
+        "--period",
+        default="7d",
+        help="History period (0DTE default 7d; multi-DTE prefers 60d on yfinance)",
+    )
+    odte.add_argument(
+        "--mode",
+        default="0dte",
+        choices=["0dte", "weekly", "2dte", "3dte", "multidte", "multi"],
+        help="0dte=1m Shen path; weekly/2dte/3dte/multidte=HTF multi-day expiry path",
+    )
+    odte.add_argument(
+        "--dte",
+        type=int,
+        default=0,
+        help="Target DTE for multi-day path (2,3,5,7). >0 forces multi-DTE mode",
+    )
+    odte.add_argument(
+        "--interval",
+        default="15m",
+        help="Bar interval for multi-DTE (15m, 5m, 30m; default 15m)",
+    )
+    odte.add_argument(
+        "--puts-only",
+        action="store_true",
+        help="Disable CALL entries (TOS 0DTE A/B: puts had much higher WR)",
+    )
+    odte.add_argument(
+        "--source",
+        default="auto",
+        choices=["auto", "schwab", "tos", "yfinance", "yf"],
+        help="Data source: auto (Schwab/TOS if token, else yf), schwab/tos, or yfinance",
+    )
+    odte.add_argument(
+        "--legacy-rules",
+        action="store_true",
+        help="0DTE only: pre-filter rules (whole-$ + TP20/SL12.5) for A/B comparison",
+    )
     odte.add_argument("--output", "-o", metavar="FILE", help="Write brief/report to file")
 
     backtest = subparsers.add_parser(
