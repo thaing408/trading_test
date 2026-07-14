@@ -129,13 +129,19 @@ fi
 
 cd "$REPO"
 
-# --- git pull: never overwrite local desk.sh fixes; never abort on pull fail ---
-log "Pulling latest from origin/main (non-fatal) ..."
+# --- auto pull latest research code (no manual daily prepare) ---
+# Work Windows pushes methods; home Mac launchd pulls here before the desk runs.
+log "Auto-updating from origin/main (non-fatal; replaces manual pull-and-ready) ..."
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if git status --porcelain -- scripts/macos/trading-agent-desk.sh 2>/dev/null | grep -q .; then
     log "Local changes in trading-agent-desk.sh — skipping git pull for safety"
   else
-    git pull origin main 2>&1 || log "git pull skipped or failed (continuing)"
+    git fetch origin 2>&1 || log "git fetch skipped or failed"
+    if git pull --ff-only origin main 2>&1; then
+      log "Pulled origin/main → HEAD $(git log -1 --oneline 2>/dev/null || echo unknown)"
+    else
+      log "git pull --ff-only failed (continuing with local tree)"
+    fi
   fi
 else
   log "Not a git repo — skip pull"
@@ -146,11 +152,11 @@ log "Installing package dependencies (non-fatal) ..."
 if ! "$PYTHON" -m pip install -q -e ".[dev]"; then
   log "WARN: pip install failed — continuing with existing install"
 fi
-if ! "$PYTHON" -c "import trading_agent"; then
-  alert_fail "trading_agent not importable after pip"
+if ! "$PYTHON" -c "import trading_agent; from trading_agent.methods.options_methods import evaluate_options_methods; from trading_agent.export.auto_trade_book import build_auto_trade_book"; then
+  alert_fail "trading_agent / options modules not importable after pip"
   exit 1
 fi
-log "trading_agent import OK"
+log "trading_agent import OK (options auto-trade modules ready)"
 
 # --- positions ---
 POSITIONS_FILE="${TRADING_AGENT_POSITIONS_FILE:-$HOME/.trading_agent/positions.json}"
@@ -187,12 +193,17 @@ if [ -n "${POSITIONS_FILE}" ] && [ -f "${POSITIONS_FILE}" ]; then
   add_arg "$POSITIONS_FILE"
 fi
 
-if [ -n "${TRADING_AGENT_UNTIL_PHASE:-}" ]; then
-  add_arg "--until-phase"
-  add_arg "$TRADING_AGENT_UNTIL_PHASE"
-  log "Phase cap: $TRADING_AGENT_UNTIL_PHASE"
+# Full day by default (intraday + discovery). Override only if explicitly set.
+UNTIL_PHASE="${TRADING_AGENT_UNTIL_PHASE:-cio_review}"
+if [ "$UNTIL_PHASE" = "full" ] || [ "$UNTIL_PHASE" = "all" ]; then
+  UNTIL_PHASE="cio_review"
+fi
+add_arg "--until-phase"
+add_arg "$UNTIL_PHASE"
+if [ "$UNTIL_PHASE" = "cio_review" ]; then
+  log "Running FULL DAY desk (until cio_review) — no manual prepare step"
 else
-  log "Running full 7-phase desk day"
+  log "Phase cap: $UNTIL_PHASE"
 fi
 
 if [ "$ARGC" -gt 0 ]; then

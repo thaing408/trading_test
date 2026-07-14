@@ -27,44 +27,28 @@ Windows never needs TOS. Mac never needs work network paths.
 2. **After code/method changes** (or end of your workday): ensure repo is **pushed** to GitHub (`main`).
 3. No export of positions or trade books to home.
 
-### Home (macOS) — end of day / next morning
+### Home (macOS) — automatic (no daily manual prepare)
 
-1. See Discord (optional cue: “pull latest” / desk finished).
-2. Run **pull-and-ready** (see below).
-3. Trade only with **local** TOS MCP + local positions/config.
-4. Use Discord messages as **context for a human**, not as an automatic order stream.
+**launchd** job `com.grok.trading-agent-desk` at **01:55 PT** weekdays:
+
+1. `git pull --ff-only origin main` (code from work pushes)
+2. `pip install` + smoke import (options modules)
+3. Export local Schwab positions
+4. Run full desk through `cio_review`
+
+You do **not** run a manual pull script every day when launchd is installed.  
+Optional recovery only: `scripts/macos/pull-and-ready.sh`.
 
 ## Discord as the “signal channel”
 
-Discord is **notification + briefing**, not a sync bus for secrets or blotters.
+Discord is **notification + briefing**, not a sync bus and not a daily prepare checklist.
 
-| Message type | Mac action (manual or scripted) |
-|--------------|----------------------------------|
-| Research / CIO / discovery posts | Read for next-day bias; **do not** auto-size from prose |
-| Optional: “**PULL_LATEST**” or bot note after Windows push | Run `scripts/macos/pull-and-ready.sh` |
-| Risk/PT-SL style posts | Only if generated **on Mac** against local positions |
+| Message type | Mac action |
+|--------------|------------|
+| Research / CIO / discovery / options ENTER cards | Human/TOS context; next launchd already has latest code if Windows pushed before 01:55 PT |
+| Optional `PULL_LATEST` after a late Windows push | Only if you need the Mac **before** next 01:55 — then optional recovery pull; otherwise ignore |
 
-Suggested cue after a Windows code push (you or the agent posts once):
-
-```text
-PULL_LATEST trading_agent main — research methods updated. Mac: run pull-and-ready.
-```
-
-## Mac: pull and get ready for next day
-
-```bash
-cd /path/to/trading_agent
-./scripts/macos/pull-and-ready.sh
-```
-
-What it does:
-
-1. `git fetch` + `git pull --ff-only origin main`
-2. Install package (`pip install -e .`)
-3. Smoke-import `trading_agent`
-4. Prints “ready for next session” (does not place trades)
-
-Launchd morning desk already pulls in some setups; EOD pull still keeps you current after workday pushes.
+Windows may still post `PULL_LATEST` after a big push; **normal path is wait for morning launchd.**
 
 ## Work: push research code
 

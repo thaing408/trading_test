@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# End-of-day / Discord-cued prep: pull latest research code from GitHub and smoke-test.
-# Home Mac only — no work paths, no positions sync, no order placement.
+# OPTIONAL manual recovery only. Normal path: launchd runs trading-agent-desk.sh
+# which auto git-pulls + installs before the desk — no daily manual prepare.
 set -euo pipefail
 
 MACOS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,17 +9,14 @@ cd "$REPO"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-log "=== pull-and-ready (home Mac) ==="
-log "Repo: $REPO"
+log "=== pull-and-ready (optional recovery) ==="
+log "NOTE: Weekday launchd desk already auto-pulls at 01:55 PT — you do not need this daily."
 
 if ! command -v git >/dev/null 2>&1; then
   log "ERROR: git not found"
   exit 1
 fi
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-log "Branch: $BRANCH"
-log "Pulling origin/main (ff-only) ..."
 git fetch origin
 git pull --ff-only origin main || {
   log "WARN: ff-only pull failed — resolve local commits, then re-run"
@@ -28,24 +25,12 @@ git pull --ff-only origin main || {
 log "HEAD: $(git log -1 --oneline)"
 
 PYTHON="${TRADING_AGENT_PYTHON:-python3}"
-if [ -x "$HOME/schwab-mcp-server/.venv/bin/python" ] && [ -z "${TRADING_AGENT_PYTHON:-}" ]; then
-  # Prefer project venv if present
-  if [ -x "$REPO/.venv/bin/python" ]; then
-    PYTHON="$REPO/.venv/bin/python"
-  fi
-fi
 if [ -x "$REPO/.venv/bin/python" ]; then
   PYTHON="$REPO/.venv/bin/python"
 fi
 
-log "Python: $PYTHON"
-log "Installing package (editable) ..."
 "$PYTHON" -m pip install -e ".[dev]" -q || "$PYTHON" -m pip install -e . -q
+"$PYTHON" -c "import trading_agent; from trading_agent.methods.options_methods import OPTIONS_BASELINE_METHODS; print('ok', len(OPTIONS_BASELINE_METHODS), 'options methods')"
 
-log "Smoke import ..."
-"$PYTHON" -c "import trading_agent; from trading_agent.session.schedule import DISCOVERY_REFRESH_TIMES_PT; print('ok', trading_agent.__file__); print('discovery_slots_pt', DISCOVERY_REFRESH_TIMES_PT)"
-
-log "Ready for next trading day."
-log "Next: run local desk / TOS MCP with HOME env only (no work sync)."
-log "Optional: python scripts/macos/consume_auto_trade_book.py  # only if you generate a LOCAL book"
+log "Ready. Prefer launchd com.grok.trading-agent-desk for automatic daily runs."
 exit 0

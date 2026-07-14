@@ -31,15 +31,25 @@ Plus equity-style pullback/ORB plays that can map into long options.
 ## Options gates
 See `methods/options_methods.py`: IV regime match, defined risk, OI/spread, credit POP, debit R:R, DTE 5–60, earnings short-premium block.
 
-## Mac daily prep
+## Mac — no manual daily prepare
+
+With **launchd** (`com.grok.trading-agent-desk` @ **01:55 PT** weekdays):
+
+1. Auto **`git pull --ff-only origin main`** (Windows research code)
+2. Auto **pip install** + import smoke (including options modules)
+3. Auto **Schwab positions** export (local)
+4. Auto **full desk day** through `cio_review` (intraday PT/SL + discovery)
+
+You do **not** run `pull-and-ready` or `prepare-options-day` every day.  
+Those scripts are **optional recovery** only if launchd is missing.
+
+Install once (home Mac):
 ```bash
-cd ~/trading_agent   # your clone
-./scripts/macos/prepare-options-day.sh
-# or after Discord PULL_LATEST:
-./scripts/macos/pull-and-ready.sh
+# from repo
+bash scripts/macos/install-trading-agent-launchd.sh
 ```
 
-Then in TOS: only defined-risk structures; size by max risk; no short premium into earnings without a plan.
+Trade in local TOS from Discord options cards / local book as usual.
 
 ## Journal (Mac local)
 Append closed trades with setup_id / grade for local Performance:

@@ -96,10 +96,10 @@ python -m trading_agent performance --fixture
 **Bridge = git + optional Discord cue only.** No shared positions/journals/secrets.
 
 1. Work: improve code → **`git push`** to `main`  
-2. Optional Discord: **`PULL_LATEST`** (or run `scripts/notify_pull_latest.ps1` after push)  
-3. Home EOD/next morning: **`./scripts/macos/pull-and-ready.sh`** then trade with local TOS  
+2. Home Mac **launchd** (01:55 PT): auto-pull + full desk — **no manual daily prepare**  
+3. Optional Discord `PULL_LATEST` only if you need an ad-hoc pull before next launchd  
 
-See **`docs/dual_system.md`**.
+See **`docs/dual_system.md`** and **`docs/options_auto_trade.md`**.
 
 ## Automation
 
