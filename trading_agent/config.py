@@ -36,6 +36,13 @@ class RiskConfig:
     # Letter grades: A+/A always ranked first. F is never a trade opportunity.
     min_setup_grade: str = "B"  # floor when not A-only; F still excluded
     prefer_a_tier_only: bool = True  # backtest winner: A+/A only
+    # Book discipline rails (Douglas / Steenbarger / Bellafiore / Shannon)
+    require_playbook_checklist: bool = True
+    require_edge_package: bool = True
+    enforce_mtf_gate: bool = True
+    max_concurrent_plays: int = 3
+    max_aggregate_risk_pct: float = 6.0
+    stop_cooldown_minutes: int = 60
 
 
 @dataclass

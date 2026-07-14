@@ -197,25 +197,29 @@ def build_opportunities(
     qualified: List[Tuple[ScreenerCandidate, TechnicalAnalysis, OptionsMetrics]],
     risk_config: RiskConfig,
     max_count: int | None = None,
+    *,
+    session_state: object | None = None,
 ) -> List[TradeOpportunity]:
-    """Build ranked opportunities: A+/A first, then B, C. F excluded."""
+    """Build ranked opportunities: A+/A first, then B, C. F excluded.
+
+    Book discipline (when enabled on RiskConfig):
+    - Shannon MTF gate inside assign_setup_grade
+    - Bellafiore named playbook checklist
+    - Douglas edge package completeness
+    - Cool-down / concurrent risk rails when session_state provided
+    """
+    from trading_agent.discipline.edge import validate_edge_package
+    from trading_agent.discipline.playbook import require_playbook_pass
+    from trading_agent.discipline.rails import SessionRiskState, check_discipline_rails
+
     limit = max_count if max_count is not None else risk_config.top_candidates
     prefer_a = bool(getattr(risk_config, "prefer_a_tier_only", False))
     max_rank_allowed = _min_grade_allowed(risk_config)
+    require_pb = bool(getattr(risk_config, "require_playbook_checklist", True))
+    require_edge = bool(getattr(risk_config, "require_edge_package", True))
+    enforce_mtf = bool(getattr(risk_config, "enforce_mtf_gate", True))
 
-    scored: List[
-        Tuple[
-            str,
-            float,
-            float,
-            float,
-            ScreenerCandidate,
-            TechnicalAnalysis,
-            OptionsMetrics,
-            StrategySelection,
-            object,
-        ]
-    ] = []
+    scored: List[dict] = []
 
     for candidate, technical, options in qualified:
         confidence = compute_confidence_score(technical, options, candidate)
@@ -230,6 +234,7 @@ def build_opportunities(
             quality,
             confidence,
             direction=strategy.direction,
+            enforce_mtf_gate=enforce_mtf,
         )
         if grade_result.grade == "F":
             continue
@@ -237,37 +242,7 @@ def build_opportunities(
             continue
         if prefer_a and not grade_result.is_priority:
             continue
-        scored.append(
-            (
-                grade_result.grade,
-                grade_result.grade_score,
-                quality,
-                confidence,
-                candidate,
-                technical,
-                options,
-                strategy,
-                grade_result,
-            )
-        )
 
-    # A+/A always before B/C; within grade by grade_score, quality, confidence
-    scored.sort(
-        key=lambda row: grade_sort_key(row[0], row[1], row[2], row[3]),
-    )
-
-    opportunities: List[TradeOpportunity] = []
-    for rank, (
-        grade,
-        grade_score,
-        quality,
-        confidence,
-        candidate,
-        technical,
-        options,
-        strategy,
-        grade_result,
-    ) in enumerate(scored[:limit], 1):
         params = _trade_params(
             candidate.price,
             strategy,
@@ -277,6 +252,104 @@ def build_opportunities(
             target_atr_mult=grade_result.target_atr_mult,
             size_multiplier=grade_result.size_multiplier,
         )
+
+        play_ctx = {
+            "direction": strategy.direction,
+            "timeframe_alignment": technical.timeframe_alignment,
+            "trend": technical.trend,
+            "breakout_state": technical.breakout_state,
+            "relative_volume": candidate.relative_volume,
+            "rsi": technical.rsi,
+            "adx": technical.adx,
+            "entry_price": params["entry_price"],
+            "stop_loss": params["stop_loss"],
+            "profit_target": params["profit_target"],
+            "price": candidate.price,
+        }
+        pb_ok, setup_id, pb_summary, checklist = require_playbook_pass(
+            direction=strategy.direction,
+            strategy_name=strategy.name,
+            context=play_ctx,
+            require_named=require_pb,
+        )
+        if require_pb and not pb_ok:
+            continue
+
+        edge = validate_edge_package(
+            direction=strategy.direction,
+            entry_price=params["entry_price"],
+            stop_loss=params["stop_loss"],
+            profit_target=params["profit_target"],
+            maximum_risk=params["maximum_risk"],
+            maximum_reward=params["maximum_reward"],
+            size_units=max(0.01, float(grade_result.size_multiplier or 1.0)),
+        )
+        if require_edge and not edge.ok:
+            continue
+
+        # Risk % for rails: use config per-trade cap scaled by grade size (not feelings)
+        proposed_risk_pct = float(risk_config.max_risk_per_trade_pct) * float(
+            grade_result.size_multiplier or 1.0
+        )
+        # Cap at max_risk_per_trade so size_mult >1 does not auto-violate rails
+        proposed_risk_pct = min(proposed_risk_pct, float(risk_config.max_risk_per_trade_pct))
+
+        if session_state is not None and isinstance(session_state, SessionRiskState):
+            rail = check_discipline_rails(
+                symbol=candidate.symbol,
+                proposed_risk_pct=proposed_risk_pct,
+                state=session_state,
+            )
+            if not rail.allowed:
+                continue
+
+        mtf_reason = ""
+        for gr in grade_result.reasons:
+            if "Shannon" in gr or "multi-timeframe" in gr.lower() or "HTF" in gr:
+                mtf_reason = gr
+                break
+
+        scored.append(
+            {
+                "grade": grade_result.grade,
+                "grade_score": grade_result.grade_score,
+                "quality": quality,
+                "confidence": confidence,
+                "candidate": candidate,
+                "technical": technical,
+                "options": options,
+                "strategy": strategy,
+                "grade_result": grade_result,
+                "params": params,
+                "setup_id": setup_id,
+                "playbook_name": checklist.setup_name if checklist else "",
+                "checklist_passed": bool(checklist.passed) if checklist else (not require_pb),
+                "checklist_summary": pb_summary,
+                "edge_complete": edge.ok,
+                "edge_summary": edge.summary,
+                "mtf_gate_reason": mtf_reason,
+            }
+        )
+
+    scored.sort(
+        key=lambda row: grade_sort_key(
+            row["grade"], row["grade_score"], row["quality"], row["confidence"]
+        ),
+    )
+
+    opportunities: List[TradeOpportunity] = []
+    for rank, row in enumerate(scored[:limit], 1):
+        grade = row["grade"]
+        grade_score = row["grade_score"]
+        quality = row["quality"]
+        confidence = row["confidence"]
+        candidate = row["candidate"]
+        technical = row["technical"]
+        options = row["options"]
+        strategy = row["strategy"]
+        grade_result = row["grade_result"]
+        params = row["params"]
+
         expiry = (datetime.now() + timedelta(days=strategy.expiration_days)).strftime("%Y-%m-%d")
         thesis = _thesis(candidate, technical, options, strategy, grade=grade)
         risks = _risks(candidate, technical, options, strategy, grade=grade)
@@ -286,6 +359,8 @@ def build_opportunities(
         reasons = [
             f"Setup grade {grade} (score {grade_score:.1f}) — trade priority "
             f"{'HIGH (A-tier first)' if grade in ('A+', 'A') else 'secondary'}",
+            f"Playbook: {row['playbook_name'] or row['setup_id'] or 'n/a'} — {row['checklist_summary']}",
+            f"Edge: {row['edge_summary']}",
             f"Hold style: {grade_result.hold_style}",
             f"PT/SL geometry: target {grade_result.target_atr_mult}×ATR, "
             f"stop {grade_result.stop_atr_mult}×ATR",
@@ -307,7 +382,8 @@ def build_opportunities(
             f"RVOL {candidate.relative_volume}x, OI {candidate.open_interest}, "
             f"institutional score {candidate.institutional_score}",
         ]
-        # Surface top grade reasons
+        if row["mtf_gate_reason"]:
+            reasons.append(row["mtf_gate_reason"])
         for gr in grade_result.reasons[:3]:
             if gr not in reasons:
                 reasons.append(f"Grade factor: {gr}")
@@ -337,6 +413,13 @@ def build_opportunities(
                 grade_score=grade_score,
                 hold_style=grade_result.hold_style,
                 grade_reasons=list(grade_result.reasons),
+                playbook_setup_id=row["setup_id"],
+                playbook_name=row["playbook_name"],
+                checklist_passed=row["checklist_passed"],
+                checklist_summary=row["checklist_summary"],
+                edge_complete=row["edge_complete"],
+                edge_summary=row["edge_summary"],
+                mtf_gate_reason=row["mtf_gate_reason"],
             )
         )
 

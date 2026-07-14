@@ -44,15 +44,34 @@ def _tech_bull(symbol: str = "T") -> TechnicalAnalysis:
     lows = [c - 1.5 for c in closes]
     volumes = [3_000_000] * 80
     ta = compute_technical_analysis(symbol, closes, highs, lows, volumes)
-    # Force strong structure for grading
+    # Force strong structure for grading + playbook checklist
     ta.timeframe_alignment = "aligned_bullish"
+    ta.timeframe_trends = {"daily": "uptrend", "weekly": "uptrend", "1h": "uptrend"}
     ta.ma_alignment = "bullish"
     ta.breakout_state = "breakout"
+    ta.trend = "uptrend"
+    ta.rsi = 55.0
+    ta.adx = 28.0
     ta.score = 80.0
     ta.candle_patterns = ["hammer"]
     ta.pa_signals = ["stop_hunt_demand"]
     ta.pattern_summary = "hammer(bullish); stop_hunt_demand(bullish)"
     return ta
+
+
+def _opp_risk(**kw) -> RiskConfig:
+    cfg = RiskConfig(
+        min_confidence_score=40,
+        top_candidates=5,
+        prefer_a_tier_only=False,
+        min_setup_grade="C",
+        require_playbook_checklist=True,
+        require_edge_package=True,
+        enforce_mtf_gate=True,
+    )
+    for k, v in kw.items():
+        setattr(cfg, k, v)
+    return cfg
 
 
 def _cand(symbol: str, rvol: float = 2.5) -> ScreenerCandidate:
@@ -137,7 +156,7 @@ def test_build_opportunities_ranks_a_before_lower():
 
     opps = build_opportunities(
         [(weak_c, weak_t, weak_o), (strong_c, strong_t, strong_o)],
-        RiskConfig(min_confidence_score=40, top_candidates=5),
+        _opp_risk(),
     )
     assert len(opps) >= 1
     # First must be best grade (A-tier preferred)
@@ -180,7 +199,7 @@ def test_f_grade_excluded_from_opportunities():
         trend="sideways",
     )
     # Force low confidence path — may not enter scored at all
-    opps = build_opportunities([(c, ta, o)], RiskConfig(min_confidence_score=10, top_candidates=5))
+    opps = build_opportunities([(c, ta, o)], _opp_risk(min_confidence_score=10))
     for opp in opps:
         assert opp.setup_grade != "F"
 
@@ -192,7 +211,7 @@ def test_grade_geometry_applied_to_pt_sl():
     conf = 88.0
     quality = compute_trade_quality_score(ta, o, c, conf)
     grade = assign_setup_grade(ta, o, c, quality, conf, "Bullish")
-    opps = build_opportunities([(c, ta, o)], RiskConfig(min_confidence_score=40))
+    opps = build_opportunities([(c, ta, o)], _opp_risk())
     assert opps
     opp = opps[0]
     # Stop and target must reflect grade ATR mults (direction bullish)

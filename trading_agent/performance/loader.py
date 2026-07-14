@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
 from trading_agent.performance.models import CompletedTrade
+
+
+def _completed_trade_from_row(row: dict) -> CompletedTrade:
+    fields = {f.name for f in dataclasses.fields(CompletedTrade)}
+    return CompletedTrade(**{k: v for k, v in row.items() if k in fields})
 
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 FIXTURE_TRADES_REL = "fixture/completed_trades.json"
@@ -47,7 +53,7 @@ def load_trades(path: str | None, fixture_mode: bool) -> list[CompletedTrade]:
             return []
         return []
     data = _load_json(file_path)
-    return [CompletedTrade(**t) for t in data.get("trades", [])]
+    return [_completed_trade_from_row(t) for t in data.get("trades", [])]
 
 
 def load_history(path: str | None, fixture_mode: bool) -> list[CompletedTrade]:
@@ -55,4 +61,4 @@ def load_history(path: str | None, fixture_mode: bool) -> list[CompletedTrade]:
     if file_path is None or not file_path.exists():
         return []
     data = _load_json(file_path)
-    return [CompletedTrade(**t) for t in data.get("trades", [])]
+    return [_completed_trade_from_row(t) for t in data.get("trades", [])]

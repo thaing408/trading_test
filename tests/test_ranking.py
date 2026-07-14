@@ -8,7 +8,12 @@ from trading_agent.ranking.ranker import build_opportunities, compute_confidence
 
 
 def _bundle(symbol, rel_vol=1.8, oi=10000):
-    closes = [100 + i for i in range(60)]
+    # Trending but not a pure straight line (RSI not pinned at 100 for playbook)
+    closes = []
+    px = 100.0
+    for i in range(60):
+        px += 0.8 if i % 5 else -0.3
+        closes.append(px)
     highs = [c + 1 for c in closes]
     lows = [c - 1 for c in closes]
     volumes = [2_000_000] * 60
@@ -47,10 +52,27 @@ def test_confidence_score_in_range():
     assert 0 <= score <= 100
 
 
+def _rank_risk(**kw) -> RiskConfig:
+    """Risk config for ranking tests: allow book path without A-only starvation."""
+    cfg = RiskConfig(
+        min_confidence_score=40,
+        prefer_a_tier_only=False,
+        min_setup_grade="C",
+        top_candidates=5,
+        require_playbook_checklist=True,
+        require_edge_package=True,
+        enforce_mtf_gate=True,
+    )
+    for k, v in kw.items():
+        setattr(cfg, k, v)
+    return cfg
+
+
 def test_build_opportunities_ranks_top_five():
     bundles = [_bundle(f"SYM{i}", rel_vol=1.5 + i * 0.1) for i in range(8)]
-    opps = build_opportunities(bundles, RiskConfig(min_confidence_score=50))
+    opps = build_opportunities(bundles, _rank_risk(min_confidence_score=50))
     assert len(opps) <= 5
+    assert len(opps) >= 1
     assert opps[0].rank == 1
     if len(opps) > 1:
         assert opps[0].confidence_score >= opps[1].confidence_score
@@ -58,7 +80,7 @@ def test_build_opportunities_ranks_top_five():
 
 def test_opportunity_has_required_trade_fields():
     c, t, o = _bundle("TRADE")
-    opps = build_opportunities([(c, t, o)], RiskConfig(min_confidence_score=40))
+    opps = build_opportunities([(c, t, o)], _rank_risk())
     assert len(opps) == 1
     opp = opps[0]
     assert opp.strategy

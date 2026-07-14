@@ -190,11 +190,36 @@ def assign_setup_grade(
     quality: float,
     confidence: float,
     direction: str = "Bullish",
+    *,
+    enforce_mtf_gate: bool = True,
 ) -> SetupGradeResult:
     grade_score, reasons = compute_grade_score(
         technical, options, candidate, quality, confidence, direction
     )
     grade = score_to_grade(grade_score)
+
+    # Shannon higher-timeframe gate: conflicting / against HTF cannot ship A/A+
+    if enforce_mtf_gate:
+        from trading_agent.discipline.mtf_gate import apply_mtf_gate
+
+        gate = apply_mtf_gate(
+            direction=direction,
+            timeframe_alignment=technical.timeframe_alignment or "",
+            timeframe_trends=technical.timeframe_trends or {},
+            proposed_grade=grade,
+        )
+        reasons.append(gate.reason)
+        if gate.force_grade == "F":
+            grade = "F"
+            grade_score = min(grade_score, 49.0)
+        elif gate.force_grade and GRADE_RANK.get(gate.force_grade, 99) > GRADE_RANK.get(
+            grade, 99
+        ):
+            grade = gate.force_grade
+            # Cap score into demoted band
+            if grade == "B":
+                grade_score = min(grade_score, 74.0)
+
     stop_m, target_m, hold, size_m = GRADE_TRADE_GEOMETRY[grade]
     reasons.append(f"Letter grade {grade} from score {grade_score:.1f}")
     reasons.append(

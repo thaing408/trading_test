@@ -30,6 +30,16 @@ class CompletedTrade:
     entry_time: str = ""
     exit_time: str = ""
     indicator_combo: str = ""
+    # Process review (Steenbarger / Bellafiore) — not P/L alone
+    setup_id: str = ""
+    setup_name: str = ""
+    checklist_passed: bool | None = None
+    plan_adherence: float | None = None
+    grade_at_entry: str = ""
+    followed_stop: bool | None = None
+    followed_target_rule: bool | None = None
+    revenge_reentry: bool = False
+    process_score: float | None = None
 
 
 @dataclass

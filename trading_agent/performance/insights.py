@@ -75,6 +75,24 @@ def generate_insights(
             f"Review {worst.symbol} loss: {worst.strategy} with confidence {worst.confidence_score:.0f}"
         )
 
+    # Steenbarger / Bellafiore: process metrics by setup — not P/L alone
+    try:
+        from trading_agent.discipline.process import process_insights_from_trades
+
+        process_lines = process_insights_from_trades(trades)
+        for line in process_lines:
+            low = line.lower()
+            if "habit" in low or "replicate" in low:
+                habits.append(line)
+            elif "improvement" in low or "review failed" in low or "missing" in low:
+                improvements.append(line)
+            elif "revenge" in low or "discipline" in low:
+                mistakes.append(line)
+            else:
+                lessons.append(line)
+    except Exception:
+        pass
+
     if not improvements:
         improvements.append("Maintain current risk/reward filters and position sizing")
 

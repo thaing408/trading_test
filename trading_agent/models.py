@@ -166,6 +166,14 @@ class TradeOpportunity:
     grade_score: float = 0.0
     hold_style: str = ""
     grade_reasons: List[str] = field(default_factory=list)
+    # Book discipline: named playbook + checklist + edge completeness
+    playbook_setup_id: str = ""
+    playbook_name: str = ""
+    checklist_passed: bool = False
+    checklist_summary: str = ""
+    edge_complete: bool = False
+    edge_summary: str = ""
+    mtf_gate_reason: str = ""
 
 
 @dataclass
