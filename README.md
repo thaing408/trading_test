@@ -66,7 +66,7 @@ You do **not** need any author-specific path (e.g. a personal `researcher\.env`)
 | 13:15 | Performance Review | `performance` |
 | 13:30 | CIO Daily Review | `cio_review` |
 
-**Default for new installs:** phases 1–4 only (`TRADING_AGENT_UNTIL_PHASE=preopen`) until a brokerage account is connected.
+**Default for scheduled desk:** full day (`TRADING_AGENT_UNTIL_PHASE=cio_review`) — morning prep, intraday PT/SL + discovery refreshes (07:00 / 09:30 / 11:00 PT), then close reviews. Use `preopen` for prep-only without the all-day desk.
 
 **macOS Grok + Schwab pipeline (optional):** full 7 phases via `scripts/macos/` after install.
 
@@ -158,7 +158,8 @@ python -m pytest tests/test_install_wizard.py -q
 
 See `.env.example`. Key vars (written by the installer):
 
-- `TRADING_AGENT_UNTIL_PHASE=preopen` — stop after phase 4
+- `TRADING_AGENT_UNTIL_PHASE=cio_review` — full day (default); `preopen` = stop after phase 4
+- `TRADING_AGENT_DISCOVERY_REFRESH=1` — light rescreens at 07:00 / 09:30 / 11:00 PT
 - `TRADING_AGENT_PYTHON` — explicit Python path for scheduled tasks
 - `TRADING_AGENT_DRY_RUN=1` / `TRADING_AGENT_NO_DISCORD=1` — no Discord posts
 - `TRADING_AGENT_ENV_FILE` — alternate env path

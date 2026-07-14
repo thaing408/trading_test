@@ -220,24 +220,40 @@ import os
 os.environ.setdefault('PYTHONUTF8', '1')
 from trading_agent.runtime.stdio import configure_stdio, safe_print
 configure_stdio()
-safe_print('Phase scope: intelligence -> preopen (smoke)')
+safe_print('Phase scope: intelligence -> cio_review (smoke)')
 import trading_agent  # noqa: F401
 "@
     } -Critical | Out-Null
 
-    # Prep-only by default (no brokerage). Always start from intelligence so a late
-    # StartWhenAvailable catch-up still runs phases 1-4 instead of skipping them.
-    $untilPhase = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE.Trim() } else { "preopen" }
+    # Full weekday desk by default: intelligence through CIO daily review (incl. intraday
+    # PT/SL + discovery refreshes at 07:00 / 09:30 / 11:00 PT). Always start from
+    # intelligence so a late StartWhenAvailable catch-up still runs morning prep.
+    # Override with TRADING_AGENT_UNTIL_PHASE=preopen for prep-only.
+    $untilRaw = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE.Trim() } else { "cio_review" }
+    if ($untilRaw -in @("full", "all", "day", "fullday", "full_day")) { $untilRaw = "cio_review" }
+    if ($untilRaw -in @("prep", "pre-market", "premarket")) { $untilRaw = "preopen" }
+    $untilPhase = $untilRaw
     $fromPhase = if ($env:TRADING_AGENT_FROM_PHASE) { $env:TRADING_AGENT_FROM_PHASE.Trim() } else { "intelligence" }
 
     Write-Log "Starting desk session for $dateArg (from-phase: $fromPhase, until-phase: $untilPhase)"
     Write-Log "Session log: $sessionLog"
+    if ($untilPhase -eq "cio_review") {
+        Write-Log "Mode: FULL DAY (intraday PT/SL + discovery refreshes + close reviews)"
+    } elseif ($untilPhase -eq "preopen") {
+        Write-Log "Mode: PREP ONLY (phases 1-4; no intraday desk)"
+    }
 
     # Task Scheduler defaults to a legacy code page; force UTF-8 for desk output (em dashes, arrows, etc.).
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
     if (-not $env:TRADING_AGENT_FROM_PHASE) {
         $env:TRADING_AGENT_FROM_PHASE = "intelligence"
+    }
+    if (-not $env:TRADING_AGENT_UNTIL_PHASE) {
+        $env:TRADING_AGENT_UNTIL_PHASE = "cio_review"
+    }
+    if (-not $env:TRADING_AGENT_DISCOVERY_REFRESH) {
+        $env:TRADING_AGENT_DISCOVERY_REFRESH = "1"
     }
 
     # Start-Process gives a reliable exit code under Task Scheduler (pipeline LASTEXITCODE is flaky).
