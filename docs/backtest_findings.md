@@ -30,3 +30,39 @@
 
 ## Caveats
 Underlying-path options proxy, not full chain. Rankings are relative under documented fill assumptions — not a live-profit guarantee.
+
+---
+
+# QQQ 0DTE Shen-style playbook (live 1m)
+
+## Method
+- Entry: `python -m trading_agent odte --symbol QQQ --backtest --period 7d`
+- Rules: first touch of whole-$ / PDH-PDL / PMH-PML / OR levels + 1m RSI extreme (≈74/26) in **9:30–11:15 ET**
+- Synthetic premium $1.00; delta≈0.55 × underlying $ move; bracket **+20% TP / −12.5% SL**
+- Max 3 trades/day; one position at a time; contracts=2 × 100
+- **Data limit:** Yahoo 1m history ≈ **7–8 days max** per request (60d not available)
+
+## Results (as of 2026-07-13 run)
+
+| Metric | Value |
+|--------|--------|
+| Days | 7 |
+| Trades | 11 |
+| Winners / Losers | 2 / 9 |
+| **Win rate (success rate)** | **18.2%** |
+| Total P/L | −$145 |
+| Expectancy | −$13.18 / trade |
+| Avg premium P/L % | −6.6% |
+| Profit factor | 0.36 |
+| Max drawdown | $160 |
+| CALL | n=6 · WR 16.7% · −$85 |
+| PUT | n=5 · WR 20.0% · −$60 |
+| Exits | stop_loss 9 · take_profit 2 |
+
+## Interpretation
+- Under this premium proxy, the Shen-style QQQ 0DTE book was **net losing** over the latest week: stops hit ~4.5× more often than targets.
+- Sample is **small** (11 trades) and **not** full options IV/chain pricing — live P/L will differ with IV crush and spreads.
+- Relative to the offline multi-regime desk book (**strict_a_tier_book3** ~75% WR on synthetic OHLCV), this intraday 0DTE path needs more data or rule filters before treating as shippable.
+
+## Sample losing pattern
+Many whole-dollar / OR first-touches with RSI already extreme still faded through the −12.5% premium stop within the morning window (e.g. 2026-07-06/07/09/13 clusters).
