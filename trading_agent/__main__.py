@@ -23,6 +23,31 @@ from trading_agent.session.orchestrator import run_session_cli
 from trading_agent.session.schedule import DeskPhaseKind
 
 
+def _run_odte(args: argparse.Namespace) -> int:
+    from trading_agent.odte.playbook import OdtePlaybookConfig, format_odte_brief, run_odte_playbook
+
+    if getattr(args, "backtest", False):
+        from trading_agent.odte.backtest import render_odte_backtest, run_odte_backtest
+
+        cfg = OdtePlaybookConfig(symbol=args.symbol.upper(), account_size=float(args.account))
+        result = run_odte_backtest(cfg.symbol, period=args.period, cfg=cfg)
+        text = render_odte_backtest(result)
+        print(text)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
+    cfg = OdtePlaybookConfig(symbol=args.symbol.upper(), account_size=float(args.account))
+    brief = run_odte_playbook(cfg)
+    text = format_odte_brief(brief)
+    print(text)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    return 0 if not brief.errors or brief.levels.last > 0 else 1
+
+
 def _run_backtest(args: argparse.Namespace) -> int:
     from trading_agent.backtest.engine import default_sweep_configs, run_backtest, run_config_sweep
     from trading_agent.backtest.report import render_comparison, render_period_report
@@ -225,6 +250,16 @@ def main(argv: list[str] | None = None) -> int:
     cio.add_argument("--portfolio-value", type=float, default=100_000, help="Portfolio value for allocation")
     cio.add_argument("--output", "-o", metavar="FILE", help="Write report to file")
 
+    odte = subparsers.add_parser(
+        "odte",
+        help="0DTE levels+RSI playbook brief (default QQQ; Shen-style)",
+    )
+    odte.add_argument("--symbol", default="QQQ", help="ETF symbol (QQQ or SPY)")
+    odte.add_argument("--account", type=float, default=1000.0, help="Account size for risk template")
+    odte.add_argument("--backtest", action="store_true", help="Run 1m historical backtest (win rate)")
+    odte.add_argument("--period", default="7d", help="yfinance 1m period for backtest (e.g. 7d)")
+    odte.add_argument("--output", "-o", metavar="FILE", help="Write brief/report to file")
+
     backtest = subparsers.add_parser(
         "backtest",
         help="Offline multi-day research+CIO backtest and config comparison",
@@ -256,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_cio(args)
     if args.command == "backtest":
         return _run_backtest(args)
+    if args.command == "odte":
+        return _run_odte(args)
     if args.command == "premarket":
         return _run_premarket(args)
 
