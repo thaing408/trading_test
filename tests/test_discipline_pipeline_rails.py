@@ -216,3 +216,75 @@ def test_ranker_reads_max_concurrent_from_risk_config_into_state():
     assert state.max_concurrent_plays == 1
     assert state.max_new_risk_pct == 2.5
     assert state.cooldown_minutes == 45
+
+
+def test_intra_batch_max_concurrent_record_open_limits_opportunities():
+    """Empty open book + max_concurrent_plays=1 + ≥2 eligible → only 1 opportunity.
+
+    Proves build_opportunities calls record_open after each accept so one rank
+    pass cannot emit N > max_concurrent_plays (criterion 5 / skeptic gap).
+    """
+    risk = _risk(
+        max_concurrent_plays=1,
+        max_aggregate_risk_pct=10.0,
+        top_candidates=5,
+        max_risk_per_trade_pct=2.0,
+    )
+    # Explicit empty book — only intra-batch claiming should fill concurrent
+    state = build_session_risk_state(
+        risk,
+        open_symbols=[],
+        open_risk_pct=0.0,
+        stop_outs=[],
+    )
+    assert state.open_symbols == []
+    assert state.max_concurrent_plays == 1
+
+    qualified = [
+        (_cand("AAA"), _tech("AAA"), _opts("AAA")),
+        (_cand("BBB"), _tech("BBB"), _opts("BBB")),
+        (_cand("CCC"), _tech("CCC"), _opts("CCC")),
+    ]
+    rail_rej: list[RejectedSetup] = []
+    opps = build_opportunities(
+        qualified,
+        risk,
+        session_state=state,
+        rail_rejections=rail_rej,
+    )
+    assert len(opps) == 1, f"expected 1 opp under max_concurrent=1, got {len(opps)}: {[o.symbol for o in opps]}"
+    assert opps[0].rank == 1
+    # Session book must show the accepted symbol claimed
+    assert opps[0].symbol.upper() in {s.upper() for s in state.open_symbols}
+    # At least one other eligible name rejected for concurrent
+    concurrent_rejs = [
+        r
+        for r in rail_rej
+        if "concurrent" in r.reason.lower() and r.symbol.upper() != opps[0].symbol.upper()
+    ]
+    assert concurrent_rejs, f"expected concurrent rejections, got: {[r.reason for r in rail_rej]}"
+
+
+def test_intra_batch_aggregate_risk_blocks_second():
+    """Empty book, max_aggregate_risk_pct equals one trade → second name blocked."""
+    risk = _risk(
+        max_concurrent_plays=5,
+        max_aggregate_risk_pct=2.0,  # exactly one max_risk_per_trade_pct=2.0 slot
+        max_risk_per_trade_pct=2.0,
+        top_candidates=5,
+    )
+    state = build_session_risk_state(
+        risk, open_symbols=[], open_risk_pct=0.0, stop_outs=[]
+    )
+    rail_rej: list = []
+    opps = build_opportunities(
+        [
+            (_cand("X1"), _tech("X1"), _opts("X1")),
+            (_cand("X2"), _tech("X2"), _opts("X2")),
+        ],
+        risk,
+        session_state=state,
+        rail_rejections=rail_rej,
+    )
+    assert len(opps) == 1
+    assert any("aggregate" in r.reason.lower() for r in rail_rej)

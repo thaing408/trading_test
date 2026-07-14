@@ -309,22 +309,6 @@ def build_opportunities(
             * float(grade_result.size_multiplier or 1.0),
         )
 
-        if enforce_rails:
-            rail = check_discipline_rails(
-                symbol=candidate.symbol,
-                proposed_risk_pct=proposed_risk_pct,
-                state=state,
-            )
-            if not rail.allowed:
-                if rail_rejections is not None:
-                    rail_rejections.append(
-                        RejectedSetup(
-                            symbol=candidate.symbol,
-                            reason="Discipline rails: " + "; ".join(rail.reasons),
-                        )
-                    )
-                continue
-
         mtf_reason = ""
         for gr in grade_result.reasons:
             if "Shannon" in gr or "multi-timeframe" in gr.lower() or "HTF" in gr:
@@ -350,6 +334,7 @@ def build_opportunities(
                 "edge_complete": edge.ok,
                 "edge_summary": edge.summary,
                 "mtf_gate_reason": mtf_reason,
+                "proposed_risk_pct": proposed_risk_pct,
             }
         )
 
@@ -359,8 +344,10 @@ def build_opportunities(
         ),
     )
 
+    # Rails after grade-sort: cool-down / concurrent / aggregate apply in rank order.
+    # record_open after each accept so one pass cannot emit N > max_concurrent_plays.
     opportunities: List[TradeOpportunity] = []
-    for rank, row in enumerate(scored[:limit], 1):
+    for row in scored:
         grade = row["grade"]
         grade_score = row["grade_score"]
         quality = row["quality"]
@@ -371,7 +358,42 @@ def build_opportunities(
         strategy = row["strategy"]
         grade_result = row["grade_result"]
         params = row["params"]
+        proposed_risk_pct = float(row["proposed_risk_pct"])
 
+        if enforce_rails:
+            rail = check_discipline_rails(
+                symbol=candidate.symbol,
+                proposed_risk_pct=proposed_risk_pct,
+                state=state,
+            )
+            if not rail.allowed:
+                if rail_rejections is not None:
+                    rail_rejections.append(
+                        RejectedSetup(
+                            symbol=candidate.symbol,
+                            reason="Discipline rails: " + "; ".join(rail.reasons),
+                        )
+                    )
+                continue
+
+        if len(opportunities) >= limit:
+            if rail_rejections is not None:
+                rail_rejections.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason=(
+                            f"Discipline rails: top_candidates limit {limit} reached "
+                            f"(not adding after ranked book fill)"
+                        ),
+                    )
+                )
+            continue
+
+        # Claim book slot so subsequent names in this pass see updated concurrent/aggregate
+        if enforce_rails:
+            state.record_open(candidate.symbol, proposed_risk_pct)
+
+        rank = len(opportunities) + 1
         expiry = (datetime.now() + timedelta(days=strategy.expiration_days)).strftime("%Y-%m-%d")
         thesis = _thesis(candidate, technical, options, strategy, grade=grade)
         risks = _risks(candidate, technical, options, strategy, grade=grade)
