@@ -1,23 +1,15 @@
-"""Liquid stock/ETF screener collector with institutional floors."""
+"""Liquid stock/ETF screener collector — wide scan, soft floors, tight trade path later."""
 
 from __future__ import annotations
 
-from typing import List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional
 
-from trading_agent.config import AgentConfig
+from trading_agent.config import AgentConfig, ScreenerConfig
 from trading_agent.models import ScreenerCandidate, ScreenerResult
+from trading_agent.screener.universe import resolve_screener_symbols, sector_for
 
 from .base import load_fixture, safe_fetch
-
-SECTOR_MAP = {
-    "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology",
-    "AMZN": "Consumer", "META": "Technology", "GOOGL": "Technology",
-    "TSLA": "Consumer", "AMD": "Technology", "JPM": "Financials",
-    "SPY": "Broad Market", "QQQ": "Technology", "IWM": "Small Cap",
-    "DIA": "Broad Market", "XLK": "Technology", "SMH": "Technology",
-    "SOXX": "Technology", "XBI": "Healthcare",
-    "XLE": "Energy", "XLF": "Financials", "GLD": "Commodities", "TLT": "Bonds",
-}
 
 
 def _institutional_score(
@@ -34,9 +26,42 @@ def _institutional_score(
     score += min(25.0, options_liquidity * 0.25)
     if market_cap >= 2_000_000_000:
         score += 10.0
+    elif market_cap >= 1_000_000_000:
+        score += 5.0
     if avg_daily_volume >= 2_000_000:
         score += 10.0
+    elif avg_daily_volume >= 1_000_000:
+        score += 5.0
     return round(min(100.0, score), 1)
+
+
+def _passes_scan_floors(
+    *,
+    price: float,
+    avg_vol: int,
+    rel_vol: float,
+    market_cap: float,
+    oi: int,
+    spread_pct: float,
+    sc: ScreenerConfig,
+) -> tuple[bool, str]:
+    """Soft scan-tier floors (looser than RiskConfig trade path)."""
+    if price < sc.min_price or price > sc.max_price:
+        return False, f"price ${price:.2f} outside scan band"
+    hard_adv = int(sc.min_avg_daily_volume * max(0.05, float(sc.hard_adv_fraction)))
+    if avg_vol < hard_adv:
+        return False, f"ADV {avg_vol} below hard floor {hard_adv}"
+    if avg_vol < sc.min_avg_daily_volume:
+        # Soft miss: still keep if above hard floor (watchlist coverage)
+        pass
+    if sc.hard_rvol_filter and rel_vol < sc.min_relative_volume:
+        return False, f"RVOL {rel_vol:.2f}x below scan min {sc.min_relative_volume}"
+    if market_cap > 0 and market_cap < sc.min_market_cap * 0.5:
+        # Only hard-drop severe microcaps; unknown mcap kept
+        return False, f"market cap ${market_cap:,.0f} far below scan floor"
+    if oi > 0 and oi < sc.min_open_interest and spread_pct > sc.max_bid_ask_spread_pct:
+        return False, "options chain too illiquid for scan"
+    return True, ""
 
 
 def _screen_symbol(symbol: str, config: AgentConfig) -> ScreenerCandidate | None:
@@ -48,8 +73,6 @@ def _screen_symbol(symbol: str, config: AgentConfig) -> ScreenerCandidate | None
     if hist.empty or len(hist) < 5:
         return None
     price = float(hist["Close"].iloc[-1])
-    if price < sc.min_price or price > sc.max_price:
-        return None
     volume = int(hist["Volume"].iloc[-1])
     avg_vol = int(
         float(hist["Volume"].iloc[-21:].mean())
@@ -91,11 +114,19 @@ def _screen_symbol(symbol: str, config: AgentConfig) -> ScreenerCandidate | None
     except Exception:
         pass
 
-    inst = _institutional_score(rel_vol, oi, liquidity, market_cap, avg_vol)
-
-    # Soft pre-filter at collector: drop obvious non-liquid names early
-    if avg_vol < sc.min_avg_daily_volume * 0.25:
+    ok, _reason = _passes_scan_floors(
+        price=price,
+        avg_vol=avg_vol,
+        rel_vol=rel_vol,
+        market_cap=market_cap,
+        oi=oi,
+        spread_pct=spread_pct,
+        sc=sc,
+    )
+    if not ok:
         return None
+
+    inst = _institutional_score(rel_vol, oi, liquidity, market_cap, avg_vol)
 
     return ScreenerCandidate(
         symbol=symbol,
@@ -105,7 +136,7 @@ def _screen_symbol(symbol: str, config: AgentConfig) -> ScreenerCandidate | None
         options_liquidity_score=round(liquidity, 1),
         open_interest=oi,
         bid_ask_spread_pct=round(spread_pct, 2),
-        sector=SECTOR_MAP.get(symbol, "Unknown"),
+        sector=sector_for(symbol),
         avg_daily_volume=avg_vol,
         market_cap=market_cap,
         institutional_score=inst,
@@ -119,25 +150,69 @@ def _fixture_screener() -> ScreenerResult:
     return ScreenerResult(source="fixture", candidates=candidates)
 
 
+def _resolve_symbol_list(config: AgentConfig) -> List[str]:
+    symbols = resolve_screener_symbols(config.screener.symbols)
+    cap = int(getattr(config.screener, "max_symbols", 0) or 0)
+    if cap > 0:
+        symbols = symbols[:cap]
+    return symbols
+
+
 def collect_screener_candidates(config: AgentConfig) -> ScreenerResult:
     if config.fixture_mode or not config.use_live_data:
         return _fixture_screener()
 
     errors: List[str] = []
     candidates: List[ScreenerCandidate] = []
-    for symbol in config.screener.symbols:
-        result = safe_fetch(
-            lambda s=symbol: _screen_symbol(s, config),
+    symbols = _resolve_symbol_list(config)
+    workers = max(1, int(getattr(config.screener, "fetch_workers", 6) or 1))
+
+    def _one(sym: str) -> Optional[ScreenerCandidate]:
+        return safe_fetch(
+            lambda s=sym: _screen_symbol(s, config),
             None,
             errors,
         )
-        if result:
-            candidates.append(result)
+
+    if workers == 1 or len(symbols) <= 4:
+        for symbol in symbols:
+            result = _one(symbol)
+            if result:
+                candidates.append(result)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(symbols))) as pool:
+            futs = {pool.submit(_one, sym): sym for sym in symbols}
+            for fut in as_completed(futs):
+                try:
+                    result = fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{futs[fut]}: {exc}")
+                    continue
+                if result:
+                    candidates.append(result)
+
+    # Stable order: higher RVOL / institutional first for downstream watchlist bias
+    candidates.sort(
+        key=lambda c: (c.relative_volume, c.institutional_score or 0.0, c.volume),
+        reverse=True,
+    )
 
     if not candidates:
         return ScreenerResult(
             source="unavailable",
             candidates=[],
-            errors=errors or ["No live screener candidates; not injecting fixture"],
+            errors=errors
+            or [
+                f"No live screener candidates from {len(symbols)} symbols; "
+                "not injecting fixture"
+            ],
         )
-    return ScreenerResult(source="yfinance", candidates=candidates, errors=errors)
+    return ScreenerResult(
+        source="yfinance",
+        candidates=candidates,
+        errors=errors
+        + [
+            f"scan_universe={len(symbols)} returned={len(candidates)} "
+            f"workers={workers}"
+        ],
+    )

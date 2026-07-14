@@ -167,10 +167,16 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
     strength_rejected: List[RejectedSetup] = []
     strength_survivors: List[Tuple[ScreenerCandidate, TechnicalAnalysis, OptionsMetrics]] = []
     strength_params = get_screener_params()
+    # soft (default): strength fail still analyzed → more candidates for risk/watchlist
+    # hard: legacy drop from research when strength fails
+    # off: skip strength
+    strength_mode = (getattr(config, "strength_mode", None) or "soft").lower()
+    if not config.apply_strength_gates:
+        strength_mode = "off"
 
     for candidate in screener.candidates:
         technical, options = _analyze_candidate(candidate, config, bench_closes)
-        if config.apply_strength_gates:
+        if strength_mode != "off":
             bars = _candidate_ohlcv(candidate.symbol, config)
             rvol = (
                 candidate.premarket_relative_volume
@@ -194,19 +200,20 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
                         reason="; ".join(strength.reasons),
                     )
                 )
-                continue
-            # Optional pre-market gap/RVOL: observe/prepare signal only (not auto-buy).
-            # Hard strength gates already passed; soft-miss does not drop survivors.
-            if config.apply_premarket_gap_rvol and strength.metrics is not None:
-                strength.metrics.relative_volume = rvol
-                if candidate.gap_pct:
-                    strength.metrics.gap_pct = candidate.gap_pct
-                evaluate_premarket_gates(
-                    strength.metrics,
-                    strength_eval=strength,
-                    params=strength_params.pre_market,
-                )
-            strength_survivors.append((candidate, technical, options))
+                if strength_mode == "hard":
+                    continue
+                # soft: keep analyzing so risk/book path + watchlist coverage grow
+            else:
+                if config.apply_premarket_gap_rvol and strength.metrics is not None:
+                    strength.metrics.relative_volume = rvol
+                    if candidate.gap_pct:
+                        strength.metrics.gap_pct = candidate.gap_pct
+                    evaluate_premarket_gates(
+                        strength.metrics,
+                        strength_eval=strength,
+                        params=strength_params.pre_market,
+                    )
+                strength_survivors.append((candidate, technical, options))
         analyzed.append((candidate, technical, options))
 
     qualified, rejected = evaluate_risk(analyzed, config.risk)
@@ -254,20 +261,18 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         )
         if strength_rejected:
             cash_reason += (
-                f" Strength/pre-market screen rejected {len(strength_rejected)} "
-                "(ADR%/52w/EMA/3m/dollar-volume or gap-RVOL gates)."
+                f" Strength notes on {len(strength_rejected)} names "
+                f"(mode={strength_mode}; hard drops research only when mode=hard)."
             )
         if context.high_impact_events:
             cash_reason += f" High-impact calendar: {context.high_impact_events[0]}."
 
-    # Prefer strength survivors on watchlist when strength gates are active
-    watch_pool = (
-        [c for c, _, _ in strength_survivors]
-        if config.apply_strength_gates and strength_survivors
-        else screener.candidates
-    )
-    if config.apply_strength_gates and not strength_survivors:
-        # All failed strength — still show symbols but rejections name the gates
+    # Watchlist: prefer strength survivors, then fill from full scan (more coverage)
+    if strength_survivors:
+        preferred = [c for c, _, _ in strength_survivors]
+        rest = [c for c in screener.candidates if c.symbol not in {p.symbol for p in preferred}]
+        watch_pool = preferred + rest
+    else:
         watch_pool = screener.candidates
 
     top_watchlist = build_watchlist(
@@ -295,10 +300,12 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "news_source": news.source,
         "screener_source": screener.source,
         "candidates_screened": len(screener.candidates),
+        "scan_universe_size": len(getattr(config.screener, "symbols", []) or []),
         "rejected_count": len(all_rejections),
-        "strength_screened": len(screener.candidates) if config.apply_strength_gates else 0,
+        "strength_screened": len(screener.candidates) if strength_mode != "off" else 0,
         "strength_survivors": len(strength_survivors),
         "strength_rejected": len(strength_rejected),
+        "strength_mode": strength_mode,
         "strength_profile": strength_params.best_winners.name,
         "premarket_profile": strength_params.pre_market.name,
         "screener_params": {
