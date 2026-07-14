@@ -18,6 +18,8 @@ class SessionConfig:
     trading_date: date | None = None
     timezone: str = "America/Los_Angeles"
     intraday_interval_minutes: int = 15
+    # While open positions exist, PT/SL re-check more often than baseline (minutes)
+    intraday_in_position_interval_minutes: int = 3
     intraday_cycles: int = 1
     positions_file: str | None = None
     session_file: str | None = None
@@ -36,6 +38,12 @@ class SessionConfig:
         dry = os.getenv("TRADING_AGENT_DRY_RUN", "").lower() in ("1", "true", "yes")
         no_discord = os.getenv("TRADING_AGENT_NO_DISCORD", "").lower() in ("1", "true", "yes")
         interval = int(os.getenv("TRADING_AGENT_INTRADAY_INTERVAL", "15"))
+        in_pos = int(
+            os.getenv(
+                "TRADING_AGENT_INTRADAY_IN_POSITION_INTERVAL",
+                os.getenv("TRADING_AGENT_INTRADAY_POSITION_INTERVAL", "3"),
+            )
+        )
         cycles = int(os.getenv("TRADING_AGENT_INTRADAY_CYCLES", "1"))
         tz = os.getenv("TRADING_AGENT_TIMEZONE", "America/Los_Angeles")
         until_raw = os.getenv("TRADING_AGENT_UNTIL_PHASE", "").strip()
@@ -48,6 +56,7 @@ class SessionConfig:
             no_discord=no_discord,
             timezone=tz,
             intraday_interval_minutes=interval,
+            intraday_in_position_interval_minutes=max(1, in_pos),
             intraday_cycles=cycles,
             positions_file=os.getenv("TRADING_AGENT_POSITIONS_FILE"),
             session_file=os.getenv("TRADING_AGENT_SESSION_FILE"),

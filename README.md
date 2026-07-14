@@ -165,3 +165,5 @@ See `.env.example`. Key vars (written by the installer):
 - `TRADING_AGENT_TIMEZONE=America/Los_Angeles`
 - `TRADING_AGENT_MARKET_DATA=auto|schwab|yfinance` — OHLCV for TR strength/technicals (default **auto**: Schwab `~/.schwab-mcp/token.json`, else yfinance)
 - `SCHWAB_TOKEN_PATH` — override Schwab OAuth token path
+- `TRADING_AGENT_INTRADAY_INTERVAL` — baseline desk cycle minutes when **flat** (default **15**)
+- `TRADING_AGENT_INTRADAY_IN_POSITION_INTERVAL` — PT/SL re-check minutes while **open positions** exist (default **3**, must be &lt; baseline)

@@ -181,10 +181,12 @@ def render_desk_schedule_log(schedule: DeskSchedule, interval_minutes: int) -> s
         f"({schedule.market_close.astimezone(ET).strftime('%H:%M %Z')} ET)",
         f"- Performance Review: {schedule.phases[5].scheduled_at.strftime('%H:%M %Z')}",
         f"- CIO Daily Review: {schedule.phases[6].scheduled_at.strftime('%H:%M %Z')}",
-        f"- Intraday interval: {interval_minutes} minutes",
-        f"- Intraday cycle count: {len(schedule.intraday_cycles)}",
+        f"- Intraday interval: {interval_minutes} minutes (baseline when flat)",
+        f"- In-position PT/SL interval: {DEFAULT_IN_POSITION_INTERVAL_MINUTES} minutes "
+        f"(while open positions exist; adaptive)",
+        f"- Intraday cycle count (baseline grid): {len(schedule.intraday_cycles)}",
         "",
-        "## Intraday cycle times (PT)",
+        "## Intraday cycle times (PT, baseline grid)",
     ]
     for index, cycle in enumerate(schedule.intraday_cycles, start=1):
         lines.append(f"{index}. {cycle.strftime('%H:%M %Z')}")
@@ -229,6 +231,36 @@ def render_schedule_log(schedule: SessionSchedule, interval_minutes: int) -> str
     for index, cycle in enumerate(schedule.intraday_cycles, start=1):
         lines.append(f"{index}. {cycle.strftime('%H:%M %Z')}")
     return "\n".join(lines) + "\n"
+
+
+# Defaults for adaptive PT/SL monitoring cadence (minutes)
+DEFAULT_INTRADAY_INTERVAL_MINUTES = 15
+DEFAULT_IN_POSITION_INTERVAL_MINUTES = 3
+
+
+def next_intraday_interval_minutes(
+    baseline_minutes: int,
+    has_open_positions: bool,
+    *,
+    in_position_minutes: int | None = None,
+) -> int:
+    """Return minutes to wait until the next PT/SL (intraday) check.
+
+    Flat book → baseline (desk default, e.g. 15).
+    Open position(s) → shorter interval (e.g. 3) until flat again.
+    Always ≥ 1 minute to avoid busy-looping.
+    """
+    baseline = max(1, int(baseline_minutes))
+    if in_position_minutes is None:
+        fast = DEFAULT_IN_POSITION_INTERVAL_MINUTES
+    else:
+        fast = max(1, int(in_position_minutes))
+    if not has_open_positions:
+        return baseline
+    # Strictly shorter than baseline when possible
+    if fast >= baseline:
+        fast = max(1, baseline - 1) if baseline > 1 else 1
+    return fast
 
 
 def seconds_until(target: datetime, now: datetime) -> float:

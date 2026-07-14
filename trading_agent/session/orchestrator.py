@@ -18,6 +18,7 @@ from trading_agent.config import AgentConfig
 from trading_agent.discord.config import DiscordConfig
 from trading_agent.discord.poster import DiscordPostError, post_message
 from trading_agent.intraday.config import IntradayConfig
+from trading_agent.intraday.plan_loader import load_positions
 from trading_agent.intraday.pipeline import run_intraday_pipeline
 from trading_agent.performance.config import PerformanceConfig
 from trading_agent.performance.pipeline import run_performance_pipeline
@@ -49,12 +50,33 @@ from trading_agent.session.schedule import (
     DeskPhaseKind,
     compute_desk_schedule,
     is_regular_session,
+    next_intraday_interval_minutes,
     render_desk_schedule_log,
     resolve_trading_date,
     seconds_until,
 )
 
 SleepFn = Callable[[float], None]
+
+
+def session_has_open_positions(config: SessionConfig) -> bool:
+    """True when the desk can see one or more open positions (file/fixture/broker)."""
+    try:
+        positions = load_positions(config.positions_file, config.fixture_mode)
+    except Exception:  # noqa: BLE001 — treat load failure as flat (baseline cadence)
+        return False
+    return len(positions) > 0
+
+
+def resolve_intraday_wait_minutes(config: SessionConfig, *, has_open_positions: bool | None = None) -> int:
+    """Shipped entry for adaptive PT/SL spacing (baseline vs in-position)."""
+    if has_open_positions is None:
+        has_open_positions = session_has_open_positions(config)
+    return next_intraday_interval_minutes(
+        config.intraday_interval_minutes,
+        bool(has_open_positions),
+        in_position_minutes=config.intraday_in_position_interval_minutes,
+    )
 
 
 @dataclass
@@ -227,25 +249,59 @@ def run_session(
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
             elif phase_kind == DeskPhaseKind.INTRADAY:
-                cycles_to_run = config.intraday_cycles
-                if not config.fixture_mode and not config.dry_run:
-                    cycles_to_run = len(schedule.intraday_cycles)
+                # Fixture/dry-run: fixed small cycle count. Live wait: adaptive until close.
+                fixed_cycles = config.intraday_cycles
+                live_adaptive = wait and not config.fixture_mode and not config.dry_run
                 if plan_path is None:
                     plan_path = session_dir / "daily_plan_context.json"
-                for cycle_index in range(1, cycles_to_run + 1):
+                # Cap adaptive cycles (baseline grid × ratio of intervals) to avoid runaway
+                baseline = max(1, config.intraday_interval_minutes)
+                fast = max(1, config.intraday_in_position_interval_minutes)
+                max_live_cycles = max(
+                    len(schedule.intraday_cycles) * max(1, baseline // min(fast, baseline) + 1),
+                    len(schedule.intraday_cycles),
+                    1,
+                )
+                cycle_index = 0
+                while True:
+                    cycle_index += 1
+                    has_pos = session_has_open_positions(config)
+                    wait_mins = resolve_intraday_wait_minutes(config, has_open_positions=has_pos)
+
                     if wait:
-                        if cycle_index <= len(schedule.intraday_cycles):
-                            target = schedule.intraday_cycles[cycle_index - 1]
+                        if cycle_index == 1:
+                            # Align to desk open; if already open, start PT/SL check immediately
+                            open_target = (
+                                schedule.intraday_cycles[0]
+                                if schedule.intraday_cycles
+                                else schedule.market_open
+                            )
                             _wait_until(
-                                target,
+                                open_target,
                                 wait=True,
                                 sleep=sleep,
                                 log=log,
-                                label=f"Trading Desk cycle {cycle_index}",
+                                label=f"Trading Desk open / cycle {cycle_index}",
                             )
-                        elif not is_regular_session(datetime.now(tz), schedule):
-                            _log(log, "Regular session closed — stopping intraday cycles.")
-                            break
+                        else:
+                            _log(
+                                log,
+                                f"Next PT/SL check in {wait_mins}m "
+                                f"(baseline={baseline}m, in_position={fast}m, "
+                                f"open_positions={has_pos})",
+                            )
+                            sleep(float(wait_mins * 60))
+                            if not is_regular_session(datetime.now(tz), schedule):
+                                _log(log, "Regular session closed — stopping intraday cycles.")
+                                break
+                    else:
+                        # Dry/fixture: still compute and log what live wait would be
+                        _log(
+                            log,
+                            f"[interval] cycle={cycle_index} next_wait_minutes={wait_mins} "
+                            f"open_positions={has_pos} "
+                            f"baseline={baseline} in_position={fast}",
+                        )
 
                     intraday_config = IntradayConfig.from_env()
                     intraday_config.fixture_mode = config.fixture_mode
@@ -270,6 +326,17 @@ def run_session(
                         log=log,
                         posts=posts,
                     )
+
+                    if live_adaptive:
+                        if not is_regular_session(datetime.now(tz), schedule):
+                            _log(log, "Regular session closed after cycle — stopping.")
+                            break
+                        if cycle_index >= max_live_cycles:
+                            _log(log, f"Reached max adaptive cycles ({max_live_cycles}) — stopping.")
+                            break
+                    else:
+                        if cycle_index >= fixed_cycles:
+                            break
                 if intraday_flags:
                     save_intraday_flags(session_dir, intraday_flags)
 
