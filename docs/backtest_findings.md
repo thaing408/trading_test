@@ -10,9 +10,13 @@
 - **Invariants:** `stop_loss` exits never positive for bullish/credit; Bull Put fallback direction is **Bullish**
 - Full report snapshot: `docs/backtest_run_latest.md`
 
-## Sweep results — post book-discipline (2026-07-14 re-run)
+## Sweep results — post book-discipline + expanded screener (2026-07-14 re-run)
 
-With SMB + Investopedia TA + playbook + MTF + rails **ON** (production path defaults):
+Offline multi-regime path still uses fixed synthetic universe  
+(`NVDA,AMD,AAPL,MSFT,SPY,QQQ,TSLA,META,AMZN,JPM`) — **not** the live ~113-name scan list.  
+Screener expansion improves **live** candidate count; this sweep measures **trade-path gates**.
+
+With SMB + Investopedia TA + playbook + MTF + rails **ON**:
 
 | Rank | Config | Trades | Expectancy | Win rate | Max DD | Score |
 |------|--------|--------|------------|----------|--------|-------|
@@ -30,6 +34,10 @@ With SMB + Investopedia TA + playbook + MTF + rails **ON** (production path defa
 
 **Takeaway:** Book gates cut churn and deep DD on this synthetic multi-regime set; quality > quantity.  
 **Caveat:** `prefer_a_tier_only=True` + full gates yields **zero** trades on synthetic bars (A-tier MTF/playbook rarely clears). Shipped defaults still prefer A-tier for live capital preservation; offline best score is grade-C with gates ON.
+
+### Live screener note (not in offline sweep)
+- Default scan universe **~113** liquid symbols; soft strength + scan floors feed more watchlist names.
+- Trade path still RiskConfig RVOL 2.0 / ADV 2M + book gates — more scanned ≠ more auto-trades.
 
 ## Historical sweep (pre book-discipline wiring)
 
@@ -78,6 +86,8 @@ Underlying-path options proxy, not full chain. Rankings are relative under docum
 - Last ~7d of same TOS file: legacy 33.3% (n=3) vs whole+TP15/SL18 **66.7%** (n=3) vs structural-only 100% (n=1 — too thin).
 
 ## Yahoo 1m re-run (2026-07-14, period=7d, source=auto→yfinance)
+
+Confirmed after expanded-screener push (same window / proxy model):
 
 | Rules | Trades | **Win rate** | P/L | Expectancy | Exits |
 |-------|--------|--------------|-----|------------|-------|
