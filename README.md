@@ -86,15 +86,16 @@ python -m trading_agent intraday --fixture
 python -m trading_agent performance --fixture
 ```
 
-## Dual system (Windows research + macOS TOS)
+## Dual system (Windows @ work + macOS @ home)
 
-| Machine | Role |
-|---------|------|
-| **Windows** | Research, methods, screener, TA + fundamentals, book export, Discord research |
-| **macOS** | TOS / Schwab MCP trading, positions, brackets |
+| Where | Machine | Role |
+|-------|---------|------|
+| **Work** | **Windows** | Research only — screener, TA + fundamentals, gates, discovery, Discord, export book (**no TOS**) |
+| **Home** | **macOS** | Live trading — TOS / Schwab MCP, positions, brackets, journal back to sync |
 
-Windows writes `~/.trading_agent/sync/auto_trade_book.json` after research/discovery.  
-Mac: `python scripts/macos/consume_auto_trade_book.py` then execute only `ENTER` rows with checklist + edge.  
+Windows writes `auto_trade_book.json` into a **shared cloud folder** (`TRADING_AGENT_SYNC_DIR`).  
+Mac: pull that folder → `python scripts/macos/consume_auto_trade_book.py` → trade only `ENTER` rows.  
+Mac writes `positions.json` + journal into the same folder so work Performance can learn.  
 See **`docs/dual_system.md`**.
 
 ## Automation

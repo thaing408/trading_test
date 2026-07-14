@@ -1,13 +1,15 @@
 # Dual-system architecture: Windows research + macOS TOS execution
 
-## Roles
+## Physical setup (your machines)
 
-| System | Role | Has TOS / Schwab MCP? | Primary job |
-|--------|------|------------------------|-------------|
-| **Windows** (this machine) | Research / methods lab | **No** | Screener, TA/fundamentals, book gates, discovery, Discord research, backtests, export trade book |
-| **macOS** | Live trading desk | **Yes** (TOS / Schwab MCP) | Positions export, order path, PT/SL against real book, consume research book |
+| Location | Machine | Role | TOS / trading |
+|----------|---------|------|----------------|
+| **Work** | **Windows** | Research / methods only | **No** — ideas, gates, discovery, Discord, `auto_trade_book.json` |
+| **Home** | **macOS** | Live trading desk | **Yes** — TOS / Schwab MCP, positions, brackets, journal |
 
-Do **not** require TOS MCP on Windows. All research must remain **provider-pluggable** (yfinance / FMP / Schwab OHLCV when available).
+Implication: research can run weekdays while you’re at work; **execution only happens at home** when the Mac is on. Sync must cross **work ↔ home** (not LAN). Prefer cloud folder or git over USB.
+
+Do **not** require TOS MCP on Windows. All research must remain **provider-pluggable** (yfinance / FMP / optional data APIs).
 
 ## Shared contract directory
 
@@ -104,10 +106,52 @@ Both    after close     → journal merge → Performance
 | Execution | Mac only | TOS brackets, real fills, position sync |
 | Learning | Windows | Backtests + journal attribution |
 
-## Sync options
+## Sync options (work Windows ↔ home Mac)
 
-1. **iCloud/Dropbox** folder = `TRADING_AGENT_SYNC_DIR` on both  
-2. **git private** push of `sync/*.json` (no secrets) from Windows after research; Mac pull before open  
-3. **scp/rsync** cron after discovery  
+| Method | Fit for work/home | Notes |
+|--------|-------------------|--------|
+| **1. Cloud folder** (OneDrive / Dropbox / Google Drive / iCloud Drive) | **Best default** | Same relative path under `TRADING_AGENT_SYNC_DIR` on both; auto-sync after research/discovery |
+| **2. Private git** (`sync/*.json` only, no secrets) | Good audit trail | Windows: commit/push book after morning research; Mac: `git pull` before open / after lunch |
+| **3. Manual copy** | Fallback | Download book from work → home before open (last resort) |
 
-Prefer (1) or (3) for low latency; git is fine for plan audit trail.
+**Recommended:** cloud folder named e.g. `TradingAgentSync` containing:
+
+```
+TradingAgentSync/
+  auto_trade_book.json      # work → home (ENTER ideas)
+  positions.json            # home → work (optional; rails/cool-down on research host)
+  stopouts.json             # home → work (revenge cool-down)
+  journal/
+    trades_YYYY-MM-DD.json  # home → work (Performance learning)
+```
+
+### Work (Windows) env
+
+```env
+TRADING_AGENT_SYNC_DIR=C:\Users\...\OneDrive\TradingAgentSync
+TRADING_AGENT_UNTIL_PHASE=cio_review
+TRADING_AGENT_DISCOVERY_REFRESH=1
+# No TOS; no order placement
+```
+
+### Home (macOS) env
+
+```bash
+export TRADING_AGENT_SYNC_DIR="$HOME/Library/CloudStorage/.../TradingAgentSync"
+# or Dropbox/iCloud path
+export TRADING_AGENT_POSITIONS_FILE="$TRADING_AGENT_SYNC_DIR/positions.json"
+export TRADING_AGENT_STOPOUT_FILE="$TRADING_AGENT_SYNC_DIR/stopouts.json"
+export TRADING_AGENT_TRADES_FILE="$TRADING_AGENT_SYNC_DIR/journal/trades_$(date +%Y-%m-%d).json"
+```
+
+### Daily rhythm (work/home)
+
+| When (PT) | Work Windows | Home Mac |
+|-----------|--------------|----------|
+| ~01:55–06:30 | Full research (if PC awake) → writes `auto_trade_book.json` | Optional: pull + prepare TOS |
+| Before open / after you get home | Discovery overwrites book if still running | **Pull sync** → `consume_auto_trade_book.py` → trade only ENTERs |
+| 07:00 / 09:30 / 11:00 | Discovery refresh updates book | Re-pull if at desk; ignore if away |
+| After close | — | Export positions + journal into sync folder |
+| Next workday | Performance reads journal from sync | — |
+
+**Security:** never put `DISCORD_TOKEN` / Schwab OAuth tokens in the shared sync folder. Only JSON books, positions, stopouts, journal.
