@@ -24,6 +24,62 @@ def test_load_positions_fixture_without_path_uses_fixture_file():
     assert symbols == {"NVDA", "AAPL", "TSLA"}
 
 
+def test_load_positions_skips_zero_qty_and_invalid_symbols(tmp_path: Path):
+    path = tmp_path / "positions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "positions": [
+                    {
+                        "symbol": "TSLA",
+                        "strategy": "Long Equity",
+                        "entry_price": 250.0,
+                        "stop_loss": 240.0,
+                        "profit_target": 265.0,
+                        "strike_prices": [],
+                        "expiration": "2099-12-31",
+                        "quantity": 0,
+                    },
+                    {
+                        "symbol": "None",
+                        "strategy": "Long Equity",
+                        "entry_price": 10.0,
+                        "stop_loss": 9.0,
+                        "profit_target": 12.0,
+                        "strike_prices": [],
+                        "expiration": "2099-12-31",
+                        "quantity": 5,
+                    },
+                    {
+                        "symbol": "",
+                        "strategy": "Long Equity",
+                        "entry_price": 0,
+                        "stop_loss": 0,
+                        "profit_target": 0,
+                        "strike_prices": [],
+                        "expiration": "",
+                        "quantity": 1,
+                    },
+                    {
+                        "symbol": "ORCL",
+                        "strategy": "Long Call",
+                        "entry_price": 4.0,
+                        "stop_loss": 2.8,
+                        "profit_target": 6.0,
+                        "strike_prices": [220.0],
+                        "expiration": "2026-07-17",
+                        "quantity": 2,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    positions = load_positions(str(path), fixture_mode=False)
+    assert [p.symbol for p in positions] == ["ORCL"]
+    assert positions[0].quantity == 2
+
+
 def test_load_plan_context_live_without_path_returns_neutral_defaults():
     context = load_plan_context(None, fixture_mode=False)
     assert context["market_regime"] == "neutral"

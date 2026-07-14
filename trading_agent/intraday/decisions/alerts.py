@@ -21,10 +21,18 @@ def detect_alerts(
     better_opportunity_symbol: str | None = None,
 ) -> List[Alert]:
     alerts: List[Alert] = []
+    # Flat / closed lots should never reach here; load_positions filters qty<=0.
+    if int(getattr(position, "quantity", 0) or 0) <= 0:
+        return alerts
+
     sym_data = snapshot.symbols.get(position.symbol)
     price = sym_data.price if sym_data else position.current_price or position.entry_price
+    # Missing quotes (price<=0) used to force stop-loss on junk/None rows.
+    has_price = price is not None and price > 0
 
-    if price <= position.stop_loss * (1 + risk_config.stop_loss_tolerance_pct / 100):
+    if has_price and position.stop_loss > 0 and price <= position.stop_loss * (
+        1 + risk_config.stop_loss_tolerance_pct / 100
+    ):
         alerts.append(
             Alert(
                 alert_type="stop_loss_triggered",
@@ -35,7 +43,9 @@ def detect_alerts(
             )
         )
 
-    if price >= position.profit_target * (1 - risk_config.profit_target_tolerance_pct / 100):
+    if has_price and position.profit_target > 0 and price >= position.profit_target * (
+        1 - risk_config.profit_target_tolerance_pct / 100
+    ):
         alerts.append(
             Alert(
                 alert_type="profit_target_reached",
@@ -73,7 +83,9 @@ def detect_alerts(
             )
         )
 
-    loss_pct = (position.entry_price - price) / position.entry_price * 100 if position.entry_price else 0
+    loss_pct = 0.0
+    if has_price and position.entry_price:
+        loss_pct = (position.entry_price - price) / position.entry_price * 100
     if loss_pct > risk_config.max_loss_per_position_pct:
         alerts.append(
             Alert(

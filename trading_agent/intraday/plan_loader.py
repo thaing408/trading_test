@@ -4,26 +4,130 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List
+from typing import Any, List, Mapping
 
 from trading_agent.intraday.models import OpenPosition
 
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+
+# Placeholders / junk rows that should never drive desk actions.
+_INVALID_SYMBOLS = frozenset({"", "none", "null", "nan", "n/a", "-", "--", "cash", "usd"})
+
+
+def _clean_symbol(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    symbol = str(raw).strip()
+    if not symbol:
+        return None
+    if symbol.lower() in _INVALID_SYMBOLS:
+        return None
+    # JSON null sometimes becomes the literal string "None"
+    if symbol == "None":
+        return None
+    return symbol
+
+
+def _positive_qty(raw: Any) -> int | None:
+    """Return open size if strictly positive; otherwise None (flat / closed)."""
+    try:
+        qty = float(raw if raw is not None else 0)
+    except (TypeError, ValueError):
+        return None
+    if qty == 0 or abs(qty) < 1e-9:
+        return None
+    return max(1, int(abs(qty)))
+
+
+def position_from_row(row: Mapping[str, Any]) -> OpenPosition | None:
+    """Build an OpenPosition from a JSON/brokerage row, or None if not tradeable."""
+    symbol = _clean_symbol(row.get("symbol"))
+    if not symbol:
+        return None
+
+    qty = _positive_qty(row.get("quantity", row.get("qty", 1)))
+    if qty is None:
+        return None
+
+    try:
+        entry = float(row.get("entry_price") or row.get("avg_entry_price") or 0)
+    except (TypeError, ValueError):
+        entry = 0.0
+    try:
+        current = float(row.get("current_price") or entry or 0)
+    except (TypeError, ValueError):
+        current = entry
+
+    # Zero-price junk rows fire false stop-loss (price 0 <= any stop).
+    if entry <= 0 and current <= 0:
+        return None
+
+    try:
+        stop = float(row.get("stop_loss") if row.get("stop_loss") is not None else entry * 0.95)
+    except (TypeError, ValueError):
+        stop = entry * 0.95 if entry else 0.0
+    try:
+        target = float(
+            row.get("profit_target") if row.get("profit_target") is not None else entry * 1.05
+        )
+    except (TypeError, ValueError):
+        target = entry * 1.05 if entry else 0.0
+
+    strikes = row.get("strike_prices") or []
+    if not isinstance(strikes, list):
+        strikes = []
+
+    return OpenPosition(
+        symbol=symbol,
+        strategy=str(row.get("strategy") or row.get("broker") or "position"),
+        entry_price=entry if entry > 0 else current,
+        stop_loss=stop,
+        profit_target=target,
+        strike_prices=[float(s) for s in strikes if s is not None],
+        expiration=str(row.get("expiration") or ""),
+        quantity=qty,
+        thesis=str(row.get("thesis") or ""),
+        original_probability=float(row.get("original_probability") or 0.5),
+        original_confidence=float(row.get("original_confidence") or 60.0),
+        current_price=current if current > 0 else entry,
+        allows_averaging_down=bool(row.get("allows_averaging_down", False)),
+        trailing_stop_pct=float(row.get("trailing_stop_pct") or 2.0),
+        max_risk_dollars=float(row.get("max_risk_dollars") or 500.0),
+        pending_entry=bool(row.get("pending_entry", False)),
+    )
+
+
+def positions_from_payload(data: Mapping[str, Any] | list) -> List[OpenPosition]:
+    """Normalize a positions.json-style payload into open (non-flat) positions only."""
+    if isinstance(data, list):
+        rows = data
+    else:
+        rows = data.get("positions", []) if isinstance(data, Mapping) else []
+    out: List[OpenPosition] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        pos = position_from_row(row)
+        if pos is not None:
+            out.append(pos)
+    return out
 
 
 def load_positions(path: str | None, fixture_mode: bool) -> List[OpenPosition]:
     """Load open positions: explicit file → fixture → optional brokerage → empty.
 
     Live path never synthesizes demo positions when brokerage is unconfigured.
+    Flat (qty 0), blank/`None` symbols, and zero-price junk rows are dropped so
+    the desk does not alert on already-closed names (e.g. TSLA after exit).
     """
     if path:
         with Path(path).open(encoding="utf-8") as handle:
             data = json.load(handle)
-        return [OpenPosition(**p) for p in data.get("positions", [])]
+        return positions_from_payload(data)
     if fixture_mode:
         with (FIXTURE_DIR / "open_positions.json").open(encoding="utf-8") as handle:
             data = json.load(handle)
-        return [OpenPosition(**p) for p in data.get("positions", [])]
+        return positions_from_payload(data)
 
     # Optional brokerage (Alpaca / Tradier) — fail closed
     try:
@@ -32,32 +136,21 @@ def load_positions(path: str | None, fixture_mode: bool) -> List[OpenPosition]:
 
         result = load_broker_positions(ProviderConfig.from_env())
         if result.ok and result.positions:
-            out: List[OpenPosition] = []
+            mapped: List[dict] = []
             for row in result.positions:
-                symbol = (row.get("symbol") or "").strip()
-                if not symbol:
-                    continue
-                qty = float(row.get("qty") or 0)
-                if qty == 0:
-                    continue
-                entry = float(row.get("avg_entry_price") or row.get("current_price") or 0)
-                price = float(row.get("current_price") or entry)
-                # Desk OpenPosition is options-oriented; map equity holdings as stock proxy.
-                out.append(
-                    OpenPosition(
-                        symbol=symbol,
-                        strategy=str(row.get("broker") or "brokerage"),
-                        entry_price=entry,
-                        stop_loss=entry * 0.95 if entry else 0.0,
-                        profit_target=entry * 1.05 if entry else 0.0,
-                        strike_prices=[],
-                        expiration="",
-                        quantity=max(1, int(abs(qty))),
-                        thesis=f"Brokerage position via {row.get('broker') or 'unknown'}",
-                        current_price=price,
-                    )
+                mapped.append(
+                    {
+                        "symbol": row.get("symbol"),
+                        "quantity": row.get("qty"),
+                        "entry_price": row.get("avg_entry_price") or row.get("current_price"),
+                        "current_price": row.get("current_price"),
+                        "strategy": str(row.get("broker") or "brokerage"),
+                        "thesis": f"Brokerage position via {row.get('broker') or 'unknown'}",
+                        "expiration": "",
+                        "strike_prices": [],
+                    }
                 )
-            return out
+            return positions_from_payload({"positions": mapped})
     except Exception:
         pass
     return []

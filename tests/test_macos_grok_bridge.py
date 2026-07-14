@@ -62,6 +62,30 @@ def test_schwab_positions_converter_option_and_equity():
     assert qs["quantity"] == 500
 
 
+def test_schwab_converter_skips_zero_quantity():
+    mod = _load_positions_module()
+    sample = {
+        "positions": [
+            {
+                "symbol": "TSLA",
+                "asset_type": "EQUITY",
+                "quantity": 0.0,
+                "average_price": 250.0,
+                "market_value": 0.0,
+            },
+            {
+                "symbol": "AAPL",
+                "asset_type": "EQUITY",
+                "quantity": 10.0,
+                "average_price": 200.0,
+                "market_value": 2100.0,
+            },
+        ]
+    }
+    out = mod.schwab_to_trading_agent(sample)
+    assert [p["symbol"] for p in out["positions"]] == ["AAPL"]
+
+
 def test_trading_agent_env_example_has_no_preopen_cap():
     active = [
         line.strip()

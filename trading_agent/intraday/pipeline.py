@@ -70,7 +70,12 @@ def _risk_limit_notifications(risk_eval: RiskLimitEvaluation) -> List[Alert]:
 
 def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
     plan_context = load_plan_context(config.plan_file, config.fixture_mode)
-    positions = load_positions(config.positions_file, config.fixture_mode)
+    # Defense in depth: never evaluate flat / invalid lots (qty<=0, blank symbol).
+    positions = [
+        p
+        for p in load_positions(config.positions_file, config.fixture_mode)
+        if p.symbol and str(p.symbol).strip().lower() not in {"none", "null"} and p.quantity > 0
+    ]
 
     if not positions:
         snapshot = collect_session_snapshot(config, [], plan_context)

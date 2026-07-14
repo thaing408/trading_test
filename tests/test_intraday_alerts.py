@@ -105,6 +105,24 @@ def test_no_scale_in_when_averaging_down_forbidden():
     assert not check_averaging_down(pos, 210.0)
 
 
+def test_zero_quantity_produces_no_alerts():
+    pos = _position(quantity=0)
+    snap = _snapshot(price=300.0)
+    synth = _synthesis(regime_shift=True)
+    alerts = detect_alerts(pos, snap, synth, IntradayRiskConfig())
+    assert alerts == []
+
+
+def test_missing_price_does_not_force_stop_loss():
+    pos = _position(current_price=0.0, entry_price=0.0, stop_loss=10.0, profit_target=20.0)
+    snap = _snapshot(price=0.0)
+    # Empty symbols map → no quote
+    snap.symbols = {}
+    synth = _synthesis()
+    alerts = detect_alerts(pos, snap, synth, IntradayRiskConfig())
+    assert not any(a.alert_type == "stop_loss_triggered" for a in alerts)
+
+
 def test_regime_shift_alert():
     pos = _position()
     snap = _snapshot(prior="bullish", regime="bearish")
