@@ -349,8 +349,13 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         research_summary["web_methods"] = methods_as_dict(
             research_trading_methods(use_network=not offline_m)
         )
+        from trading_agent.methods.options_methods import options_methods_as_dict
+
+        research_summary["options_methods"] = options_methods_as_dict()
+        research_summary["instrument_focus"] = "options"
         research_summary["auto_trade_mode"] = (
-            "suggest_export_discord_only — no broker fills on Windows research host"
+            "options_suggest_export_discord_only — no TOS fills on Windows; "
+            "Mac executes defined-risk ENTERs after git pull"
         )
     except Exception as exc:  # noqa: BLE001
         research_summary["web_methods_error"] = str(exc)

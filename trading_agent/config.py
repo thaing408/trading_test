@@ -53,6 +53,15 @@ class RiskConfig:
     auto_trade_min_grade: str = "B"
     # Public web/process method tags influencing tradeability
     enforce_web_methods: bool = True
+    # Options-specific gates (IV regime, liquidity, POP/RR, DTE, defined risk)
+    enforce_options_methods: bool = True
+    options_min_iv_high: float = 55.0
+    options_max_iv_low: float = 40.0
+    options_min_oi: int = 500
+    options_max_spread_pct: float = 5.0
+    options_min_pop_credit: float = 0.45
+    options_min_dte: int = 5
+    options_max_dte: int = 60
     # Book discipline rails (Douglas / Steenbarger / Bellafiore / Shannon)
     require_playbook_checklist: bool = True
     require_edge_package: bool = True

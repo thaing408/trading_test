@@ -130,6 +130,7 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         allow_b_when_aligned=bool(getattr(cfg, "allow_b_when_aligned", True)),
         export_auto_trade_book=False,
         enforce_web_methods=bool(getattr(cfg, "enforce_web_methods", False)),
+        enforce_options_methods=bool(getattr(cfg, "enforce_options_methods", False)),
     )
 
 

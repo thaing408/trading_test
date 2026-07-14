@@ -125,6 +125,25 @@ def build_auto_trade_book(
             continue
         row["method_tags"] = list(getattr(opp, "method_tags", None) or [])
         row["method_notes"] = str(getattr(opp, "method_notes", "") or "")[:240]
+        # Options package for Mac TOS execution
+        row["instrument"] = "options"
+        row["options_strategy_class"] = str(
+            getattr(opp, "options_strategy_class", "") or ""
+        )
+        row["iv_rank"] = float(getattr(opp, "iv_rank", 0) or 0)
+        row["pop"] = float(getattr(opp, "options_pop", 0) or opp.probability_of_success or 0)
+        row["delta"] = float(getattr(opp, "options_delta", 0) or 0)
+        row["dte"] = int(getattr(opp, "expiration_days", 0) or 0)
+        row["defined_risk"] = bool(getattr(opp, "defined_risk", True))
+        row["options_method_notes"] = str(
+            getattr(opp, "options_method_notes", "") or ""
+        )[:240]
+        if not row["defined_risk"]:
+            rejected_incomplete.append(f"{opp.symbol}:not_defined_risk")
+            continue
+        if not row["strike_prices"]:
+            rejected_incomplete.append(f"{opp.symbol}:missing_strikes")
+            continue
         entries.append(row)
 
     host = source_host or socket.gethostname()

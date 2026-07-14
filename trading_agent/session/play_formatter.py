@@ -213,6 +213,12 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
                     f"{getattr(opp, 'hold_style', '') or 'n/a'}",
                     f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | "
                     f"Target ${opp.profit_target:.2f} | Max risk ${opp.maximum_risk:.2f}",
+                    f"- **Options:** {getattr(opp, 'options_strategy_class', '') or 'n/a'} | "
+                    f"IVR {getattr(opp, 'iv_rank', 0):.0f} | "
+                    f"POP {getattr(opp, 'options_pop', opp.probability_of_success):.0%} | "
+                    f"Δ {getattr(opp, 'options_delta', 0):.2f} | "
+                    f"DTE {getattr(opp, 'expiration_days', 0)} | "
+                    f"defined_risk={getattr(opp, 'defined_risk', True)}",
                     f"- Strikes: {strikes} | Exp: {opp.expiration}",
                     f"- Prob {opp.probability_of_success:.0%} | Conf {opp.confidence_score:.0f} | "
                     f"Quality {getattr(opp, 'combined_quality_score', opp.trade_quality_score):.0f}/100 | "

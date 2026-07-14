@@ -100,3 +100,19 @@ The earlier `auto_trade_book.json` export remains optional **local** tooling if 
 | **macOS (home)** | After `git pull` / `pull-and-ready.sh`, human or local MCP executes using **home** TOS only |
 
 Web method research tags process rules (risk package, checklist, HTF, size, expectancy). They influence eligibility on the research host; they are **not** paid signal tips and **not** a profitability guarantee.
+
+## Options-specific auto-trade (research → Mac)
+
+Windows research is **options-first**:
+
+| Gate | Rule |
+|------|------|
+| IV regime | High IVR → credit / premium; low IVR → debit / long premium |
+| Defined risk | Spreads, condors, long options preferred for auto ENTER |
+| Liquidity | Min OI + max bid-ask % |
+| POP / R:R | Credit POP floor; debit reward ≥ risk |
+| DTE | Default 5–60 DTE (0DTE only with named playbook) |
+| Earnings | Block new short premium into earnings window |
+
+Discord suggestions include **IVR, POP, delta, DTE, strikes, defined_risk**.  
+`auto_trade_book.json` ENTER rows set `instrument: options` plus strikes/POP/IVR for home TOS.

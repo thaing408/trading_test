@@ -183,6 +183,14 @@ class TradeOpportunity:
     # Web/process method tags that supported or rejected the setup
     method_tags: List[str] = field(default_factory=list)
     method_notes: str = ""
+    # Options-specific package (research → Mac ENTER)
+    options_strategy_class: str = ""  # credit | debit | other
+    iv_rank: float = 0.0
+    options_pop: float = 0.0
+    options_delta: float = 0.0
+    expiration_days: int = 0
+    defined_risk: bool = True
+    options_method_notes: str = ""
 
 
 @dataclass

@@ -515,13 +515,63 @@ def build_opportunities(
                     )
                 continue
 
+        # Options-specific methods (IV regime, defined risk, liquidity, POP, DTE)
+        opt_class = ""
+        opt_notes = ""
+        defined_risk = True
+        if bool(getattr(risk_config, "enforce_options_methods", True)):
+            from trading_agent.methods.options_methods import (
+                evaluate_options_methods,
+                is_defined_risk_strategy,
+            )
+
+            oeval = evaluate_options_methods(
+                {
+                    "strategy": strategy.name,
+                    "iv_rank": options.iv_rank,
+                    "probability_of_profit": options.probability_of_profit,
+                    "open_interest": candidate.open_interest or options.open_interest,
+                    "bid_ask_spread_pct": candidate.bid_ask_spread_pct
+                    or options.bid_ask_spread_pct,
+                    "expiration_days": strategy.expiration_days,
+                    "delta": options.delta,
+                    "direction": strategy.direction,
+                    "entry_price": params["entry_price"],
+                    "stop_loss": params["stop_loss"],
+                    "profit_target": params["profit_target"],
+                    "maximum_risk": params["maximum_risk"],
+                    "maximum_reward": params["maximum_reward"],
+                    "setup_id": setup_id,
+                },
+                min_iv_high=float(getattr(risk_config, "options_min_iv_high", 55.0)),
+                max_iv_low=float(getattr(risk_config, "options_max_iv_low", 40.0)),
+                min_oi=int(getattr(risk_config, "options_min_oi", 500)),
+                max_spread_pct=float(getattr(risk_config, "options_max_spread_pct", 5.0)),
+                min_pop_credit=float(getattr(risk_config, "options_min_pop_credit", 0.45)),
+                min_dte=int(getattr(risk_config, "options_min_dte", 5)),
+                max_dte=int(getattr(risk_config, "options_max_dte", 60)),
+            )
+            opt_class = oeval.strategy_class
+            opt_notes = "; ".join(oeval.failures[:4] + oeval.notes[:2])[:240]
+            defined_risk = is_defined_risk_strategy(strategy.name)
+            method_tags = list(dict.fromkeys(method_tags + list(oeval.method_ids_ok)))
+            if oeval.critical_fail:
+                if rail_rejections is not None:
+                    rail_rejections.append(
+                        RejectedSetup(
+                            symbol=candidate.symbol,
+                            reason="Options methods: " + ("; ".join(oeval.failures[:3]) or "fail"),
+                        )
+                    )
+                continue
+
         auto_eligible = (
             grade_result.grade in ("A+", "A")
             or (
                 grade_result.grade == "B"
                 and combined >= float(getattr(risk_config, "min_quality_for_b_exception", 70.0))
             )
-        ) and bool(checklist.passed if checklist else (not require_pb)) and edge.ok
+        ) and bool(checklist.passed if checklist else (not require_pb)) and edge.ok and defined_risk
 
         scored.append(
             {
@@ -552,6 +602,13 @@ def build_opportunities(
                 "auto_trade_eligible": auto_eligible,
                 "method_tags": method_tags,
                 "method_notes": method_notes,
+                "options_strategy_class": opt_class,
+                "iv_rank": float(options.iv_rank or 0),
+                "options_pop": float(options.probability_of_profit or 0),
+                "options_delta": float(options.delta or 0),
+                "expiration_days": int(strategy.expiration_days or 0),
+                "defined_risk": defined_risk,
+                "options_method_notes": opt_notes,
             }
         )
 
@@ -690,6 +747,13 @@ def build_opportunities(
                 auto_trade_eligible=bool(row.get("auto_trade_eligible", False)),
                 method_tags=list(row.get("method_tags") or []),
                 method_notes=str(row.get("method_notes") or ""),
+                options_strategy_class=str(row.get("options_strategy_class") or ""),
+                iv_rank=float(row.get("iv_rank") or 0),
+                options_pop=float(row.get("options_pop") or 0),
+                options_delta=float(row.get("options_delta") or 0),
+                expiration_days=int(row.get("expiration_days") or 0),
+                defined_risk=bool(row.get("defined_risk", True)),
+                options_method_notes=str(row.get("options_method_notes") or ""),
             )
         )
 
