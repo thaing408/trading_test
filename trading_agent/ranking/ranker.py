@@ -218,6 +218,7 @@ def build_opportunities(
         session_state_from_risk_config,
     )
     from trading_agent.discipline.smb_books import apply_smb_book_gates
+    from trading_agent.discipline.ta_books import apply_investopedia_ta_gates
     from trading_agent.models import RejectedSetup
 
     limit = max_count if max_count is not None else risk_config.top_candidates
@@ -228,6 +229,7 @@ def build_opportunities(
     enforce_mtf = bool(getattr(risk_config, "enforce_mtf_gate", True))
     enforce_rails = bool(getattr(risk_config, "enforce_discipline_rails", True))
     enforce_smb = bool(getattr(risk_config, "enforce_smb_book_gates", True))
+    enforce_ta = bool(getattr(risk_config, "enforce_ta_book_gates", True))
 
     # Always apply RiskConfig limits on the auto-trade path (not optional).
     if session_state is None or not isinstance(session_state, SessionRiskState):
@@ -359,6 +361,33 @@ def build_opportunities(
                 )
             continue
 
+        # Investopedia TA books (Schwager plan, Pring trend+vol, Murphy confluence,
+        # Nison candles, Bulkowski PA) — Shannon/O'Neil also covered via MTF + SMB
+        ta_ctx = {
+            **smb_ctx,
+            "ma_alignment": technical.ma_alignment,
+            "macd_signal": technical.macd_signal,
+            "momentum": technical.momentum,
+            "candle_patterns": list(technical.candle_patterns or []),
+            "pa_signals": list(technical.pa_signals or []),
+            "pattern_summary": technical.pattern_summary or "",
+        }
+        ta = apply_investopedia_ta_gates(
+            ta_ctx,
+            min_rvol=float(getattr(risk_config, "ta_pring_min_rvol", 1.2) or 1.2),
+            min_confluence=int(getattr(risk_config, "ta_min_indicator_confluence", 2) or 2),
+            enabled=enforce_ta,
+        )
+        if enforce_ta and not ta.ok:
+            if rail_rejections is not None:
+                rail_rejections.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason=ta.summary,
+                    )
+                )
+            continue
+
         mtf_reason = ""
         for gr in grade_result.reasons:
             if "Shannon" in gr or "multi-timeframe" in gr.lower() or "HTF" in gr:
@@ -386,6 +415,7 @@ def build_opportunities(
                 "mtf_gate_reason": mtf_reason,
                 "proposed_risk_pct": proposed_risk_pct,
                 "smb_summary": smb.summary,
+                "ta_summary": ta.summary,
             }
         )
 
@@ -457,6 +487,7 @@ def build_opportunities(
             f"Playbook: {row['playbook_name'] or row['setup_id'] or 'n/a'} — {row['checklist_summary']}",
             f"Edge: {row['edge_summary']}",
             f"SMB books: {row.get('smb_summary') or 'n/a'}",
+            f"Investopedia TA books: {row.get('ta_summary') or 'n/a'}",
             f"Hold style: {grade_result.hold_style}",
             f"PT/SL geometry: target {grade_result.target_atr_mult}×ATR, "
             f"stop {grade_result.stop_atr_mult}×ATR",

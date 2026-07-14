@@ -48,6 +48,11 @@ class RiskConfig:
     enforce_smb_book_gates: bool = True
     oneil_min_rvol: float = 1.5
     oneil_min_rs: float = 0.0  # 0 = inactive RS floor
+    # Investopedia TA books (Schwager, Pring, Murphy, Nison, Bulkowski…)
+    # https://www.investopedia.com/articles/personal-finance/090916/top-5-books-learn-technical-analysis.asp
+    enforce_ta_book_gates: bool = True
+    ta_min_indicator_confluence: int = 2
+    ta_pring_min_rvol: float = 1.2
 
 
 @dataclass

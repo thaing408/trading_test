@@ -46,7 +46,24 @@ list (Bellafiore, 2014) plus Shannon MTF from the prior desk goal.
 2. Per candidate: playbook → edge → **SMB book gates** → grade-sort → rails + `record_open`
 3. Intraday stop Exit → stopout book for cool-down
 
+## Investopedia top TA books → code
+
+Source: [Top books to learn technical analysis](https://www.investopedia.com/articles/personal-finance/090916/top-5-books-learn-technical-analysis.asp) (now lists 7 classics).
+
+| # | Book | Author | Mechanism | Module |
+|---|------|--------|-----------|--------|
+| 1 | Getting Started in Technical Analysis | Schwager | Entry/stop/target plan before risk | `discipline/ta_books.py` → `schwager_plan_entry_exit` |
+| 2 | Technical Analysis Explained | Pring | Trend + MA + volume confirmation | `pring_trend_volume` |
+| 3 | Technical Analysis of the Financial Markets | Murphy | MA/MACD/RSI/momentum confluence | `murphy_indicator_confluence` |
+| 4 | How to Make Money in Stocks | O'Neil | RVOL/structure (also SMB) | `smb_books.oneil_can_slim_proxy` |
+| 5 | Japanese Candlestick Charting Techniques | Nison | Candles must not oppose direction | `nison_candle_alignment` |
+| 6 | Encyclopedia of Chart Patterns | Bulkowski | Block vs high-reliability opposing PA | `bulkowski_pattern_bias` |
+| 7 | Technical Analysis Using Multiple Timeframes | Shannon | HTF bias (existing) | `discipline/mtf_gate.py` |
+
+Flags: `enforce_ta_book_gates`, `ta_min_indicator_confluence`, `ta_pring_min_rvol`.
+
 ```python
 from trading_agent.discipline.smb_books import apply_smb_book_gates, SMB_TOP_TEN
+from trading_agent.discipline.ta_books import apply_investopedia_ta_gates, INVESTOPEDIA_TA_BOOKS
 from trading_agent.ranking.ranker import build_opportunities
 ```

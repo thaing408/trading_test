@@ -43,9 +43,15 @@ from trading_agent.discipline.smb_books import (
     apply_smb_book_gates,
     smb_process_habit_lines,
 )
+from trading_agent.discipline.ta_books import (
+    INVESTOPEDIA_TA_BOOKS,
+    apply_investopedia_ta_gates,
+)
 
 __all__ = [
+    "INVESTOPEDIA_TA_BOOKS",
     "SMB_TOP_TEN",
+    "apply_investopedia_ta_gates",
     "apply_smb_book_gates",
     "smb_process_habit_lines",
     "PLAYBOOK_CATALOG",

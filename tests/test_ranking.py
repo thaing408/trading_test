@@ -18,6 +18,15 @@ def _bundle(symbol, rel_vol=1.8, oi=10000):
     lows = [c - 1 for c in closes]
     volumes = [2_000_000] * 60
     technical = compute_technical_analysis(symbol, closes, highs, lows, volumes)
+    # Keep ranking fixtures free of opposing PA that TA book gates hard-block
+    technical.candle_patterns = [p for p in (technical.candle_patterns or []) if "shooting" not in p]
+    technical.pa_signals = [
+        p
+        for p in (technical.pa_signals or [])
+        if "failed_breakout" not in p and "double_top" not in p
+    ]
+    if technical.pattern_summary and "failed_breakout" in technical.pattern_summary:
+        technical.pattern_summary = "none"
     candidate = ScreenerCandidate(
         symbol=symbol,
         price=closes[-1],
