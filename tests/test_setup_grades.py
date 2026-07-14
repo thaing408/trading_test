@@ -68,6 +68,8 @@ def _opp_risk(**kw) -> RiskConfig:
         require_playbook_checklist=True,
         require_edge_package=True,
         enforce_mtf_gate=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
     )
     for k, v in kw.items():
         setattr(cfg, k, v)

@@ -125,6 +125,10 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         enforce_discipline_rails=bool(getattr(cfg, "enforce_discipline_rails", True)),
         enforce_smb_book_gates=bool(getattr(cfg, "enforce_smb_book_gates", True)),
         enforce_ta_book_gates=bool(getattr(cfg, "enforce_ta_book_gates", True)),
+        # Offline: no network fundamentals; soft A/B rules still apply
+        enforce_fundamental_gate=False,
+        allow_b_when_aligned=bool(getattr(cfg, "allow_b_when_aligned", True)),
+        export_auto_trade_book=False,
     )
 
 

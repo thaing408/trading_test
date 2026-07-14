@@ -29,6 +29,7 @@ def plan_to_context(plan: DailyTradingPlan) -> dict:
             {
                 "symbol": opp.symbol,
                 "strategy": opp.strategy,
+                "direction": opp.direction,
                 "entry_price": opp.entry_price,
                 "strike_prices": opp.strike_prices,
                 "expiration": opp.expiration,
@@ -38,11 +39,24 @@ def plan_to_context(plan: DailyTradingPlan) -> dict:
                 "probability_of_success": opp.probability_of_success,
                 "maximum_risk": opp.maximum_risk,
                 "maximum_reward": opp.maximum_reward,
+                "setup_grade": opp.setup_grade,
+                "playbook_setup_id": getattr(opp, "playbook_setup_id", ""),
+                "playbook_name": getattr(opp, "playbook_name", ""),
+                "checklist_passed": getattr(opp, "checklist_passed", False),
+                "edge_complete": getattr(opp, "edge_complete", False),
+                "fundamental_score": getattr(opp, "fundamental_score", 0.0),
+                "combined_quality_score": getattr(opp, "combined_quality_score", 0.0),
+                "auto_trade_eligible": getattr(opp, "auto_trade_eligible", False),
             }
             for opp in plan.ranked_opportunities
         ],
         "rejection_reasons": [
             {"symbol": r.symbol, "reason": r.reason} for r in plan.rejection_reasons
+        ],
+        "auto_trade_symbols": [
+            opp.symbol
+            for opp in plan.ranked_opportunities
+            if getattr(opp, "auto_trade_eligible", False)
         ],
     }
 

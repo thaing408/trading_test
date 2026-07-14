@@ -96,6 +96,8 @@ def test_aligned_complete_edge_play_is_tradeable():
         require_playbook_checklist=True,
         require_edge_package=True,
         enforce_mtf_gate=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
     )
     qualified = [(_cand(), _tech(), _opts())]
     opps = build_opportunities(qualified, risk)
@@ -118,6 +120,8 @@ def test_conflicting_mtf_not_actionable():
         require_playbook_checklist=True,
         require_edge_package=True,
         enforce_mtf_gate=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
     )
     tech = _tech(
         timeframe_alignment="conflicting",

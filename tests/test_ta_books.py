@@ -126,6 +126,8 @@ def test_build_opportunities_blocks_nison_opposing_candle():
         enforce_mtf_gate=True,
         enforce_smb_book_gates=True,
         enforce_ta_book_gates=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
         oneil_min_rvol=1.5,
         ta_pring_min_rvol=1.2,
         ta_min_indicator_confluence=2,

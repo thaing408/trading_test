@@ -138,6 +138,8 @@ def test_build_opportunities_blocks_oneil_low_rvol():
         require_playbook_checklist=False,  # isolate O'Neil vs playbook RVOL
         require_edge_package=True,
         enforce_mtf_gate=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
         oneil_min_rvol=1.5,
     )
     tech2 = TechnicalAnalysis(

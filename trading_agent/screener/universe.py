@@ -87,7 +87,6 @@ EXPANDED_LIQUID: tuple[str, ...] = CORE_LIQUID + (
     "ABNB",
     "COIN",
     "HOOD",
-    "SQ",
     "SHOP",
     "ROKU",
     "SNAP",
@@ -95,6 +94,7 @@ EXPANDED_LIQUID: tuple[str, ...] = CORE_LIQUID + (
     "ARM",
     "TSM",
     "ASML",
+    # Note: avoid delisted/unstable Yahoo tickers (e.g. former SQ → XYZ)
     # Liquid sector / theme ETFs
     "XLV",
     "XLI",

@@ -336,7 +336,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "errors": errors,
     }
 
-    return DailyTradingPlan(
+    plan = DailyTradingPlan(
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         overall_market_bias=bias,
         market_environment_score=env_score,
@@ -347,3 +347,32 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         stay_in_cash=stay_in_cash,
         cash_recommendation_reason=cash_reason,
     )
+
+    # Windows research host → Mac TOS: write auto_trade_book.json to sync dir
+    if bool(getattr(config.risk, "export_auto_trade_book", True)):
+        try:
+            from trading_agent.export.auto_trade_book import export_plan_for_execution
+            from trading_agent.session.context import default_session_dir
+
+            session_dir = default_session_dir(
+                datetime.now(timezone.utc).date()
+            )
+            book = export_plan_for_execution(
+                plan,
+                session_dir=session_dir,
+                min_grade=str(getattr(config.risk, "auto_trade_min_grade", "B") or "B"),
+                min_fundamental_score=float(
+                    getattr(config.risk, "min_fundamental_score", 45.0) or 0.0
+                ),
+                min_quality_score=float(
+                    getattr(config.risk, "min_combined_quality_score", 55.0) or 0.0
+                ),
+            )
+            plan.research_summary["auto_trade_export"] = {
+                "entry_count": book.get("entry_count", 0),
+                "paths": book.get("_written_paths", []),
+            }
+        except Exception as exc:  # noqa: BLE001
+            plan.research_summary["auto_trade_export_error"] = str(exc)
+
+    return plan

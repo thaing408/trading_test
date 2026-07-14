@@ -40,6 +40,17 @@ class RiskConfig:
     # Letter grades: A+/A always ranked first. F is never a trade opportunity.
     min_setup_grade: str = "B"  # floor when not A-only; F still excluded
     prefer_a_tier_only: bool = True  # backtest winner: A+/A only
+    # Allow B-grade when MTF aligned + playbook pass + strong quality (softens A-starvation)
+    allow_b_when_aligned: bool = True
+    min_quality_for_b_exception: float = 70.0
+    # Fundamentals (research host)
+    enforce_fundamental_gate: bool = True
+    min_fundamental_score: float = 45.0
+    block_earnings_within_days: int = 2
+    min_combined_quality_score: float = 55.0
+    # Export for Mac TOS execution
+    export_auto_trade_book: bool = True
+    auto_trade_min_grade: str = "B"
     # Book discipline rails (Douglas / Steenbarger / Bellafiore / Shannon)
     require_playbook_checklist: bool = True
     require_edge_package: bool = True

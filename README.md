@@ -86,6 +86,17 @@ python -m trading_agent intraday --fixture
 python -m trading_agent performance --fixture
 ```
 
+## Dual system (Windows research + macOS TOS)
+
+| Machine | Role |
+|---------|------|
+| **Windows** | Research, methods, screener, TA + fundamentals, book export, Discord research |
+| **macOS** | TOS / Schwab MCP trading, positions, brackets |
+
+Windows writes `~/.trading_agent/sync/auto_trade_book.json` after research/discovery.  
+Mac: `python scripts/macos/consume_auto_trade_book.py` then execute only `ENTER` rows with checklist + edge.  
+See **`docs/dual_system.md`**.
+
 ## Automation
 
 ### Windows

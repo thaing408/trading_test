@@ -109,6 +109,14 @@ def run_discovery_refresh(
         )
     save_plan_context(ctx, session_dir)
 
+    # Refresh Mac-facing auto_trade_book on each discovery
+    try:
+        from trading_agent.export.auto_trade_book import export_plan_for_execution
+
+        export_plan_for_execution(plan, session_dir=session_dir)
+    except Exception:
+        pass
+
     new_watch = list(plan.top_watchlist or [])
     new_ranked = [o.symbol for o in plan.ranked_opportunities]
     new_set = set(new_watch) | set(new_ranked)

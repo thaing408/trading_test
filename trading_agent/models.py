@@ -174,6 +174,12 @@ class TradeOpportunity:
     edge_complete: bool = False
     edge_summary: str = ""
     mtf_gate_reason: str = ""
+    # Fundamentals + blended quality (research → Mac auto_trade_book)
+    fundamental_score: float = 0.0
+    fundamental_passed: bool = True
+    fundamental_summary: str = ""
+    combined_quality_score: float = 0.0
+    auto_trade_eligible: bool = False
 
 
 @dataclass

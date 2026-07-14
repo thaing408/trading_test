@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
@@ -259,8 +260,12 @@ def build_opportunities(
             continue
         if GRADE_RANK.get(grade_result.grade, 99) > max_rank_allowed:
             continue
+        # Soft A-tier: allow B when aligned MTF + playbook + quality later; pre-filter non-priority
+        # unless allow_b_when_aligned (final B check after quality blend below).
+        allow_b = bool(getattr(risk_config, "allow_b_when_aligned", True))
         if prefer_a and not grade_result.is_priority:
-            continue
+            if not (allow_b and grade_result.grade == "B"):
+                continue
 
         params = _trade_params(
             candidate.price,
@@ -388,11 +393,84 @@ def build_opportunities(
                 )
             continue
 
+        # Fundamentals (research host — yfinance/info; no TOS required)
+        fund_score = 50.0
+        fund_passed = True
+        fund_summary = "Fundamentals soft-default"
+        if bool(getattr(risk_config, "enforce_fundamental_gate", True)):
+            from trading_agent.fundamentals.quality import (
+                combine_quality_score,
+                fetch_fundamental_snapshot,
+            )
+
+            offline = os.getenv("TRADING_AGENT_FUNDAMENTALS_OFFLINE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            # Backtests set this to avoid network
+            use_net = not offline
+            snap = fetch_fundamental_snapshot(
+                candidate.symbol,
+                min_score=float(getattr(risk_config, "min_fundamental_score", 45.0)),
+                block_earnings_within_days=int(
+                    getattr(risk_config, "block_earnings_within_days", 2)
+                ),
+                use_network=use_net,
+            )
+            fund_score = snap.score
+            fund_passed = snap.passed
+            fund_summary = "; ".join(snap.reasons[:4]) if snap.reasons else snap.source
+            if not fund_passed:
+                if rail_rejections is not None:
+                    rail_rejections.append(
+                        RejectedSetup(
+                            symbol=candidate.symbol,
+                            reason=f"Fundamentals: {fund_summary}",
+                        )
+                    )
+                continue
+        else:
+            from trading_agent.fundamentals.quality import combine_quality_score
+
+        combined = combine_quality_score(
+            technical_score=technical.score,
+            confidence=confidence,
+            fundamental_score=fund_score,
+            grade_score=grade_result.grade_score,
+        )
+        min_q = float(getattr(risk_config, "min_combined_quality_score", 55.0) or 0)
+        if min_q > 0 and combined < min_q:
+            if rail_rejections is not None:
+                rail_rejections.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason=f"Combined quality {combined:.0f} < min {min_q:.0f}",
+                    )
+                )
+            continue
+
+        # B-exception under A-tier: require alignment + quality threshold
+        if prefer_a and grade_result.grade == "B":
+            align = (technical.timeframe_alignment or "").lower()
+            aligned = align in ("aligned_bullish", "aligned_bearish", "aligned")
+            min_b_q = float(getattr(risk_config, "min_quality_for_b_exception", 70.0))
+            if not (allow_b and aligned and combined >= min_b_q and pb_ok and edge.ok):
+                continue
+
         mtf_reason = ""
         for gr in grade_result.reasons:
             if "Shannon" in gr or "multi-timeframe" in gr.lower() or "HTF" in gr:
                 mtf_reason = gr
                 break
+
+        auto_eligible = (
+            grade_result.grade in ("A+", "A")
+            or (
+                grade_result.grade == "B"
+                and combined >= float(getattr(risk_config, "min_quality_for_b_exception", 70.0))
+            )
+        ) and bool(checklist.passed if checklist else (not require_pb)) and edge.ok
 
         scored.append(
             {
@@ -416,6 +494,11 @@ def build_opportunities(
                 "proposed_risk_pct": proposed_risk_pct,
                 "smb_summary": smb.summary,
                 "ta_summary": ta.summary,
+                "fundamental_score": fund_score,
+                "fundamental_passed": fund_passed,
+                "fundamental_summary": fund_summary,
+                "combined_quality_score": combined,
+                "auto_trade_eligible": auto_eligible,
             }
         )
 
@@ -547,6 +630,11 @@ def build_opportunities(
                 edge_complete=row["edge_complete"],
                 edge_summary=row["edge_summary"],
                 mtf_gate_reason=row["mtf_gate_reason"],
+                fundamental_score=float(row.get("fundamental_score") or 0.0),
+                fundamental_passed=bool(row.get("fundamental_passed", True)),
+                fundamental_summary=str(row.get("fundamental_summary") or ""),
+                combined_quality_score=float(row.get("combined_quality_score") or quality),
+                auto_trade_eligible=bool(row.get("auto_trade_eligible", False)),
             )
         )
 

@@ -98,6 +98,8 @@ def _risk(**kw) -> RiskConfig:
         require_edge_package=True,
         enforce_mtf_gate=True,
         enforce_discipline_rails=True,
+        enforce_fundamental_gate=False,
+        min_combined_quality_score=0.0,
         max_concurrent_plays=3,
         max_aggregate_risk_pct=6.0,
         max_risk_per_trade_pct=2.0,
