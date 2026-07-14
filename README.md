@@ -86,16 +86,19 @@ python -m trading_agent intraday --fixture
 python -m trading_agent performance --fixture
 ```
 
-## Dual system (Windows @ work + macOS @ home)
+## Dual system (Windows @ work + macOS @ home) — fully separated
 
 | Where | Machine | Role |
 |-------|---------|------|
-| **Work** | **Windows** | Research only — screener, TA + fundamentals, gates, discovery, Discord, export book (**no TOS**) |
-| **Home** | **macOS** | Live trading — TOS / Schwab MCP, positions, brackets, journal back to sync |
+| **Work** | **Windows** | Research only — methods, screener, gates, discovery, Discord (**no TOS**, no home data) |
+| **Home** | **macOS** | Live trading — TOS / Schwab MCP only (**no work files**) |
 
-Windows writes `auto_trade_book.json` into a **shared cloud folder** (`TRADING_AGENT_SYNC_DIR`).  
-Mac: pull that folder → `python scripts/macos/consume_auto_trade_book.py` → trade only `ENTER` rows.  
-Mac writes `positions.json` + journal into the same folder so work Performance can learn.  
+**Bridge = git + optional Discord cue only.** No shared positions/journals/secrets.
+
+1. Work: improve code → **`git push`** to `main`  
+2. Optional Discord: **`PULL_LATEST`** (or run `scripts/notify_pull_latest.ps1` after push)  
+3. Home EOD/next morning: **`./scripts/macos/pull-and-ready.sh`** then trade with local TOS  
+
 See **`docs/dual_system.md`**.
 
 ## Automation
