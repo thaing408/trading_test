@@ -251,6 +251,188 @@ PLAYBOOK_CATALOG: Dict[str, PlaybookSetup] = {
             ),
         ),
     ),
+    # --- Options-native plays (defined-risk book for Mac TOS) ---
+    "options_credit_bull_put": PlaybookSetup(
+        setup_id="options_credit_bull_put",
+        name="Options Credit Bull Put",
+        direction="Bullish",
+        strategy_names=("Bull Put Credit Spread",),
+        min_grade="B",
+        notes="Sell put credit in elevated IV with bullish HTF; defined wing risk",
+        checklist=(
+            ChecklistItem(
+                "htf_bullish",
+                "HTF bullish or aligned_bullish",
+                check=lambda c: _alignment(c) in ("aligned_bullish",)
+                or _trend(c) in ("uptrend", "bullish"),
+            ),
+            ChecklistItem(
+                "iv_elevated",
+                "IV rank >= 45 (premium selling regime)",
+                check=lambda c: float(c.get("iv_rank") or 0) >= 45,
+            ),
+            ChecklistItem(
+                "pop_ok",
+                "POP >= 0.45",
+                check=lambda c: float(c.get("probability_of_profit") or c.get("pop") or 0)
+                >= 0.45,
+            ),
+            ChecklistItem(
+                "liquidity",
+                "OI >= 500 and spread <= 5%",
+                check=lambda c: float(c.get("open_interest") or 0) >= 500
+                and float(c.get("bid_ask_spread_pct") or 0) <= 5.0,
+            ),
+            ChecklistItem(
+                "defined_risk",
+                "Stop and target defined",
+                check=_has_stop_target,
+            ),
+        ),
+    ),
+    "options_credit_iron_condor": PlaybookSetup(
+        setup_id="options_credit_iron_condor",
+        name="Options Credit Iron Condor",
+        direction="Neutral",
+        strategy_names=("Iron Condor",),
+        min_grade="B",
+        notes="Range-bound high-IV premium; avoid into earnings",
+        checklist=(
+            ChecklistItem(
+                "iv_high",
+                "IV rank >= 55",
+                check=lambda c: float(c.get("iv_rank") or 0) >= 55,
+            ),
+            ChecklistItem(
+                "not_conflicting_trend_day",
+                "Not strong one-way breakout state",
+                check=lambda c: _breakout(c) not in ("breakout", "breakdown")
+                or float(c.get("iv_rank") or 0) >= 70,
+            ),
+            ChecklistItem(
+                "pop_ok",
+                "POP >= 0.45",
+                check=lambda c: float(c.get("probability_of_profit") or c.get("pop") or 0)
+                >= 0.45,
+            ),
+            ChecklistItem(
+                "liquidity",
+                "OI >= 500",
+                check=lambda c: float(c.get("open_interest") or 0) >= 500,
+            ),
+            ChecklistItem(
+                "defined_risk",
+                "Stop and target defined",
+                check=_has_stop_target,
+            ),
+        ),
+    ),
+    "options_debit_call_spread": PlaybookSetup(
+        setup_id="options_debit_call_spread",
+        name="Options Debit Call Spread",
+        direction="Bullish",
+        strategy_names=("Debit Spread", "Bull Call Spread", "Debit Call Spread"),
+        min_grade="B",
+        notes="Bullish debit in lower IV; defined max loss",
+        checklist=(
+            ChecklistItem(
+                "htf_bullish",
+                "HTF bullish / uptrend",
+                check=lambda c: _alignment(c) in ("aligned_bullish",)
+                or _trend(c) in ("uptrend", "bullish"),
+            ),
+            ChecklistItem(
+                "iv_not_extreme",
+                "IV rank <= 55 (avoid buying rich premium)",
+                check=lambda c: float(c.get("iv_rank") or 0) <= 55
+                or float(c.get("iv_rank") or 0) == 0,
+            ),
+            ChecklistItem(
+                "direction_long",
+                "Bullish direction",
+                check=lambda c: _direction(c) in ("bullish", "long", ""),
+            ),
+            ChecklistItem(
+                "rvol_ok",
+                "RVOL >= 1.3",
+                check=lambda c: _rvol(c) >= 1.3,
+            ),
+            ChecklistItem(
+                "defined_risk",
+                "Stop and target defined",
+                check=_has_stop_target,
+            ),
+        ),
+    ),
+    "options_debit_put_spread": PlaybookSetup(
+        setup_id="options_debit_put_spread",
+        name="Options Debit Put Spread",
+        direction="Bearish",
+        strategy_names=("Debit Spread", "Bear Put Spread", "Debit Put Spread", "Long Put"),
+        min_grade="B",
+        notes="Bearish debit in contained IV",
+        checklist=(
+            ChecklistItem(
+                "htf_bearish",
+                "HTF bearish / downtrend",
+                check=lambda c: _alignment(c) in ("aligned_bearish",)
+                or _trend(c) in ("downtrend", "bearish"),
+            ),
+            ChecklistItem(
+                "iv_not_extreme",
+                "IV rank <= 60",
+                check=lambda c: float(c.get("iv_rank") or 0) <= 60
+                or float(c.get("iv_rank") or 0) == 0,
+            ),
+            ChecklistItem(
+                "direction_short",
+                "Bearish direction",
+                check=lambda c: _direction(c) in ("bearish", "short"),
+            ),
+            ChecklistItem(
+                "defined_risk",
+                "Stop and target defined",
+                check=_has_stop_target,
+            ),
+        ),
+    ),
+    "options_credit_bear_call": PlaybookSetup(
+        setup_id="options_credit_bear_call",
+        name="Options Credit Bear Call",
+        direction="Bearish",
+        strategy_names=("Bear Call Credit Spread",),
+        min_grade="B",
+        notes="Sell call credit in elevated IV with bearish HTF",
+        checklist=(
+            ChecklistItem(
+                "htf_bearish",
+                "HTF bearish or aligned_bearish",
+                check=lambda c: _alignment(c) in ("aligned_bearish",)
+                or _trend(c) in ("downtrend", "bearish"),
+            ),
+            ChecklistItem(
+                "iv_elevated",
+                "IV rank >= 45",
+                check=lambda c: float(c.get("iv_rank") or 0) >= 45,
+            ),
+            ChecklistItem(
+                "pop_ok",
+                "POP >= 0.45",
+                check=lambda c: float(c.get("probability_of_profit") or c.get("pop") or 0)
+                >= 0.45,
+            ),
+            ChecklistItem(
+                "liquidity",
+                "OI >= 500",
+                check=lambda c: float(c.get("open_interest") or 0) >= 500,
+            ),
+            ChecklistItem(
+                "defined_risk",
+                "Stop and target defined",
+                check=_has_stop_target,
+            ),
+        ),
+    ),
 }
 
 

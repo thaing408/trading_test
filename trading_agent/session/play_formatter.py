@@ -107,9 +107,49 @@ def format_intelligence_brief(brief: IntelligenceBrief) -> str:
 _MAX_REJECT_REASONS_SHOWN = 8
 
 
+def format_options_enter_cards(plan: DailyTradingPlan, *, limit: int = 5) -> list[str]:
+    """Compact auto-trade ENTER cards for options (Discord + logs)."""
+    lines: list[str] = []
+    cards = [
+        o
+        for o in (plan.ranked_opportunities or [])
+        if getattr(o, "auto_trade_eligible", False)
+        and getattr(o, "checklist_passed", False)
+        and getattr(o, "edge_complete", False)
+        and getattr(o, "defined_risk", True)
+        and float(o.entry_price or 0) > 0
+        and float(o.stop_loss or 0) > 0
+        and float(o.profit_target or 0) > 0
+    ][:limit]
+    if not cards:
+        return lines
+    lines.append("**Options AUTO-ENTER cards** (research host — Mac TOS executes after git pull):")
+    for o in cards:
+        strikes = ", ".join(f"${s:.2f}" for s in (o.strike_prices or [])[:4])
+        lines.append(
+            f"- **ENTER {o.symbol}** `{o.strategy}` [{o.setup_grade}] "
+            f"{o.direction} | setup=`{getattr(o, 'playbook_setup_id', '') or 'n/a'}`"
+        )
+        lines.append(
+            f"  strikes [{strikes}] exp {o.expiration} | "
+            f"class={getattr(o, 'options_strategy_class', '') or 'n/a'} | "
+            f"IVR {getattr(o, 'iv_rank', 0):.0f} POP {getattr(o, 'options_pop', o.probability_of_success):.0%} "
+            f"Δ {getattr(o, 'options_delta', 0):.2f} DTE {getattr(o, 'expiration_days', 0)}"
+        )
+        lines.append(
+            f"  entry ${o.entry_price:.2f} stop ${o.stop_loss:.2f} target ${o.profit_target:.2f} "
+            f"max_risk ${o.maximum_risk:.2f} | conf {o.confidence_score:.0f}"
+        )
+    return lines
+
+
 def format_research_plays(plan: DailyTradingPlan) -> str:
     text = format_premarket_plays(plan)
-    return text.replace("**Pre-Market Scout", "**Trading Research", 1)
+    text = text.replace("**Pre-Market Scout", "**Trading Research (Options)", 1)
+    cards = format_options_enter_cards(plan)
+    if cards:
+        text = text + "\n\n" + "\n".join(cards)
+    return text
 
 
 def _scanned_count(plan: DailyTradingPlan) -> int:

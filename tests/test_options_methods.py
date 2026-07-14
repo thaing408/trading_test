@@ -192,6 +192,77 @@ def test_export_options_enter_fields():
     assert e["strike_prices"] == [97, 92]
 
 
+def test_options_playbook_credit_bull_put_passes():
+    from trading_agent.discipline.playbook import evaluate_checklist, get_setup
+
+    setup = get_setup("options_credit_bull_put")
+    assert setup is not None
+    result = evaluate_checklist(
+        setup,
+        {
+            "direction": "Bullish",
+            "timeframe_alignment": "aligned_bullish",
+            "trend": "uptrend",
+            "iv_rank": 60,
+            "probability_of_profit": 0.55,
+            "open_interest": 2000,
+            "bid_ask_spread_pct": 1.5,
+            "entry_price": 100,
+            "stop_loss": 95,
+            "profit_target": 102,
+        },
+    )
+    assert result.passed is True
+
+
+def test_format_options_enter_cards():
+    from trading_agent.session.play_formatter import format_options_enter_cards
+
+    opp = TradeOpportunity(
+        rank=1,
+        symbol="NVDA",
+        strategy="Bull Put Credit Spread",
+        entry_price=100,
+        strike_prices=[97, 92],
+        expiration="2026-08-15",
+        profit_target=102,
+        stop_loss=96,
+        maximum_risk=250,
+        maximum_reward=80,
+        probability_of_success=0.55,
+        confidence_score=70,
+        supporting_reasons=[],
+        technical=_tech(),
+        options=_opts(),
+        direction="Bullish",
+        setup_grade="A",
+        playbook_setup_id="options_credit_bull_put",
+        checklist_passed=True,
+        edge_complete=True,
+        auto_trade_eligible=True,
+        defined_risk=True,
+        options_strategy_class="credit",
+        iv_rank=65,
+        options_pop=0.55,
+        options_delta=0.3,
+        expiration_days=28,
+    )
+    plan = DailyTradingPlan(
+        date="2026-07-14",
+        overall_market_bias="Bullish",
+        market_environment_score=60,
+        top_watchlist=["NVDA"],
+        ranked_opportunities=[opp],
+        rejection_reasons=[],
+        research_summary={},
+        stay_in_cash=False,
+    )
+    lines = format_options_enter_cards(plan)
+    assert any("AUTO-ENTER" in x for x in lines)
+    assert any("ENTER NVDA" in x for x in lines)
+    assert any("IVR" in x for x in lines)
+
+
 def test_discord_options_fields_in_research():
     opp = TradeOpportunity(
         rank=1,

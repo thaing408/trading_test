@@ -306,6 +306,13 @@ def build_opportunities(
             "stop_loss": params["stop_loss"],
             "profit_target": params["profit_target"],
             "price": candidate.price,
+            # Options fields for options-native playbooks
+            "iv_rank": options.iv_rank,
+            "probability_of_profit": options.probability_of_profit,
+            "pop": options.probability_of_profit,
+            "open_interest": candidate.open_interest or options.open_interest,
+            "bid_ask_spread_pct": candidate.bid_ask_spread_pct or options.bid_ask_spread_pct,
+            "strategy": strategy.name,
         }
         pb_ok, setup_id, pb_summary, checklist = require_playbook_pass(
             direction=strategy.direction,
