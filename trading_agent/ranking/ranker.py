@@ -231,6 +231,7 @@ def build_opportunities(
     enforce_rails = bool(getattr(risk_config, "enforce_discipline_rails", True))
     enforce_smb = bool(getattr(risk_config, "enforce_smb_book_gates", True))
     enforce_ta = bool(getattr(risk_config, "enforce_ta_book_gates", True))
+    enforce_methods = bool(getattr(risk_config, "enforce_web_methods", True))
 
     # Always apply RiskConfig limits on the auto-trade path (not optional).
     if session_state is None or not isinstance(session_state, SessionRiskState):
@@ -238,6 +239,22 @@ def build_opportunities(
     else:
         state = session_state
         state.apply_risk_config(risk_config)
+
+    # Public process methods (baseline; optional web reinforce once per build)
+    methods_list = []
+    try:
+        from trading_agent.methods.web_methods import research_trading_methods
+
+        offline = os.getenv("TRADING_AGENT_METHODS_OFFLINE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        methods_list = research_trading_methods(use_network=not offline)
+    except Exception:
+        from trading_agent.methods.web_methods import BASELINE_METHODS
+
+        methods_list = list(BASELINE_METHODS)
 
     scored: List[dict] = []
 
@@ -464,6 +481,40 @@ def build_opportunities(
                 mtf_reason = gr
                 break
 
+        # Web/process method tags (risk package, checklist, HTF, size, revenge, volume…)
+        method_tags: list[str] = []
+        method_notes = ""
+        if enforce_methods and methods_list:
+            from trading_agent.methods.web_methods import evaluate_methods_for_setup
+
+            mctx = {
+                "entry_price": params["entry_price"],
+                "stop_loss": params["stop_loss"],
+                "profit_target": params["profit_target"],
+                "checklist_passed": bool(checklist.passed) if checklist else (not require_pb),
+                "require_checklist": require_pb,
+                "edge_complete": edge.ok,
+                "timeframe_alignment": technical.timeframe_alignment,
+                "relative_volume": candidate.relative_volume,
+                "direction": strategy.direction,
+                "setup_id": setup_id,
+                "proposed_risk_pct": proposed_risk_pct,
+                "max_risk_per_trade_pct": float(risk_config.max_risk_per_trade_pct),
+                "strict_events": True,
+            }
+            meval = evaluate_methods_for_setup(methods_list, mctx)
+            method_tags = list(meval.get("method_ids_ok") or [])
+            method_notes = "; ".join(meval.get("method_failures") or [])[:240]
+            if meval.get("critical_fail"):
+                if rail_rejections is not None:
+                    rail_rejections.append(
+                        RejectedSetup(
+                            symbol=candidate.symbol,
+                            reason="Method gates: " + (method_notes or "critical method fail"),
+                        )
+                    )
+                continue
+
         auto_eligible = (
             grade_result.grade in ("A+", "A")
             or (
@@ -499,6 +550,8 @@ def build_opportunities(
                 "fundamental_summary": fund_summary,
                 "combined_quality_score": combined,
                 "auto_trade_eligible": auto_eligible,
+                "method_tags": method_tags,
+                "method_notes": method_notes,
             }
         )
 
@@ -635,6 +688,8 @@ def build_opportunities(
                 fundamental_summary=str(row.get("fundamental_summary") or ""),
                 combined_quality_score=float(row.get("combined_quality_score") or quality),
                 auto_trade_eligible=bool(row.get("auto_trade_eligible", False)),
+                method_tags=list(row.get("method_tags") or []),
+                method_notes=str(row.get("method_notes") or ""),
             )
         )
 

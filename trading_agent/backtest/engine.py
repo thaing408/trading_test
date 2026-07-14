@@ -129,6 +129,7 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         enforce_fundamental_gate=False,
         allow_b_when_aligned=bool(getattr(cfg, "allow_b_when_aligned", True)),
         export_auto_trade_book=False,
+        enforce_web_methods=bool(getattr(cfg, "enforce_web_methods", False)),
     )
 
 

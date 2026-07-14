@@ -198,20 +198,47 @@ def format_premarket_plays(plan: DailyTradingPlan) -> str:
         lines.append(f"**Top {cap} trade candidates:**")
         for opp in plan.ranked_opportunities[:cap]:
             strikes = ", ".join(f"${s:.2f}" for s in opp.strike_prices)
+            setup_id = getattr(opp, "playbook_setup_id", "") or "n/a"
+            eligible = "YES" if getattr(opp, "auto_trade_eligible", False) else "NO"
+            methods = getattr(opp, "method_tags", None) or []
+            method_s = ", ".join(methods[:5]) if methods else "baseline"
             lines.extend(
                 [
                     f"### #{opp.rank} {opp.symbol} [{getattr(opp, 'setup_grade', 'C')}] — "
                     f"{opp.direction} {opp.strategy}",
+                    f"- **Suggested trade:** {opp.direction} | setup=`{setup_id}` | "
+                    f"auto_trade={eligible}",
                     f"- Grade: {getattr(opp, 'setup_grade', 'C')} "
                     f"({getattr(opp, 'grade_score', 0):.0f}/100) | "
                     f"{getattr(opp, 'hold_style', '') or 'n/a'}",
-                    f"- Thesis: {opp.trade_thesis or 'n/a'}",
-                    f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | Target ${opp.profit_target:.2f}",
+                    f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | "
+                    f"Target ${opp.profit_target:.2f} | Max risk ${opp.maximum_risk:.2f}",
                     f"- Strikes: {strikes} | Exp: {opp.expiration}",
                     f"- Prob {opp.probability_of_success:.0%} | Conf {opp.confidence_score:.0f} | "
-                    f"Quality {opp.trade_quality_score:.0f}/100",
+                    f"Quality {getattr(opp, 'combined_quality_score', opp.trade_quality_score):.0f}/100 | "
+                    f"Fund {getattr(opp, 'fundamental_score', 0):.0f}",
+                    f"- Methods: {method_s}",
+                    f"- Checklist: {getattr(opp, 'checklist_passed', False)} | "
+                    f"Edge: {getattr(opp, 'edge_complete', False)}",
+                    f"- Thesis: {(opp.trade_thesis or 'n/a')[:160]}",
                     f"- Risks: {'; '.join(opp.risks[:3]) if opp.risks else 'standard'}",
                 ]
+            )
+        methods_rs = (plan.research_summary or {}).get("web_methods") or []
+        if methods_rs:
+            lines.append("")
+            lines.append("**Active process methods (research):**")
+            for m in methods_rs[:5]:
+                if isinstance(m, dict):
+                    lines.append(f"- **{m.get('name', m.get('method_id'))}**: {m.get('rule', '')[:120]}")
+                else:
+                    lines.append(f"- {m}")
+        export_info = (plan.research_summary or {}).get("auto_trade_export") or {}
+        if export_info:
+            lines.append("")
+            lines.append(
+                f"**Auto-trade book:** {export_info.get('entry_count', 0)} ENTER row(s) "
+                f"(Windows suggest/export only — Mac TOS executes after git pull)"
             )
         # Approvals and rejections both visible on Discord when opportunities exist
         lines.append("")

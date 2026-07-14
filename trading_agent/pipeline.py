@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
@@ -336,6 +337,24 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         "errors": errors,
     }
 
+    # Attach researched process methods to research summary (fail-open offline)
+    try:
+        from trading_agent.methods.web_methods import methods_as_dict, research_trading_methods
+
+        offline_m = os.getenv("TRADING_AGENT_METHODS_OFFLINE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        research_summary["web_methods"] = methods_as_dict(
+            research_trading_methods(use_network=not offline_m)
+        )
+        research_summary["auto_trade_mode"] = (
+            "suggest_export_discord_only — no broker fills on Windows research host"
+        )
+    except Exception as exc:  # noqa: BLE001
+        research_summary["web_methods_error"] = str(exc)
+
     plan = DailyTradingPlan(
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         overall_market_bias=bias,
@@ -348,7 +367,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         cash_recommendation_reason=cash_reason,
     )
 
-    # Windows research host → Mac TOS: write auto_trade_book.json to sync dir
+    # Windows research host → local auto_trade_book (suggest only; Mac pulls code via git)
     if bool(getattr(config.risk, "export_auto_trade_book", True)):
         try:
             from trading_agent.export.auto_trade_book import export_plan_for_execution
@@ -371,6 +390,8 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             plan.research_summary["auto_trade_export"] = {
                 "entry_count": book.get("entry_count", 0),
                 "paths": book.get("_written_paths", []),
+                "rejected_incomplete": book.get("rejected_incomplete", [])[:10],
+                "broker_boundary": book.get("broker_boundary", ""),
             }
         except Exception as exc:  # noqa: BLE001
             plan.research_summary["auto_trade_export_error"] = str(exc)

@@ -79,23 +79,53 @@ def build_auto_trade_book(
     expires = now.replace(hour=23, minute=59, second=0, microsecond=0).isoformat()
     entries: List[Dict[str, Any]] = []
 
+    rejected_incomplete: List[str] = []
     for opp in plan.ranked_opportunities:
         g = opp.setup_grade or "C"
         if GRADE_RANK.get(g, 99) > min_rank:
             continue
         if require_checklist and not getattr(opp, "checklist_passed", False):
+            rejected_incomplete.append(f"{opp.symbol}:checklist")
             continue
         if require_edge and not getattr(opp, "edge_complete", False):
+            rejected_incomplete.append(f"{opp.symbol}:edge")
+            continue
+        # Fail closed: incomplete risk package never becomes ENTER
+        if not (
+            float(opp.entry_price or 0) > 0
+            and float(opp.stop_loss or 0) > 0
+            and float(opp.profit_target or 0) > 0
+            and float(opp.stop_loss) != float(opp.profit_target)
+            and float(opp.maximum_risk or 0) > 0
+        ):
+            rejected_incomplete.append(f"{opp.symbol}:incomplete_risk_package")
+            continue
+        if getattr(opp, "auto_trade_eligible", True) is False:
+            rejected_incomplete.append(f"{opp.symbol}:not_auto_eligible")
             continue
         fund = float(getattr(opp, "fundamental_score", 0.0) or 0.0)
         if min_fundamental_score > 0 and fund < min_fundamental_score:
+            rejected_incomplete.append(f"{opp.symbol}:fundamentals")
             continue
         qual = float(
             getattr(opp, "combined_quality_score", None) or opp.trade_quality_score or 0.0
         )
         if min_quality_score > 0 and qual < min_quality_score:
+            rejected_incomplete.append(f"{opp.symbol}:quality")
             continue
-        entries.append(_entry_from_opp(opp, expires_at=expires))
+        row = _entry_from_opp(opp, expires_at=expires)
+        # Double-check ENTER payload integrity
+        if not (
+            row["entry"] > 0
+            and row["stop"] > 0
+            and row["target"] > 0
+            and row["max_risk_dollars"] > 0
+        ):
+            rejected_incomplete.append(f"{opp.symbol}:enter_payload")
+            continue
+        row["method_tags"] = list(getattr(opp, "method_tags", None) or [])
+        row["method_notes"] = str(getattr(opp, "method_notes", "") or "")[:240]
+        entries.append(row)
 
     host = source_host or socket.gethostname()
     return {
@@ -112,6 +142,11 @@ def build_auto_trade_book(
         "exits": [],
         "watchlist": list(plan.top_watchlist or []),
         "entry_count": len(entries),
+        "rejected_incomplete": rejected_incomplete[:40],
+        "broker_boundary": (
+            "windows-research-suggest-export-only; "
+            "no TOS order placement on research host"
+        ),
     }
 
 

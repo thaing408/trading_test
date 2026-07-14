@@ -180,6 +180,9 @@ class TradeOpportunity:
     fundamental_summary: str = ""
     combined_quality_score: float = 0.0
     auto_trade_eligible: bool = False
+    # Web/process method tags that supported or rejected the setup
+    method_tags: List[str] = field(default_factory=list)
+    method_notes: str = ""
 
 
 @dataclass

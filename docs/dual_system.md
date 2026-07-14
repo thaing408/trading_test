@@ -91,3 +91,12 @@ The earlier `auto_trade_book.json` export remains optional **local** tooling if 
 - [ ] Work `.env` never committed; home Schwab tokens never on work PC
 - [ ] No `TRADING_AGENT_SYNC_DIR` shared across locations
 - [ ] GitHub repo has code only (no account exports)
+
+## Auto-trade boundary (explicit)
+
+| Host | "Auto trade" means |
+|------|---------------------|
+| **Windows (work)** | Automated **suggest + Discord + local `auto_trade_book.json` export** — **never** places TOS orders |
+| **macOS (home)** | After `git pull` / `pull-and-ready.sh`, human or local MCP executes using **home** TOS only |
+
+Web method research tags process rules (risk package, checklist, HTF, size, expectancy). They influence eligibility on the research host; they are **not** paid signal tips and **not** a profitability guarantee.

@@ -51,6 +51,8 @@ class RiskConfig:
     # Export for Mac TOS execution
     export_auto_trade_book: bool = True
     auto_trade_min_grade: str = "B"
+    # Public web/process method tags influencing tradeability
+    enforce_web_methods: bool = True
     # Book discipline rails (Douglas / Steenbarger / Bellafiore / Shannon)
     require_playbook_checklist: bool = True
     require_edge_package: bool = True
