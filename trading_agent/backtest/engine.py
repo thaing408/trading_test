@@ -116,6 +116,15 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         min_relative_volume=1.5,
         max_bid_ask_spread_pct=3.0,
         min_institutional_score=35.0,
+        # Book discipline (defaults match production; sweep can toggle)
+        require_playbook_checklist=bool(
+            getattr(cfg, "require_playbook_checklist", True)
+        ),
+        require_edge_package=bool(getattr(cfg, "require_edge_package", True)),
+        enforce_mtf_gate=bool(getattr(cfg, "enforce_mtf_gate", True)),
+        enforce_discipline_rails=bool(getattr(cfg, "enforce_discipline_rails", True)),
+        enforce_smb_book_gates=bool(getattr(cfg, "enforce_smb_book_gates", True)),
+        enforce_ta_book_gates=bool(getattr(cfg, "enforce_ta_book_gates", True)),
     )
 
 
@@ -471,7 +480,10 @@ def run_backtest(
 
 
 def default_sweep_configs() -> List[BacktestConfig]:
-    """Configs that must diverge on multi-regime data (including 3 vs 5 book size)."""
+    """Configs that must diverge on multi-regime data (including 3 vs 5 book size).
+
+    Includes book-discipline ON (shipped path) vs OFF ablation and grade books.
+    """
     return [
         BacktestConfig(
             name="baseline_grade_C_book3",
@@ -508,6 +520,36 @@ def default_sweep_configs() -> List[BacktestConfig]:
             min_technical_score=50.0,
             cio_min_confidence=70.0,
             max_trades_per_day=3,
+        ),
+        # Ablation: same as baseline_C but without SMB/Investopedia/playbook/MTF gates
+        BacktestConfig(
+            name="baseline_C_book3_gates_off",
+            min_confidence_score=55.0,
+            min_setup_grade="C",
+            prefer_a_tier_only=False,
+            min_technical_score=40.0,
+            cio_min_confidence=60.0,
+            max_trades_per_day=3,
+            require_playbook_checklist=False,
+            enforce_mtf_gate=False,
+            enforce_smb_book_gates=False,
+            enforce_ta_book_gates=False,
+            enforce_discipline_rails=False,
+        ),
+        # Shipped production-like risk (A-tier only) with full book discipline
+        BacktestConfig(
+            name="shipped_a_tier_full_discipline",
+            min_confidence_score=60.0,
+            min_setup_grade="B",
+            prefer_a_tier_only=True,
+            min_technical_score=45.0,
+            cio_min_confidence=65.0,
+            max_trades_per_day=3,
+            require_playbook_checklist=True,
+            enforce_mtf_gate=True,
+            enforce_smb_book_gates=True,
+            enforce_ta_book_gates=True,
+            enforce_discipline_rails=True,
         ),
     ]
 

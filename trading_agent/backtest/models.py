@@ -23,6 +23,13 @@ class BacktestConfig:
     portfolio_value: float = 100_000.0
     max_trades_per_day: int = 3
     lookback_bars: int = 40  # history window for technicals
+    # Book-discipline gates (SMB / Investopedia TA / playbook / MTF / rails)
+    require_playbook_checklist: bool = True
+    require_edge_package: bool = True
+    enforce_mtf_gate: bool = True
+    enforce_discipline_rails: bool = True
+    enforce_smb_book_gates: bool = True
+    enforce_ta_book_gates: bool = True
 
 
 @dataclass

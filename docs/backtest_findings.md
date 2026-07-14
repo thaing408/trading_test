@@ -1,32 +1,54 @@
 # Offline backtest findings (research + CIO)
 
 ## Method
-- Entry: `python -m trading_agent backtest`
+- Entry: `python -m trading_agent backtest --sweep`
 - Multi-regime synthetic OHLCV (bull / chop / bear / recovery) — deterministic (`adler32` seeds, not `hash()`)
-- Real paths: `evaluate_risk` → `build_opportunities` → CIO `process_all_candidates`
+- Real paths: `evaluate_risk` → `build_opportunities` (book gates) → CIO `process_all_candidates`
 - Fill model: directional stop/target/time; iron condors break on range expansion
 - Risk scaled by shipped `GRADE_TRADE_GEOMETRY` size multipliers
 - Score: expectancy + profit factor + win rate + total P/L − drawdown − churn
 - **Invariants:** `stop_loss` exits never positive for bullish/credit; Bull Put fallback direction is **Bullish**
+- Full report snapshot: `docs/backtest_run_latest.md`
 
-## Sweep results (reproducible offline)
+## Sweep results — post book-discipline (2026-07-14 re-run)
+
+With SMB + Investopedia TA + playbook + MTF + rails **ON** (production path defaults):
+
+| Rank | Config | Trades | Expectancy | Win rate | Max DD | Score |
+|------|--------|--------|------------|----------|--------|-------|
+| **1** | **baseline_grade_C_book3** (gates ON) | **38** | **$414** | **84%** | **$0** | **940** |
+| 1-tie | wide_book5_grade_C / high_confidence_book3 | 38 | $414 | 84% | $0 | 940 |
+| 4 | **baseline_C_book3_gates_off** | 70 | $82 | 57% | **$19.9k** | 120 |
+| 5 | strict_a_tier_book3 (gates ON) | **0** | $0 | 0% | $0 | −8 |
+| 5-tie | shipped_a_tier_full_discipline | **0** | $0 | 0% | $0 | −8 |
+
+### Book-discipline ablation (same grade-C book3)
+| Gates | n | WR | Expectancy | Max DD |
+|-------|---|-----|------------|--------|
+| **ON** (playbook+MTF+SMB+TA+rails) | 38 | **84%** | **$414** | **$0** |
+| OFF | 70 | 57% | $82 | $19.9k |
+
+**Takeaway:** Book gates cut churn and deep DD on this synthetic multi-regime set; quality > quantity.  
+**Caveat:** `prefer_a_tier_only=True` + full gates yields **zero** trades on synthetic bars (A-tier MTF/playbook rarely clears). Shipped defaults still prefer A-tier for live capital preservation; offline best score is grade-C with gates ON.
+
+## Historical sweep (pre book-discipline wiring)
 
 | Rank | Config | Trades | Expectancy | Win rate | Max DD |
 |------|--------|--------|------------|----------|--------|
-| **1** | **strict_a_tier_book3** | 53 | **$349** | **75%** | **$8.1k** |
+| 1 | strict_a_tier_book3 | 53 | $349 | 75% | $8.1k |
 | 2 | baseline_grade_C_book3 | 70 | $82 | 57% | $19.9k |
 | 3 | high_confidence_book3 | 68 | $81 | 57% | $19.6k |
-| 4 | wide_book5_grade_C | 125 | −$4 | 50% | **$41.9k** |
+| 4 | wide_book5_grade_C | 125 | −$4 | 50% | $41.9k |
 
-## Shipped improvements (from winner)
+## Shipped risk defaults (capital preservation; not auto-flipped by latest score)
 1. `RiskConfig.prefer_a_tier_only = True`
 2. `RiskConfig.min_confidence_score = 60.0`
 3. `RiskConfig.min_technical_score = 45.0`
 4. `RiskConfig.min_setup_grade = "B"`
-5. `RiskConfig.top_candidates = 3` (book3 beat book5)
-6. Fills use `GRADE_TRADE_GEOMETRY[*][3]` size
-7. Strategy selector: fallback Bull Put is **Bullish**, not Neutral
-8. Stable seeds via `zlib.adler32` (PYTHONHASHSEED-safe)
+5. `RiskConfig.top_candidates = 3`
+6. Book gates: playbook, edge, MTF, SMB, Investopedia TA, rails (all default ON)
+7. Fills use `GRADE_TRADE_GEOMETRY[*][3]` size
+8. Stable seeds via `zlib.adler32`
 
 ## Caveats
 Underlying-path options proxy, not full chain. Rankings are relative under documented fill assumptions — not a live-profit guarantee.
@@ -54,6 +76,16 @@ Underlying-path options proxy, not full chain. Rankings are relative under docum
 - **WR lift (TOS 10d):** 21.4% → **28.6%** (+7.2pp) with same trade count (14), non-empty sample.
 - Structural-only **hurt** on this longer TOS window (cut winners with whole-$ losers still net worse).
 - Last ~7d of same TOS file: legacy 33.3% (n=3) vs whole+TP15/SL18 **66.7%** (n=3) vs structural-only 100% (n=1 — too thin).
+
+## Yahoo 1m re-run (2026-07-14, period=7d, source=auto→yfinance)
+
+| Rules | Trades | **Win rate** | P/L | Expectancy | Exits |
+|-------|--------|--------------|-----|------------|-------|
+| **Shipped** whole-$ + TP15/SL18 | **12** | **41.7%** | −$102 | −$8.50 | SL7 / TP5 |
+| **Legacy** TP20/SL12.5 | 12 | 16.7% | −$170 | −$14.17 | SL10 / TP2 |
+
+- Shipped bracket still **beats legacy WR** on this window (+25pp) but remains net-negative expectancy under synthetic premium.
+- CALL WR 50% vs PUT WR 33% on shipped rules.
 
 ## Yahoo 1m note (earlier 7d ending ~2026-07-13)
 On a short Yahoo window, structural-only + TP15/SL18 briefly showed **18.2% → 60%** (n=11 → 5). That slice is **not** confirmed on the full TOS 10d sample — TOS is the authoritative broker feed for re-tuning defaults.
