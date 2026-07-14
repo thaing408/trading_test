@@ -7,9 +7,11 @@
 1. **baseline_grade_C_book3** — score 940.37 | P/L $+15,737.04 | exp $+414.13 | WR 84% | n=38 | DD $0.00 | cash 96%
 2. **wide_book5_grade_C** — score 940.37 | P/L $+15,737.04 | exp $+414.13 | WR 84% | n=38 | DD $0.00 | cash 96%
 3. **high_confidence_book3** — score 940.37 | P/L $+15,737.04 | exp $+414.13 | WR 84% | n=38 | DD $0.00 | cash 96%
-4. **baseline_C_book3_gates_off** — score 119.98 | P/L $+5,741.18 | exp $+82.02 | WR 57% | n=70 | DD $19,866.75 | cash 94%
-5. **strict_a_tier_book3** — score -8.00 | P/L $+0.00 | exp $+0.00 | WR 0% | n=0 | DD $0.00 | cash 100%
-6. **shipped_a_tier_full_discipline** — score -8.00 | P/L $+0.00 | exp $+0.00 | WR 0% | n=0 | DD $0.00 | cash 100%
+4. **gates_on_discovery_x3** — score 932.78 | P/L $+18,204.92 | exp $+404.55 | WR 87% | n=45 | DD $0.00 | cash 96%
+5. **baseline_C_book3_gates_off** — score 119.98 | P/L $+5,741.18 | exp $+82.02 | WR 57% | n=70 | DD $19,866.75 | cash 94%
+6. **strict_a_tier_book3** — score -8.00 | P/L $+0.00 | exp $+0.00 | WR 0% | n=0 | DD $0.00 | cash 100%
+7. **shipped_a_tier_full_discipline** — score -8.00 | P/L $+0.00 | exp $+0.00 | WR 0% | n=0 | DD $0.00 | cash 100%
+8. **gates_off_discovery_x3** — score -256.63 | P/L $-5,608.82 | exp $-66.77 | WR 48% | n=84 | DD $31,216.75 | cash 92%
 
 # Backtest Period — baseline_grade_C_book3
 
@@ -257,5 +259,95 @@
 
 ## Sample trades
 - _No trades generated under this config._
+
+---
+# Backtest Period — gates_on_discovery_x3
+
+## Assumptions
+- Fill model: entry at decision close; stop/target or time exit over hold_bars
+- Options P/L via underlying path scaled to risk budget × GRADE_TRADE_GEOMETRY size
+- Multi-regime synthetic OHLCV (bull/chop/bear/recovery) — deterministic, offline
+- News/calendar thinned; research risk+ranking+CIO is the measured core
+- Neutral strategies lose on range breaks; directional hit stops in counter-trend
+
+## Config
+- min_confidence_score: 55.0
+- min_setup_grade: C
+- prefer_a_tier_only: False
+- min_technical_score: 40.0
+- cio_min_confidence: 60.0
+- hold_bars: 5
+- max_trades_per_day: 3
+
+## Period metrics
+- **Total P/L:** $+18,204.92
+- **Expectancy:** $+404.55 / trade
+- **Win rate:** 86.7% (39W / 6L)
+- **Trade count:** 45
+- **Profit factor:** 6.63
+- **Max drawdown:** $0.00
+- **Avg cash %:** 95.9%
+- **Days simulated:** 55
+- **Symbols:** NVDA,AMD,AAPL,MSFT,SPY,QQQ,TSLA,META,AMZN,JPM
+- **Score:** 932.78
+
+## Sample trades
+- AMD Covered Call [B] entry=96.49 exit=97.44 (time_exit) P/L=$+194.47
+- AMD Covered Call [B] entry=96.49 exit=97.44 (time_exit) P/L=$+194.47
+- AMD Covered Call [B] entry=96.49 exit=97.44 (time_exit) P/L=$+194.47
+- AMD Covered Call [B] entry=96.12 exit=98.49 (time_exit) P/L=$+495.56
+- AMD Covered Call [B] entry=96.12 exit=98.49 (time_exit) P/L=$+495.56
+- AMD Covered Call [B] entry=96.12 exit=98.49 (time_exit) P/L=$+495.56
+- AMD Covered Call [B] entry=97.38 exit=98.69 (time_exit) P/L=$+328.35
+- AMD Covered Call [B] entry=97.38 exit=98.69 (time_exit) P/L=$+328.35
+- AMD Covered Call [B] entry=97.38 exit=98.69 (time_exit) P/L=$+328.35
+- TSLA Covered Call [B] entry=139.43 exit=142.16 (time_exit) P/L=$+431.12
+- AMD Covered Call [B] entry=97.08 exit=99.82 (time_exit) P/L=$+709.76
+- TSLA Covered Call [B] entry=139.43 exit=142.16 (time_exit) P/L=$+431.12
+
+---
+# Backtest Period — gates_off_discovery_x3
+
+## Assumptions
+- Fill model: entry at decision close; stop/target or time exit over hold_bars
+- Options P/L via underlying path scaled to risk budget × GRADE_TRADE_GEOMETRY size
+- Multi-regime synthetic OHLCV (bull/chop/bear/recovery) — deterministic, offline
+- News/calendar thinned; research risk+ranking+CIO is the measured core
+- Neutral strategies lose on range breaks; directional hit stops in counter-trend
+
+## Config
+- min_confidence_score: 55.0
+- min_setup_grade: C
+- prefer_a_tier_only: False
+- min_technical_score: 40.0
+- cio_min_confidence: 60.0
+- hold_bars: 5
+- max_trades_per_day: 3
+
+## Period metrics
+- **Total P/L:** $-5,608.82
+- **Expectancy:** $-66.77 / trade
+- **Win rate:** 47.6% (40W / 44L)
+- **Trade count:** 84
+- **Profit factor:** 0.84
+- **Max drawdown:** $31,216.75
+- **Avg cash %:** 92.4%
+- **Days simulated:** 55
+- **Symbols:** NVDA,AMD,AAPL,MSFT,SPY,QQQ,TSLA,META,AMZN,JPM
+- **Score:** -256.63
+
+## Sample trades
+- AMD Iron Condor [A+] entry=96.48 exit=86.74 (range_break) P/L=$-1100.00
+- NVDA Iron Condor [B] entry=80.01 exit=75.52 (range_break) P/L=$-750.00
+- AMD Iron Condor [A+] entry=96.48 exit=86.74 (range_break) P/L=$-1100.00
+- AMZN Iron Condor [B] entry=183.49 exit=173.67 (range_break) P/L=$-750.00
+- AMZN Iron Condor [B] entry=183.49 exit=173.67 (range_break) P/L=$-750.00
+- AMZN Iron Condor [B] entry=183.49 exit=173.67 (range_break) P/L=$-750.00
+- NVDA Iron Condor [B] entry=79.62 exit=75.11 (range_break) P/L=$-750.00
+- NVDA Iron Condor [B] entry=79.62 exit=75.11 (range_break) P/L=$-750.00
+- NVDA Iron Condor [B] entry=79.62 exit=75.11 (range_break) P/L=$-750.00
+- AAPL Iron Condor [A] entry=225.06 exit=212.50 (range_break) P/L=$-1000.00
+- MSFT Iron Condor [A] entry=225.90 exit=211.45 (range_break) P/L=$-1000.00
+- AAPL Iron Condor [A] entry=225.06 exit=212.50 (range_break) P/L=$-1000.00
 
 ---

@@ -200,6 +200,8 @@ def _research_day(
     day_idx: int,
     cfg: BacktestConfig,
     symbols: Sequence[str],
+    *,
+    session_state: object | None = None,
 ) -> Tuple[List[TradeOpportunity], int, int]:
     spy = ohlcv.get("SPY") or ohlcv.get(symbols[0], {})
     spy_closes = list(spy.get("close") or [])
@@ -213,7 +215,12 @@ def _research_day(
 
     risk = _risk_from_bt(cfg)
     qualified, _rejected = evaluate_risk(analyzed, risk)
-    opps = build_opportunities(qualified, risk, max_count=cfg.max_trades_per_day)
+    opps = build_opportunities(
+        qualified,
+        risk,
+        max_count=cfg.max_trades_per_day,
+        session_state=session_state,
+    )
     return opps, len(analyzed), len(qualified)
 
 
@@ -400,6 +407,8 @@ def run_backtest(
     ohlcv: Dict[str, dict] | None = None,
     symbols: Sequence[str] | None = None,
 ) -> BacktestPeriodResult:
+    from trading_agent.discipline.rails import session_state_from_risk_config
+
     data = ohlcv or load_fixture_ohlcv()
     preferred = ["NVDA", "AMD", "AAPL", "MSFT", "SPY", "QQQ", "TSLA", "META", "AMZN", "JPM"]
     syms = list(symbols or [s for s in preferred if s in data] or list(data.keys())[:10])
@@ -415,18 +424,47 @@ def run_backtest(
     equity = cfg.portfolio_value
     curve = [equity]
     cash_samples: List[float] = []
+    # discovery_passes simulates morning + PST refresh slots (07:00 / 09:30 / 11:00)
+    n_passes = max(1, int(getattr(cfg, "discovery_passes", 1) or 1))
 
     for day_idx in range(start, max(start + 1, end + 1)):
-        opps, screened, qualified = _research_day(data, day_idx, cfg, syms)
+        risk = _risk_from_bt(cfg)
+        session_state = session_state_from_risk_config(risk)
         env = _env_score_for_day(day_idx, n_bars)
-        approved_opps = _cio_filter(opps, cfg, env_score=env)
         day_trades: List[SimulatedTrade] = []
-        for opp in approved_opps[: cfg.max_trades_per_day]:
-            t = _simulate_trade(opp, data, day_idx, cfg)
-            if t:
+        screened_total = 0
+        opp_total = 0
+        approved_total = 0
+        qualified_last = 0
+
+        for pass_i in range(n_passes):
+            opps, screened, qualified = _research_day(
+                data, day_idx, cfg, syms, session_state=session_state
+            )
+            screened_total = max(screened_total, screened)
+            qualified_last = qualified
+            opp_total += len(opps)
+            approved_opps = _cio_filter(opps, cfg, env_score=env)
+            approved_total += len(approved_opps)
+            # Remaining book slots for this calendar day
+            remaining = max(0, cfg.max_trades_per_day - len(day_trades))
+            for opp in approved_opps[:remaining]:
+                t = _simulate_trade(opp, data, day_idx, cfg)
+                if not t:
+                    continue
                 day_trades.append(t)
                 all_trades.append(t)
                 equity += t.profit_loss
+                # Claim concurrent risk so later discovery passes see open book
+                try:
+                    unit = float(cfg.risk_per_trade_pct) * _geometry_size(t.grade)
+                    session_state.record_open(t.symbol, min(unit, risk.max_risk_per_trade_pct))
+                    if t.exit_reason == "stop_loss":
+                        session_state.record_stop_out(t.symbol)
+                        session_state.record_close(t.symbol, min(unit, risk.max_risk_per_trade_pct))
+                except Exception:
+                    pass
+
         day_pnl = sum(t.profit_loss for t in day_trades)
         used = len(day_trades) * cfg.risk_per_trade_pct * 5
         cash_pct = max(0.0, 100.0 - used)
@@ -435,13 +473,16 @@ def run_backtest(
         days.append(
             DayResult(
                 day_index=day_idx,
-                candidates_screened=screened,
-                research_opportunities=len(opps),
-                cio_approved=len(approved_opps),
+                candidates_screened=screened_total,
+                research_opportunities=opp_total,
+                cio_approved=approved_total,
                 trades=day_trades,
                 day_pnl=round(day_pnl, 2),
                 cash_pct=cash_pct,
-                notes=f"qualified={qualified};env={env:.0f}",
+                notes=(
+                    f"qualified={qualified_last};env={env:.0f};"
+                    f"discovery_passes={n_passes}"
+                ),
             )
         )
 
@@ -550,6 +591,38 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_smb_book_gates=True,
             enforce_ta_book_gates=True,
             enforce_discipline_rails=True,
+        ),
+        # New methods: full book gates + 3 discovery passes (simulates 07:00/09:30/11:00 PT)
+        BacktestConfig(
+            name="gates_on_discovery_x3",
+            min_confidence_score=55.0,
+            min_setup_grade="C",
+            prefer_a_tier_only=False,
+            min_technical_score=40.0,
+            cio_min_confidence=60.0,
+            max_trades_per_day=3,
+            require_playbook_checklist=True,
+            enforce_mtf_gate=True,
+            enforce_smb_book_gates=True,
+            enforce_ta_book_gates=True,
+            enforce_discipline_rails=True,
+            discovery_passes=3,
+        ),
+        # Discovery without book gates (more churn baseline)
+        BacktestConfig(
+            name="gates_off_discovery_x3",
+            min_confidence_score=55.0,
+            min_setup_grade="C",
+            prefer_a_tier_only=False,
+            min_technical_score=40.0,
+            cio_min_confidence=60.0,
+            max_trades_per_day=3,
+            require_playbook_checklist=False,
+            enforce_mtf_gate=False,
+            enforce_smb_book_gates=False,
+            enforce_ta_book_gates=False,
+            enforce_discipline_rails=False,
+            discovery_passes=3,
         ),
     ]
 

@@ -49,8 +49,20 @@ Light rescreen during RTH (not continuous full research):
 | 11:00 | 14:00 | Afternoon |
 
 - Module: `session/discovery.py`; wired into desk intraday loop.
-- Offline multi-regime WR **unchanged** by discovery schedule (still synthetic day path).
 - Disable: `TRADING_AGENT_DISCOVERY_REFRESH=0`
+
+### Offline multi-pass discovery backtest (simulates 3 PT refresh slots)
+
+`discovery_passes=3` re-researches each synthetic bar-day with rails/`record_open` across passes:
+
+| Config | n | WR | Expectancy | Max DD | Score |
+|--------|---|-----|------------|--------|-------|
+| baseline_C gates ON (1 pass) | 38 | 84% | $414 | $0 | **940** |
+| **gates_on_discovery_x3** | **45** | **87%** | **$405** | **$0** | **933** |
+| gates_off (1 pass) | 70 | 57% | $82 | $19.9k | 120 |
+| **gates_off_discovery_x3** | 84 | **48%** | **−$67** | **$31.2k** | −257 |
+
+**Takeaway:** Discovery multi-pass **with gates** adds a few trades and holds high WR (~87%). Discovery **without gates** adds churn and **hurts** WR/P/L. New methods help only when quality filters stay on.
 
 ## Historical sweep (pre book-discipline wiring)
 
