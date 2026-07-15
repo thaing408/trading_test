@@ -39,6 +39,22 @@ set TRADING_AGENT_STRENGTH_MODE=soft
 ## Parallel fetch
 `ScreenerConfig.fetch_workers` (default 6) for live Yahoo multi-symbol scan.
 
+## Pulse market scan (macOS scalp pulse)
+
+`python -m trading_agent.export.market_scan` ranks the **same screener universe**
+by day % change (gainers/losers). `~/.grok/scripts/scalp-market-pulse.py` calls
+this first so Discord pulse is code-universe driven, not a fixed AAPL/AMZN/QQQ/SPY loop.
+
+```bash
+# Full expanded universe top 8
+python -m trading_agent.export.market_scan --top 8
+
+# Cap symbols for speed
+TRADING_AGENT_SCAN_MAX_SYMBOLS=40 python -m trading_agent.export.market_scan --json
+```
+
+Level proximity spam on pulse is separate (`SCALP_LEVEL_ALERTS=breaks|off`).
+
 ## Intraday discovery refresh (Pacific Time)
 
 Morning research/CIO still builds the day plan once. During RTH the desk also runs
