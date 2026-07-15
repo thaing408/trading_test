@@ -38,6 +38,13 @@ class OpenPosition:
     trailing_stop_pct: float = 2.0
     max_risk_dollars: float = 500.0
     pending_entry: bool = False
+    # Brandt LFD / TechCharts structure (from plan handoff; optional)
+    direction: str = ""
+    lfd_level: float = 0.0
+    breakout_level: float = 0.0
+    negation_level: float = 0.0
+    measured_target: float = 0.0
+    breakout_type: str = ""
 
 
 @dataclass

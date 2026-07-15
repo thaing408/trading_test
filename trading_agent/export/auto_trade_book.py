@@ -58,6 +58,17 @@ def _entry_from_opp(opp: TradeOpportunity, *, expires_at: str) -> Dict[str, Any]
         "thesis": (opp.trade_thesis or "")[:400],
         "expires_at": expires_at,
         "notes": (getattr(opp, "checklist_summary", "") or "")[:240],
+        # Brandt LFD / TechCharts structure (prefer over hardcoded %)
+        "stop_basis": str(getattr(opp, "stop_basis", "") or ""),
+        "target_basis": str(getattr(opp, "target_basis", "") or ""),
+        "geometry_source": str(getattr(opp, "geometry_source", "") or ""),
+        "risk_policy": str(getattr(opp, "risk_policy", "") or ""),
+        "lfd_level": float(getattr(opp, "lfd_level", 0) or 0),
+        "breakout_level": float(getattr(opp, "breakout_level", 0) or 0),
+        "negation_level": float(getattr(opp, "negation_level", 0) or 0),
+        "measured_target": float(getattr(opp, "measured_target", 0) or 0),
+        "pattern_height": float(getattr(opp, "pattern_height", 0) or 0),
+        "structure_notes": str(getattr(opp, "structure_notes", "") or "")[:240],
     }
 
 
@@ -99,6 +110,20 @@ def build_auto_trade_book(
             and float(opp.maximum_risk or 0) > 0
         ):
             rejected_incomplete.append(f"{opp.symbol}:incomplete_risk_package")
+            continue
+        # Prefer structure-backed stops for auto ENTER (LFD/negation/S-R, not pure ATR %)
+        basis = str(getattr(opp, "stop_basis", "") or "").lower()
+        geom = str(getattr(opp, "geometry_source", "") or "").lower()
+        # Optional hard gate: set TRADING_AGENT_REQUIRE_STRUCTURE_STOP=1 to reject pure ATR %
+        require_structure = os.getenv("TRADING_AGENT_REQUIRE_STRUCTURE_STOP", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if require_structure and basis in ("", "atr") and (
+            not getattr(opp, "lfd_level", 0) and not getattr(opp, "breakout_level", 0)
+        ):
+            rejected_incomplete.append(f"{opp.symbol}:no_structure_stop")
             continue
         if getattr(opp, "auto_trade_eligible", True) is False:
             rejected_incomplete.append(f"{opp.symbol}:not_auto_eligible")

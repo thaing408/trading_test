@@ -77,11 +77,42 @@ def _trade_params(
     stop_atr_mult: float = 1.0,
     target_atr_mult: float = 1.5,
     size_multiplier: float = 1.0,
+    risk_policy: str | None = None,
 ) -> dict:
-    """PT/SL from ATR × grade multipliers; risk/reward scaled by strategy + grade size."""
+    """PT/SL from Brandt LFD + structure (measured move); ATR only as buffer/fallback.
+
+    Prefer Last Full Day / S-R pattern geometry over hardcoded % of price.
+    Grade multipliers scale buffer ambition and size, not a pure % stop.
+    """
+    from trading_agent.analysis.lfd_breakout import RiskPolicy, structure_package_for_setup
+
     atr = technical.atr or price * 0.02
     risk_unit = max(price * 0.02, atr)
-    # Institutional floor: CIO min R:R is typically 2:1 — size reward leg accordingly
+    policy_raw = (risk_policy or os.getenv("TRADING_AGENT_RISK_POLICY", "hybrid") or "hybrid").strip()
+    try:
+        policy = RiskPolicy(policy_raw)
+    except ValueError:
+        policy = RiskPolicy.HYBRID
+
+    # Neutral / range strategies: still structure-aware but keep defined-risk $ bands
+    direction = strategy.direction or "Bullish"
+    pkg = structure_package_for_setup(
+        price=price,
+        direction=direction,
+        support=float(technical.support or 0.0),
+        resistance=float(technical.resistance or 0.0),
+        atr=float(atr),
+        breakout_state=str(technical.breakout_state or "none"),
+        risk_policy=policy,
+        stop_atr_mult=stop_atr_mult,
+        target_atr_mult=target_atr_mult,
+        size_multiplier=size_multiplier,
+        min_risk_reward=1.5,
+    )
+    stop_loss = pkg.stop_loss
+    profit_target = pkg.profit_target
+
+    # Strategy-class dollar risk envelope (options defined-risk book)
     if strategy.name in ("Iron Condor", "Bull Put Credit Spread", "Bear Call Credit Spread"):
         max_risk = round(risk_unit * 1.5 * size_multiplier, 2)
         max_reward = round(risk_unit * 3.0 * max(size_multiplier, 0.5), 2)
@@ -95,15 +126,16 @@ def _trade_params(
         max_risk = round(risk_unit * size_multiplier, 2)
         max_reward = round(risk_unit * 2.2 * max(target_atr_mult / 1.5, 0.5), 2)
     else:
-        max_risk = round(risk_unit * size_multiplier, 2)
-        max_reward = round(risk_unit * 2.0 * max(target_atr_mult / 1.5, 0.5), 2)
+        # Geometric structure risk when directional outright
+        max_risk = round(max(pkg.maximum_risk, risk_unit * size_multiplier), 2)
+        max_reward = round(max(pkg.maximum_reward, risk_unit * max(pkg.risk_reward, 1.5)), 2)
 
-    if strategy.direction == "Bearish":
-        profit_target = round(price - atr * target_atr_mult, 2)
-        stop_loss = round(price + atr * stop_atr_mult, 2)
-    else:
-        profit_target = round(price + atr * target_atr_mult, 2)
-        stop_loss = round(price - atr * stop_atr_mult, 2)
+    # Keep R:R coherent with structure points when dollar bands dominate
+    risk_pts = abs(pkg.entry_price - stop_loss)
+    reward_pts = abs(profit_target - pkg.entry_price)
+    if risk_pts > 0 and max_risk > 0 and reward_pts > 0:
+        rr = reward_pts / risk_pts
+        max_reward = max(max_reward, round(max_risk * rr, 2))
 
     return {
         "entry_price": round(price, 2),
@@ -114,6 +146,17 @@ def _trade_params(
         "probability_of_success": options.probability_of_profit,
         "stop_atr_mult": stop_atr_mult,
         "target_atr_mult": target_atr_mult,
+        "stop_basis": pkg.stop_basis,
+        "target_basis": pkg.target_basis,
+        "geometry_source": pkg.geometry_source,
+        "risk_policy": pkg.risk_policy,
+        "lfd_level": pkg.structure.lfd_level,
+        "breakout_level": pkg.structure.breakout_level,
+        "negation_level": pkg.structure.negation_level,
+        "measured_target": pkg.structure.measured_target,
+        "pattern_height": pkg.structure.pattern_height,
+        "structure_notes": "; ".join(pkg.notes)[:240],
+        "structure_rr": pkg.risk_reward,
     }
 
 
@@ -508,6 +551,15 @@ def build_opportunities(
                 "proposed_risk_pct": proposed_risk_pct,
                 "max_risk_per_trade_pct": float(risk_config.max_risk_per_trade_pct),
                 "strict_events": True,
+                "stop_basis": params.get("stop_basis"),
+                "lfd_level": params.get("lfd_level"),
+                "breakout_level": params.get("breakout_level"),
+                "negation_level": params.get("negation_level"),
+                "geometry_source": params.get("geometry_source"),
+                "require_structure_stop": os.getenv(
+                    "TRADING_AGENT_REQUIRE_STRUCTURE_STOP", "0"
+                ).strip().lower()
+                in ("1", "true", "yes"),
             }
             meval = evaluate_methods_for_setup(methods_list, mctx)
             method_tags = list(meval.get("method_ids_ok") or [])
@@ -689,8 +741,13 @@ def build_opportunities(
             f"SMB books: {row.get('smb_summary') or 'n/a'}",
             f"Investopedia TA books: {row.get('ta_summary') or 'n/a'}",
             f"Hold style: {grade_result.hold_style}",
-            f"PT/SL geometry: target {grade_result.target_atr_mult}×ATR, "
-            f"stop {grade_result.stop_atr_mult}×ATR",
+            f"PT/SL structure: stop@{params.get('stop_basis') or 'n/a'} "
+            f"({params.get('geometry_source') or 'n/a'}), "
+            f"target@{params.get('target_basis') or 'n/a'}; "
+            f"LFD={params.get('lfd_level')}, breakout={params.get('breakout_level')}, "
+            f"negation={params.get('negation_level')}, measured={params.get('measured_target')}; "
+            f"grade ATR mults stop×{grade_result.stop_atr_mult}/target×{grade_result.target_atr_mult} "
+            f"(buffer only)",
             f"Multi-timeframe: {tf_summary} (alignment: {technical.timeframe_alignment})",
             f"EMAs 9/20/50/200: {technical.ema_9:.2f}/{technical.ema_20:.2f}/"
             f"{technical.ema_50:.2f}/{technical.ema_200:.2f}; MA={technical.ma_alignment}",
@@ -761,6 +818,16 @@ def build_opportunities(
                 expiration_days=int(row.get("expiration_days") or 0),
                 defined_risk=bool(row.get("defined_risk", True)),
                 options_method_notes=str(row.get("options_method_notes") or ""),
+                stop_basis=str(params.get("stop_basis") or ""),
+                target_basis=str(params.get("target_basis") or ""),
+                geometry_source=str(params.get("geometry_source") or ""),
+                risk_policy=str(params.get("risk_policy") or ""),
+                lfd_level=float(params.get("lfd_level") or 0.0),
+                breakout_level=float(params.get("breakout_level") or 0.0),
+                negation_level=float(params.get("negation_level") or 0.0),
+                measured_target=float(params.get("measured_target") or 0.0),
+                pattern_height=float(params.get("pattern_height") or 0.0),
+                structure_notes=str(params.get("structure_notes") or ""),
             )
         )
 

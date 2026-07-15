@@ -1,5 +1,11 @@
 """Technical and options analysis modules."""
 
+from .lfd_breakout import (
+    BreakoutType,
+    RiskPolicy,
+    classify_breakout_path,
+    structure_package_for_setup,
+)
 from .options import compute_options_metrics
 from .patterns import detect_all_patterns, detect_candlestick_patterns, detect_institutional_pa
 from .strength import evaluate_premarket_gates, evaluate_strength_gates
@@ -13,4 +19,8 @@ __all__ = [
     "detect_all_patterns",
     "detect_candlestick_patterns",
     "detect_institutional_pa",
+    "BreakoutType",
+    "RiskPolicy",
+    "classify_breakout_path",
+    "structure_package_for_setup",
 ]

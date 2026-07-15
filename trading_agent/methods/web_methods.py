@@ -74,6 +74,13 @@ BASELINE_METHODS: tuple[MethodTag, ...] = (
         1.0,
     ),
     MethodTag(
+        "lfd_structure_stop",
+        "Last Full Day / structure stop",
+        "After breakout, place initial risk at Last Full Day (Brandt) and classify path Type 1–4; prefer structure stops over fixed %",
+        "baseline:brand_lfd_techcharts",
+        1.15,
+    ),
+    MethodTag(
         "event_risk",
         "Event risk filter",
         "Reduce or skip new risk into binary events (earnings) without an explicit plan",
@@ -258,6 +265,25 @@ def evaluate_methods_for_setup(
                 if risk_pts > 0 and reward_pts / risk_pts < 1.0:
                     ok = False
                     reason = "R:R below 1.0"
+        elif mid == "lfd_structure_stop":
+            # Prefer structure-backed stops (LFD / negation / S-R); soft-fail pure ATR %
+            basis = str(context.get("stop_basis") or "").lower()
+            lfd_lvl = float(context.get("lfd_level") or 0)
+            brk_lvl = float(context.get("breakout_level") or 0)
+            if entry > 0 and stop > 0:
+                if basis in ("lfd", "negation", "support", "resistance"):
+                    ok = True
+                elif lfd_lvl > 0 or brk_lvl > 0:
+                    ok = True
+                elif basis in ("atr", "") and not lfd_lvl and not brk_lvl:
+                    ok = False
+                    reason = "stop not structure-backed (no LFD/breakout levels)"
+                    # Soft by default — critical only when auto path requires structure
+                    if context.get("require_structure_stop"):
+                        critical_fail = True
+            else:
+                ok = False
+                reason = "missing entry/stop for structure package"
         if ok:
             applied.append(mid)
         else:

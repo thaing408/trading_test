@@ -191,6 +191,18 @@ class TradeOpportunity:
     expiration_days: int = 0
     defined_risk: bool = True
     options_method_notes: str = ""
+    # Brandt LFD / TechCharts structure geometry (prefer over hardcoded %)
+    stop_basis: str = ""  # lfd | negation | support | resistance | atr
+    target_basis: str = ""  # measured_move | resistance | support | atr
+    geometry_source: str = ""  # structure_lfd | structure_negation | hybrid | atr_blend
+    risk_policy: str = ""  # lfd_tight | negation_structure | hybrid
+    lfd_level: float = 0.0
+    breakout_level: float = 0.0
+    negation_level: float = 0.0
+    measured_target: float = 0.0
+    pattern_height: float = 0.0
+    structure_notes: str = ""
+    breakout_type: str = ""  # type_1_momentum … type_4_failed | unknown (live path)
 
 
 @dataclass

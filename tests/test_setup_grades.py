@@ -216,12 +216,15 @@ def test_grade_geometry_applied_to_pt_sl():
     opps = build_opportunities([(c, ta, o)], _opp_risk())
     assert opps
     opp = opps[0]
-    # Stop and target must reflect grade ATR mults (direction bullish)
+    # Structure-first PT/SL (Brandt LFD / measured move); grade ATR mults are buffer/ambition only
     atr = opp.technical.atr or 1.0
-    expected_tgt = round(opp.entry_price + atr * grade.target_atr_mult, 2)
-    expected_stop = round(opp.entry_price - atr * grade.stop_atr_mult, 2)
-    # Re-assign grade on built opp path should match geometry class
     assert opp.setup_grade in GRADE_TRADE_GEOMETRY
-    stop_m, tgt_m, _, _ = GRADE_TRADE_GEOMETRY[opp.setup_grade]
-    assert abs((opp.profit_target - opp.entry_price) / atr - tgt_m) < 0.15
-    assert abs((opp.entry_price - opp.stop_loss) / atr - stop_m) < 0.15
+    assert opp.stop_loss < opp.entry_price < opp.profit_target
+    assert opp.stop_basis in ("lfd", "negation", "support", "resistance", "atr")
+    assert opp.geometry_source
+    # Risk/reward must remain coherent; stop distance not zero
+    assert (opp.entry_price - opp.stop_loss) >= atr * 0.25
+    assert (opp.profit_target - opp.entry_price) >= atr * 0.5
+    # A-tier still more ambitious than C when both structure-backed
+    if opp.setup_grade in ("A+", "A"):
+        assert opp.profit_target >= opp.entry_price + atr * 1.0
