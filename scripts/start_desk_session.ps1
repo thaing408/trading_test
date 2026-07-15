@@ -1,4 +1,4 @@
-# Start PST trading desk: git pull, install deps, run prep session (phases 1-4 by default).
+﻿# Start PST trading desk: git pull, install deps, run prep session (phases 1-4 by default).
 # Designed for Windows Task Scheduler (Mon-Fri 01:55 AM Pacific).
 
 $ErrorActionPreference = "Continue"
@@ -54,7 +54,7 @@ public static extern uint SetThreadExecutionState(uint esFlags);
 function Disable-DeskAwake {
     try {
         if ("TradingAgent.Native" -as [type]) {
-            # ES_CONTINUOUS only — clear previous request
+            # ES_CONTINUOUS only - clear previous request
             [void][TradingAgent.Native]::SetThreadExecutionState([uint32]0x80000000)
         }
     } catch { }
@@ -153,7 +153,7 @@ $sessionLog = Join-Path $logDir "desk_$dateArg.log"
 if (Test-Path $lockFile) {
     $lockAge = (Get-Date) - (Get-Item $lockFile).LastWriteTime
     if ($lockAge.TotalHours -lt 14) {
-        Write-Log "Desk lock present ($([int]$lockAge.TotalMinutes)m old) — another session may still be running. Exiting."
+        Write-Log "Desk lock present ($([int]$lockAge.TotalMinutes)m old) - another session may still be running. Exiting."
         exit 0
     }
     Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
@@ -214,15 +214,10 @@ try {
         Write-Log "WARN: pip install did not succeed after 3 attempts (continuing with existing install)"
     }
 
+    # Single-line -c avoids PowerShell here-string parse failures under Task Scheduler / PS 5.1.
     Invoke-LoggedCommand "Preflight: import trading_agent + UTF-8 smoke test ..." {
-        & $Python -c @"
-import os
-os.environ.setdefault('PYTHONUTF8', '1')
-from trading_agent.runtime.stdio import configure_stdio, safe_print
-configure_stdio()
-safe_print('Phase scope: intelligence -> cio_review (smoke)')
-import trading_agent  # noqa: F401
-"@
+        $pySmoke = "import os; os.environ.setdefault('PYTHONUTF8','1'); from trading_agent.runtime.stdio import configure_stdio, safe_print; configure_stdio(); safe_print('Phase scope: intelligence to cio_review (smoke)'); import trading_agent"
+        & $Python -c $pySmoke
     } -Critical | Out-Null
 
     # Full weekday desk by default: intelligence through CIO daily review (incl. intraday
