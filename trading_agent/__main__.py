@@ -156,6 +156,36 @@ def _run_odte(args: argparse.Namespace) -> int:
     return 0 if not brief.errors or brief.levels.last > 0 else 1
 
 
+def _run_qt(args: argparse.Namespace) -> int:
+    from trading_agent.qt.model import (
+        QtModelConfig,
+        export_qt_auto_trade_book,
+        format_qt_brief,
+        run_qt_model,
+    )
+
+    symbols = [s.upper() for s in (args.symbols or ["QQQ", "SPY", "IWM"])]
+    rr = float(getattr(args, "rr", 2.0) or 2.0)
+    texts: list[str] = []
+    for sym in symbols:
+        cfg = QtModelConfig(symbol=sym, rr_default=rr)
+        brief = run_qt_model(sym, cfg=cfg)
+        texts.append(format_qt_brief(brief))
+    text = "\n\n".join(texts)
+    if getattr(args, "export", False):
+        book = export_qt_auto_trade_book(symbols)
+        text += (
+            f"\n\n# Auto-trade export\n"
+            f"entries={book.get('entry_count')} stay_in_cash={book.get('stay_in_cash')}\n"
+            f"paths={book.get('_written_paths')}\n"
+        )
+    print(text)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    return 0
+
+
 def _run_backtest(args: argparse.Namespace) -> int:
     from trading_agent.backtest.engine import default_sweep_configs, run_backtest, run_config_sweep
     from trading_agent.backtest.report import render_comparison, render_period_report
@@ -419,6 +449,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     odte.add_argument("--output", "-o", metavar="FILE", help="Write brief/report to file")
 
+    qt = subparsers.add_parser(
+        "qt",
+        help="QT open-window mech model (9:30–9:50 ET PO3+CISD proxies → auto-trade book)",
+    )
+    qt.add_argument(
+        "--symbol",
+        action="append",
+        dest="symbols",
+        help="Symbol to scan (repeatable). Default: QQQ,SPY,IWM",
+    )
+    qt.add_argument(
+        "--export",
+        action="store_true",
+        help="Write qt_auto_trade_book.json for Mac/ENTER handoff",
+    )
+    qt.add_argument("--rr", type=float, default=2.0, help="Risk-reward multiple (1.5–2.5)")
+    qt.add_argument("--output", "-o", metavar="FILE", help="Write brief to file")
+
     backtest = subparsers.add_parser(
         "backtest",
         help="Offline multi-day research+CIO backtest and config comparison",
@@ -452,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_backtest(args)
     if args.command == "odte":
         return _run_odte(args)
+    if args.command == "qt":
+        return _run_qt(args)
     if args.command == "premarket":
         return _run_premarket(args)
 
