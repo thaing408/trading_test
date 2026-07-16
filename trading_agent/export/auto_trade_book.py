@@ -150,6 +150,36 @@ def build_auto_trade_book(
             continue
         row["method_tags"] = list(getattr(opp, "method_tags", None) or [])
         row["method_notes"] = str(getattr(opp, "method_notes", "") or "")[:240]
+        # Researcher gap screener handoff (Raschke 4-day unfilled → continuation)
+        try:
+            from trading_agent.export.gap_book import apply_gap_boost_to_opportunity_fields, load_gap_book
+
+            gap_book = load_gap_book()
+            tags, _, gap_note = apply_gap_boost_to_opportunity_fields(
+                symbol=opp.symbol,
+                method_tags=row["method_tags"],
+                auto_trade_eligible=bool(getattr(opp, "auto_trade_eligible", False)),
+                book=gap_book,
+            )
+            row["method_tags"] = tags
+            if gap_note:
+                row["gap_screener"] = gap_note
+                row["method_notes"] = (row["method_notes"] + "; " + gap_note).strip("; ")[:240]
+            # Optional: require continuation tag for ENTER when env set
+            require_gap = os.getenv("TRADING_AGENT_REQUIRE_GAP_CONTINUATION", "0").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if require_gap and "gap_continuation_4d" not in tags:
+                rejected_incomplete.append(f"{opp.symbol}:not_gap_continuation")
+                continue
+            # Soft prefer: bump quality metadata for ranking on Mac side
+            if "gap_continuation_4d" in tags:
+                row["gap_continuation"] = True
+                row["priority_boost"] = float(row.get("priority_boost") or 0) + 10.0
+        except Exception:
+            pass
         # Options package for Mac TOS execution
         row["instrument"] = "options"
         row["options_strategy_class"] = str(

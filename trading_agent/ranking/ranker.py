@@ -624,6 +624,23 @@ def build_opportunities(
                     )
                 continue
 
+        # Researcher gap screener (Raschke 4-day unfilled continuation) — always soft-apply
+        try:
+            from trading_agent.export.gap_book import apply_gap_boost_to_opportunity_fields
+
+            method_tags, _, gap_note = apply_gap_boost_to_opportunity_fields(
+                symbol=candidate.symbol,
+                method_tags=method_tags,
+                auto_trade_eligible=True,
+            )
+            if gap_note:
+                method_notes = (method_notes + "; " + gap_note).strip("; ")[:240]
+                if "gap_continuation_4d" in method_tags:
+                    quality = min(100.0, float(quality) + 5.0)
+                    confidence = min(100.0, float(confidence) + 3.0)
+        except Exception:
+            pass
+
         auto_eligible = (
             grade_result.grade in ("A+", "A")
             or (
