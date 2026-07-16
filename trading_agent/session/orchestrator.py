@@ -311,6 +311,63 @@ def run_session(
                             f"baseline={baseline} in_position={fast}",
                         )
 
+                    # --- Gap book file watch: new continuation tickers → auto-trade prep ---
+                    # Picks up researcher /gapscan updates between discovery slots.
+                    if getattr(config, "enable_gap_book_watch", True):
+                        try:
+                            from trading_agent.export.gap_watch import check_and_process_gap_book
+
+                            gap_res = check_and_process_gap_book(
+                                agent_config,
+                                session_dir=session_dir,
+                                force=bool(
+                                    config.fixture_mode
+                                    and cycle_index == 1
+                                    and not discovery_done
+                                ),
+                            )
+                            if gap_res.triggered or (
+                                gap_res.snapshot.changed and gap_res.snapshot.new_continuation
+                            ):
+                                gmsg = gap_res.discord_message or gap_res.snapshot.message
+                                _log(log, f"[gap-watch] {gap_res.snapshot.message}")
+                                if gap_res.enter_symbols:
+                                    watch_symbols = list(
+                                        dict.fromkeys(
+                                            list(gap_res.enter_symbols)
+                                            + list(watch_symbols)
+                                            + list(gap_res.snapshot.continuation)
+                                        )
+                                    )
+                                elif gap_res.snapshot.continuation:
+                                    watch_symbols = list(
+                                        dict.fromkeys(
+                                            list(gap_res.snapshot.continuation)
+                                            + list(watch_symbols)
+                                        )
+                                    )
+                                if gmsg and (
+                                    gap_res.triggered
+                                    or gap_res.snapshot.new_continuation
+                                    or gap_res.error
+                                ):
+                                    phase_messages[
+                                        f"gap_watch_{cycle_index}"
+                                    ] = gmsg
+                                    _deliver(
+                                        gmsg,
+                                        f"Gap watch — cycle {cycle_index}",
+                                        config=config,
+                                        discord=discord,
+                                        log=log,
+                                        posts=posts,
+                                    )
+                            else:
+                                _log(log, f"[gap-watch] {gap_res.snapshot.message}")
+                        except Exception as gap_exc:  # noqa: BLE001
+                            _log(log, f"[warn] Gap book watch failed: {gap_exc}")
+                            _log(log, traceback.format_exc())
+
                     # --- Light discovery refresh at fixed PT slots (or once in fixture) ---
                     if getattr(config, "enable_discovery_refresh", True):
                         now_pt = datetime.now(tz)

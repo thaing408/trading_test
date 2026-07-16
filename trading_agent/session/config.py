@@ -33,6 +33,8 @@ class SessionConfig:
     until_phase: DeskPhaseKind | None = None
     # Light discovery rescreens at fixed PT slots during RTH (see schedule.DISCOVERY_*)
     enable_discovery_refresh: bool = True
+    # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
+    enable_gap_book_watch: bool = True
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -58,6 +60,12 @@ class SessionConfig:
             "no",
             "off",
         )
+        gap_watch = os.getenv("TRADING_AGENT_GAP_BOOK_WATCH", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -73,4 +81,5 @@ class SessionConfig:
             until_phase=until_phase,
             from_phase=from_phase,
             enable_discovery_refresh=disc,
+            enable_gap_book_watch=gap_watch,
         )
