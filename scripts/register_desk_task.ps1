@@ -65,6 +65,8 @@ function Register-WakeTask {
     $settings.StartWhenAvailable = $true
     $settings.DisallowStartIfOnBatteries = $false
     $settings.StopIfGoingOnBatteries = $false
+    # Hide task in Task Scheduler UI (does not alone hide the process window)
+    try { $settings.Hidden = $true } catch { }
 
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
@@ -75,27 +77,29 @@ function Register-WakeTask {
     $task = Get-ScheduledTask -TaskName $Name
     $task.Settings.WakeToRun = $true
     $task.Settings.StartWhenAvailable = $true
+    try { $task.Settings.Hidden = $true } catch { }
     Set-ScheduledTask -InputObject $task | Out-Null
 }
 
 # 2) Early wake pulse at 01:50 — pure wake timer so the box is up before the desk job
+# -WindowStyle Hidden: no console popup when Interactive logon runs the task
 Register-WakeTask `
     -Name $WakeTaskName `
     -Execute $psExe `
-    -Argument "-NoProfile -Command `"Write-Host 'Trading desk wake pulse'; exit 0`"" `
+    -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -Command `"exit 0`"" `
     -WorkDir $RepoRoot `
     -AtTime "01:50AM" `
     -Description "Wake PC 5 minutes before Trading Agent desk session (Mon-Fri 01:50 AM Pacific)" `
     -Limit (New-TimeSpan -Minutes 5)
 
-# 3) Main desk session at 01:55
+# 3) Main desk session at 01:55 (silent console — logs go to ~/.trading_agent/logs)
 Register-WakeTask `
     -Name $TaskName `
     -Execute $psExe `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`"" `
+    -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$ScriptPath`"" `
     -WorkDir $RepoRoot `
     -AtTime "01:55AM" `
-    -Description "Trading Agent PST desk: wake PC, git pull, prep phases 1-4 via Discord" `
+    -Description "Trading Agent PST desk: wake PC, git pull, full day via Discord (hidden window)" `
     -Limit (New-TimeSpan -Hours 16)
 
 foreach ($name in @($WakeTaskName, $TaskName)) {
