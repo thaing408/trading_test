@@ -172,6 +172,25 @@ def build_auto_trade_book(
         entries.append(row)
 
     host = source_host or socket.gethostname()
+    # Dynamic scan set for Mac auto-trade (entries first, then watchlist)
+    scan_symbols: List[str] = []
+    seen: set[str] = set()
+    for row in entries:
+        s = str(row.get("symbol") or "").upper()
+        if s and s not in seen:
+            seen.add(s)
+            scan_symbols.append(s)
+    for s in plan.top_watchlist or []:
+        u = str(s).upper()
+        if u and u not in seen:
+            seen.add(u)
+            scan_symbols.append(u)
+    for o in plan.ranked_opportunities or []:
+        u = str(getattr(o, "symbol", "") or "").upper()
+        if u and u not in seen:
+            seen.add(u)
+            scan_symbols.append(u)
+
     return {
         "schema_version": 1,
         "generated_at": now.isoformat(),
@@ -185,6 +204,7 @@ def build_auto_trade_book(
         "entries": entries,
         "exits": [],
         "watchlist": list(plan.top_watchlist or []),
+        "scan_symbols": scan_symbols,
         "entry_count": len(entries),
         "rejected_incomplete": rejected_incomplete[:40],
         "broker_boundary": (
@@ -208,6 +228,9 @@ def write_auto_trade_book(
         targets.append(Path(session_dir) / "auto_trade_book.json")
     sync = Path(sync_dir) if sync_dir is not None else default_sync_dir()
     targets.append(sync / "auto_trade_book.json")
+    # Mac auto-trade MCP reads ~/.grok/state as well
+    grok_state = Path.home() / ".grok" / "state"
+    targets.append(grok_state / "auto_trade_book.json")
     # Also date-stamped archive in sync
     td = book.get("trading_date") or "unknown"
     targets.append(sync / "archive" / f"auto_trade_book_{td}.json")
@@ -216,6 +239,35 @@ def write_auto_trade_book(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload, encoding="utf-8")
         paths.append(path)
+
+    # Dedicated scan-symbols artifact for auto-trade / pulse (always refreshed)
+    scan_syms = list(book.get("scan_symbols") or book.get("watchlist") or [])
+    scan_payload = json.dumps(
+        {
+            "schema_version": 1,
+            "trading_date": book.get("trading_date"),
+            "updated_at": book.get("generated_at"),
+            "symbols": scan_syms,
+            "scan_symbols": scan_syms,
+            "watchlist": list(book.get("watchlist") or []),
+            "stay_in_cash": book.get("stay_in_cash"),
+            "source": "trading_agent_export",
+        },
+        indent=2,
+    ) + "\n"
+    scan_targets = [
+        sync / "auto_trade_scan_symbols.json",
+        grok_state / "auto_trade_scan_symbols.json",
+    ]
+    if session_dir is not None:
+        scan_targets.append(Path(session_dir) / "auto_trade_scan_symbols.json")
+    for path in scan_targets:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(scan_payload, encoding="utf-8")
+            paths.append(path)
+        except OSError:
+            continue
     return paths
 
 

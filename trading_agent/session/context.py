@@ -53,12 +53,27 @@ def plan_to_context(plan: DailyTradingPlan) -> dict:
         "rejection_reasons": [
             {"symbol": r.symbol, "reason": r.reason} for r in plan.rejection_reasons
         ],
-        "auto_trade_symbols": [
-            opp.symbol
-            for opp in plan.ranked_opportunities
-            if getattr(opp, "auto_trade_eligible", False)
-        ],
+        "auto_trade_symbols": _dedupe_symbols(
+            [
+                opp.symbol
+                for opp in plan.ranked_opportunities
+                if getattr(opp, "auto_trade_eligible", False)
+            ]
+            + list(plan.top_watchlist or [])
+        ),
     }
+
+
+def _dedupe_symbols(symbols: list) -> list:
+    out: list = []
+    seen: set = set()
+    for s in symbols:
+        u = str(s or "").strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out
 
 
 def default_session_dir(trading_date: date, base: Path | None = None) -> Path:
