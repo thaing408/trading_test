@@ -29,12 +29,24 @@ Windows never needs TOS. Mac never needs work network paths.
 
 ### Home (macOS) — automatic (no daily manual prepare)
 
-**launchd** job `com.grok.trading-agent-desk` at **01:55 PT** weekdays:
+Install once:
+
+```bash
+bash scripts/macos/install-auto-trade-launchd.sh
+```
+
+| LaunchAgent | When (PT, weekdays) | What |
+|-------------|---------------------|------|
+| `com.grok.trading-agent-desk` | **01:55** | `git pull` + pip + Schwab positions + full desk → local `auto_trade_book.json` |
+| `com.grok.auto-trade-consumer` | **06:25** | Watch local books → `ready_orders_*.json` (optional Schwab MCP live) |
+| `com.grok.qt-open-window` | **06:30** | QT 9:30–9:50 ET mech model → `qt_auto_trade_book.json` + consume |
+
+Desk job details:
 
 1. `git pull --ff-only origin main` (code from work pushes)
 2. `pip install` + smoke import (options modules)
 3. Export local Schwab positions
-4. Run full desk through `cio_review`
+4. Run full desk through `cio_review` (exports local auto-trade book)
 
 You do **not** run a manual pull script every day when launchd is installed.  
 Optional recovery only: `scripts/macos/pull-and-ready.sh`.
@@ -81,7 +93,14 @@ The earlier `auto_trade_book.json` export remains optional **local** tooling if 
 | Host | "Auto trade" means |
 |------|---------------------|
 | **Windows (work)** | Automated **suggest + Discord + local `auto_trade_book.json` export** — **never** places TOS orders |
-| **macOS (home)** | After `git pull` / `pull-and-ready.sh`, human or local MCP executes using **home** TOS only |
+| **macOS (home)** | Local desk/QT write **local** books; consumer writes **ready orders**; optional **local Schwab MCP** place when `TRADING_AGENT_AUTO_TRADE_LIVE=1` |
+
+### Mac execute safety (fail-closed)
+
+- Default: **dry-run** — `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` + checklist only
+- Live: set `TRADING_AGENT_AUTO_TRADE_LIVE=1` in `~/.grok/trading-agent.env` (home only)
+- Incomplete risk package / missing strikes / cash book → skip (never order)
+- No work blotter paths; books are generated on the Mac after local research/QT
 
 Web method research tags process rules (risk package, checklist, HTF, size, expectancy). They influence eligibility on the research host; they are **not** paid signal tips and **not** a profitability guarantee.
 

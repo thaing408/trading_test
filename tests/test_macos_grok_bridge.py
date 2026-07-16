@@ -26,6 +26,12 @@ def test_macos_desk_scripts_exist():
     assert (MACOS_SCRIPTS / "trading-agent-positions.sh").is_file()
     assert (MACOS_SCRIPTS / "install-trading-agent-launchd.sh").is_file()
     assert (MACOS_SCRIPTS / "com.grok.trading-agent-desk.plist").is_file()
+    assert (MACOS_SCRIPTS / "install-auto-trade-launchd.sh").is_file()
+    assert (MACOS_SCRIPTS / "com.grok.qt-open-window.plist").is_file()
+    assert (MACOS_SCRIPTS / "com.grok.auto-trade-consumer.plist").is_file()
+    assert (MACOS_SCRIPTS / "qt-open-window.sh").is_file()
+    assert (MACOS_SCRIPTS / "auto-trade-consumer.sh").is_file()
+    assert (MACOS_SCRIPTS / "consume_auto_trade_book.py").is_file()
 
 
 def test_schwab_positions_converter_option_and_equity():

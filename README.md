@@ -97,7 +97,8 @@ python -m trading_agent performance --fixture
 
 1. Work: improve code → **`git push`** to `main`  
 2. Home Mac **launchd** (01:55 PT): auto-pull + full desk — **no manual daily prepare**  
-3. Optional Discord `PULL_LATEST` only if you need an ad-hoc pull before next launchd  
+3. Home Mac **QT + auto-trade** (06:25/06:30 PT): open-window model + book consumer → ready orders  
+4. Optional Discord `PULL_LATEST` only if you need an ad-hoc pull before next launchd  
 
 See **`docs/dual_system.md`** and **`docs/options_auto_trade.md`**.
 
@@ -123,10 +124,14 @@ See **`docs/dual_system.md`** and **`docs/options_auto_trade.md`**.
 | `scripts/install.sh` | **Primary** new-user install + optional launchd |
 | `scripts/macos/trading-agent-desk.sh` | Git pull, install, optional Schwab positions, session |
 | `scripts/macos/install-trading-agent-launchd.sh` | Install `com.grok.trading-agent-desk` (Mon–Fri 1:55 AM PT) |
+| `scripts/macos/install-auto-trade-launchd.sh` | Desk + QT open-window + auto-trade consumer LaunchAgents |
+| `scripts/macos/qt-open-window.sh` | 9:30–9:50 ET QT mech model → `qt_auto_trade_book.json` |
+| `scripts/macos/consume_auto_trade_book.py` | Local books → ready orders (fail-closed; optional live MCP) |
 | `scripts/macos/install-morning-check-launchd.sh` | Install `com.grok.morning-check` (Mon–Fri 6:35 AM PT; no Saturday) |
 
 Logs: `~/.trading_agent/logs/`  
-Session artifacts: `~/.trading_agent/sessions/{date}/`
+Session artifacts: `~/.trading_agent/sessions/{date}/`  
+Ready orders: `~/.trading_agent/ready_orders/`
 
 ## Market data & brokerage providers
 

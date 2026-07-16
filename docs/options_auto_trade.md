@@ -31,25 +31,37 @@ Plus equity-style pullback/ORB plays that can map into long options.
 ## Options gates
 See `methods/options_methods.py`: IV regime match, defined risk, OI/spread, credit POP, debit R:R, DTE 5–60, earnings short-premium block.
 
-## Mac — no manual daily prepare
-
-With **launchd** (`com.grok.trading-agent-desk` @ **01:55 PT** weekdays):
-
-1. Auto **`git pull --ff-only origin main`** (Windows research code)
-2. Auto **pip install** + import smoke (including options modules)
-3. Auto **Schwab positions** export (local)
-4. Auto **full desk day** through `cio_review` (intraday PT/SL + discovery)
-
-You do **not** run `pull-and-ready` or `prepare-options-day` every day.  
-Those scripts are **optional recovery** only if launchd is missing.
+## Mac — auto launch + auto trade
 
 Install once (home Mac):
 ```bash
-# from repo
-bash scripts/macos/install-trading-agent-launchd.sh
+# desk + QT open-window + book consumer LaunchAgents
+bash scripts/macos/install-auto-trade-launchd.sh
 ```
 
-Trade in local TOS from Discord options cards / local book as usual.
+| Job | Schedule (PT) | Role |
+|-----|---------------|------|
+| `com.grok.trading-agent-desk` | Mon–Fri **01:55** | git pull, positions, full desk → local `auto_trade_book.json` |
+| `com.grok.auto-trade-consumer` | Mon–Fri **06:25** | Poll local books → `ready_orders_*.json` |
+| `com.grok.qt-open-window` | Mon–Fri **06:30** | QT PO3/CISD open window (9:30–9:50 ET) + consume |
+
+### Consumer behavior
+
+```bash
+# Manual (dry-run checklist + ready orders)
+python scripts/macos/consume_auto_trade_book.py --anytime
+
+# Live Schwab MCP submit (only if you accept risk)
+# echo 'TRADING_AGENT_AUTO_TRADE_LIVE=1' >> ~/.grok/trading-agent.env
+python scripts/macos/consume_auto_trade_book.py --live --anytime
+```
+
+- **Fail-closed default:** no broker calls unless `TRADING_AGENT_AUTO_TRADE_LIVE=1` or `--live`
+- Writes `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` for TOS hand entry when MCP cannot place multi-leg packages
+- Discovers **local** books only: `~/.trading_agent/sync/`, session dir, `~/.grok/state/` (not work paths)
+
+You do **not** run `pull-and-ready` or `prepare-options-day` every day.  
+Those scripts are **optional recovery** only if launchd is missing.
 
 ## Journal (Mac local)
 Append closed trades with setup_id / grade for local Performance:

@@ -12,4 +12,5 @@ __all__ = [
     "default_sync_dir",
     "export_plan_for_execution",
     "write_auto_trade_book",
+    # mac_execute is imported on demand (Mac consumer / tests)
 ]

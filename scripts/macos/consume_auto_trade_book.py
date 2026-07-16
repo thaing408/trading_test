@@ -1,90 +1,164 @@
 #!/usr/bin/env python3
-"""macOS helper: print options ENTER checklist from auto_trade_book.json.
+"""macOS auto-trade book consumer.
 
-Does not place orders. Prefer a book generated on this Mac after local research,
-or a path you pass explicitly. Work and home stay file-separated.
+Loads local auto_trade_book / qt_auto_trade_book (never work↔home file sync),
+writes ready_orders JSON, and optionally submits via local Schwab MCP.
+
+Default is fail-closed dry-run (ready orders + checklist only).
+Live placement requires --live or TRADING_AGENT_AUTO_TRADE_LIVE=1.
+
+Usage:
+  python scripts/macos/consume_auto_trade_book.py
+  python scripts/macos/consume_auto_trade_book.py --live
+  python scripts/macos/consume_auto_trade_book.py --watch --poll-seconds 60
+  python scripts/macos/consume_auto_trade_book.py /path/to/book.json
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
+# Allow running from repo without install
+_REPO = Path(__file__).resolve().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
-def main() -> int:
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    if path is None:
-        sync = os.getenv("TRADING_AGENT_SYNC_DIR", "").strip()
-        candidates = []
-        if sync:
-            candidates.append(Path(sync) / "auto_trade_book.json")
-        candidates.append(Path.home() / ".trading_agent" / "sync" / "auto_trade_book.json")
-        from datetime import date
 
-        candidates.append(
-            Path.home()
-            / ".trading_agent"
-            / "sessions"
-            / date.today().isoformat()
-            / "auto_trade_book.json"
-        )
-        path = next((p for p in candidates if p.exists()), candidates[0])
+def _load_env_files() -> None:
+    for p in (
+        Path.home() / ".grok" / "trading-agent.env",
+        Path.home() / ".grok" / "discord.env",
+        _REPO / ".env",
+    ):
+        if not p.is_file():
+            continue
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+        except OSError:
+            continue
 
-    if not path.exists():
-        print(f"No auto_trade_book at {path}")
-        print("Home: run local research or pass an explicit path.")
-        print("Work Discord = brief only; do not expect work blotter files here.")
-        return 1
 
-    book = json.loads(path.read_text(encoding="utf-8"))
-    print(f"# Options auto-trade book  date={book.get('trading_date')}  host={book.get('source_host')}")
-    print(
-        f"regime={book.get('regime')} stay_in_cash={book.get('stay_in_cash')} "
-        f"entries={book.get('entry_count')} instrument_focus=options"
+def main(argv: list[str] | None = None) -> int:
+    _load_env_files()
+    parser = argparse.ArgumentParser(description="Consume local auto-trade books on macOS")
+    parser.add_argument(
+        "book",
+        nargs="*",
+        help="Optional explicit book path(s); default: local sync/session discovery",
     )
-    print(f"generated_at={book.get('generated_at')}")
-    print(f"boundary={book.get('broker_boundary', 'n/a')}")
-    print()
-    if book.get("stay_in_cash") or not book.get("entries"):
-        print("NO ENTER — cash / empty book")
-        if book.get("cash_reason"):
-            print(book["cash_reason"][:400])
-        if book.get("rejected_incomplete"):
-            print("rejected_incomplete:", book["rejected_incomplete"][:8])
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Attempt Schwab MCP order placement (default: dry-run ready orders only)",
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Poll for book changes until end of consumer window",
+    )
+    parser.add_argument(
+        "--poll-seconds",
+        type=int,
+        default=int(os.getenv("TRADING_AGENT_AUTO_TRADE_POLL", "60")),
+        help="Watch poll interval (default 60)",
+    )
+    parser.add_argument(
+        "--anytime",
+        action="store_true",
+        help="Ignore 9:25–11:00 ET window (also TRADING_AGENT_AUTO_TRADE_ANYTIME=1)",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Less stdout (still writes ready_orders)",
+    )
+    args = parser.parse_args(argv)
+
+    from trading_agent.export.mac_execute import (
+        in_consumer_window,
+        live_enabled,
+        run_consume,
+    )
+
+    if args.anytime:
+        os.environ["TRADING_AGENT_AUTO_TRADE_ANYTIME"] = "1"
+
+    live = live_enabled(cli_live=bool(args.live))
+    paths = [Path(p) for p in args.book] if args.book else None
+
+    def once(*, allow_outside: bool = False) -> int:
+        outside = not in_consumer_window()
+        if outside and not (args.anytime or allow_outside or os.getenv(
+            "TRADING_AGENT_AUTO_TRADE_ANYTIME", ""
+        ).strip()):
+            if not args.quiet:
+                print("Outside consumer window (9:25–11:00 ET) — use --anytime to force")
+            return 0
+        result = run_consume(
+            paths=paths,
+            live=live,
+            force_outside_window=bool(args.anytime or allow_outside),
+            mark_processed=True,
+        )
+        if not args.quiet:
+            print(result["checklist"])
+            print(f"ready_orders: {result['ready_orders_path']}")
+            if result["books"]:
+                print("books:", ", ".join(result["books"]))
+            else:
+                print("books: (none found — run local research/QT or pass a path)")
+        if not result["books"]:
+            return 1
         return 0
 
-    for i, e in enumerate(book.get("entries") or [], 1):
-        strikes = e.get("strike_prices") or []
-        strike_s = ", ".join(str(s) for s in strikes[:4])
-        print(
-            f"{i}. ENTER {e.get('symbol')} | {e.get('strategy')} | {e.get('side')} | "
-            f"grade={e.get('setup_grade')} | class={e.get('options_strategy_class')}"
-        )
-        print(
-            f"   setup={e.get('setup_id')} | strikes=[{strike_s}] | exp={e.get('expiration')} "
-            f"| DTE={e.get('dte')}"
-        )
-        print(
-            f"   IVR={e.get('iv_rank')} POP={e.get('pop')} delta={e.get('delta')} "
-            f"defined_risk={e.get('defined_risk')} instrument={e.get('instrument')}"
-        )
-        print(
-            f"   entry={e.get('entry')} stop={e.get('stop')} target={e.get('target')} "
-            f"max_risk$={e.get('max_risk_dollars')} conf={e.get('confidence')}"
-        )
-        print(
-            f"   checklist={e.get('checklist_passed')} edge={e.get('edge_complete')} "
-            f"methods={e.get('method_tags')}"
-        )
-        if e.get("thesis"):
-            print(f"   thesis: {str(e['thesis'])[:160]}")
-        print()
-    print("Watchlist:", ", ".join(book.get("watchlist") or []))
-    print()
-    print("TOS next: open chain → match strikes/DTE → defined-risk bracket → size by max_risk$")
-    return 0
+    if not args.watch:
+        return once()
+
+    # Watch loop: process while in consumer window (or forever with --anytime)
+    code = 0
+    last_sig = ""
+    # If launchd starts slightly early, wait until window opens (max ~30 min)
+    wait_deadline = time.time() + 30 * 60
+    while not in_consumer_window() and not args.anytime:
+        if time.time() > wait_deadline:
+            if not args.quiet:
+                print("Timed out waiting for consumer window")
+            return 0
+        time.sleep(15)
+
+    while True:
+        if not args.anytime and not in_consumer_window():
+            if not args.quiet:
+                print("Consumer window ended — exiting watch")
+            break
+        from trading_agent.export.mac_execute import book_candidates
+
+        cands = paths or book_candidates()
+        sig_parts = []
+        for p in cands:
+            pp = Path(p)
+            if pp.is_file():
+                try:
+                    sig_parts.append(f"{pp}:{pp.stat().st_mtime_ns}")
+                except OSError:
+                    pass
+        sig = "|".join(sig_parts)
+        if sig != last_sig or not last_sig:
+            last_sig = sig
+            code = once(allow_outside=bool(args.anytime))
+        time.sleep(max(5, int(args.poll_seconds)))
+    return code
 
 
 if __name__ == "__main__":
