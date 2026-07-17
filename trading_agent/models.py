@@ -222,3 +222,5 @@ class DailyTradingPlan:
     research_summary: Dict[str, Any]
     stay_in_cash: bool
     cash_recommendation_reason: str = ""
+    # Optional Raschke first-30m / PDL day bias (dict or DayBiasResult)
+    day_bias: Any = None

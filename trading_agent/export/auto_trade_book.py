@@ -12,6 +12,44 @@ from typing import Any, Dict, List, Optional
 from trading_agent.models import DailyTradingPlan, TradeOpportunity
 
 
+def _load_day_bias_sidecar():
+    """Optional local day-bias JSON (fail-closed if missing/invalid)."""
+    from trading_agent.analysis.day_bias import DayBiasResult
+
+    raw_path = os.getenv("TRADING_AGENT_DAY_BIAS_FILE", "").strip()
+    candidates = []
+    if raw_path:
+        candidates.append(Path(raw_path))
+    candidates.append(Path.home() / ".trading_agent" / "sync" / "day_bias.json")
+    candidates.append(Path.home() / ".trading_agent" / "sync" / "day_bias_latest.json")
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            return DayBiasResult(
+                bias=str(data.get("bias") or "neutral"),
+                consecutive_up=int(data.get("consecutive_up") or 0),
+                consecutive_down=int(data.get("consecutive_down") or 0),
+                three_up_open=bool(data.get("three_up_open")),
+                three_down_open=bool(data.get("three_down_open")),
+                pdl=data.get("pdl"),
+                pdh=data.get("pdh"),
+                last=data.get("last"),
+                above_pdl=data.get("above_pdl"),
+                below_pdh=data.get("below_pdh"),
+                valid=bool(data.get("valid")),
+                tags=list(data.get("tags") or []),
+                note=str(data.get("note") or ""),
+                session=str(data.get("session") or ""),
+            )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return None
+
+
 def default_sync_dir() -> Path:
     raw = os.getenv("TRADING_AGENT_SYNC_DIR", "").strip()
     if raw:
@@ -180,6 +218,47 @@ def build_auto_trade_book(
                 row["priority_boost"] = float(row.get("priority_boost") or 0) + 10.0
         except Exception:
             pass
+        # Raschke first-30m 3-up + PDL day bias (optional local JSON or plan metadata)
+        try:
+            from trading_agent.analysis.day_bias import DayBiasResult, apply_day_bias_tags
+
+            day_bias_meta = getattr(plan, "day_bias", None) or {}
+            if isinstance(day_bias_meta, DayBiasResult):
+                db = day_bias_meta
+            elif isinstance(day_bias_meta, dict) and day_bias_meta:
+                db = DayBiasResult(
+                    bias=str(day_bias_meta.get("bias") or "neutral"),
+                    consecutive_up=int(day_bias_meta.get("consecutive_up") or 0),
+                    consecutive_down=int(day_bias_meta.get("consecutive_down") or 0),
+                    three_up_open=bool(day_bias_meta.get("three_up_open")),
+                    three_down_open=bool(day_bias_meta.get("three_down_open")),
+                    pdl=day_bias_meta.get("pdl"),
+                    pdh=day_bias_meta.get("pdh"),
+                    last=day_bias_meta.get("last"),
+                    above_pdl=day_bias_meta.get("above_pdl"),
+                    below_pdh=day_bias_meta.get("below_pdh"),
+                    valid=bool(day_bias_meta.get("valid")),
+                    tags=list(day_bias_meta.get("tags") or []),
+                    note=str(day_bias_meta.get("note") or ""),
+                )
+            else:
+                db = _load_day_bias_sidecar()
+            if db is not None and (db.valid or db.tags):
+                tags, db_note, boost = apply_day_bias_tags(
+                    row["method_tags"],
+                    db,
+                    direction=str(row.get("side") or ""),
+                )
+                row["method_tags"] = tags
+                row["day_bias"] = db.bias
+                row["day_bias_pdl"] = db.pdl
+                row["day_bias_consecutive_up"] = db.consecutive_up
+                if db_note:
+                    row["method_notes"] = (row["method_notes"] + "; " + db_note).strip("; ")[:240]
+                if boost:
+                    row["priority_boost"] = float(row.get("priority_boost") or 0) + boost
+        except Exception:
+            pass
         # Options package for Mac TOS execution
         row["instrument"] = "options"
         row["options_strategy_class"] = str(
@@ -221,6 +300,20 @@ def build_auto_trade_book(
             seen.add(u)
             scan_symbols.append(u)
 
+    # Book-level day bias snapshot (sidecar or plan metadata; fail-closed empty)
+    book_day_bias: Dict[str, Any] = {}
+    try:
+        db_book = getattr(plan, "day_bias", None)
+        if db_book is None:
+            db_book = _load_day_bias_sidecar()
+        if db_book is not None:
+            if hasattr(db_book, "to_dict"):
+                book_day_bias = db_book.to_dict()
+            elif isinstance(db_book, dict):
+                book_day_bias = dict(db_book)
+    except Exception:
+        book_day_bias = {}
+
     return {
         "schema_version": 1,
         "generated_at": now.isoformat(),
@@ -237,6 +330,7 @@ def build_auto_trade_book(
         "scan_symbols": scan_symbols,
         "entry_count": len(entries),
         "rejected_incomplete": rejected_incomplete[:40],
+        "day_bias": book_day_bias,
         "broker_boundary": (
             "windows-research-suggest-export-only; "
             "no TOS order placement on research host"

@@ -1,5 +1,11 @@
 """Technical and options analysis modules."""
 
+from .day_bias import (
+    DayBiasResult,
+    apply_day_bias_tags,
+    day_bias_from_rows,
+    evaluate_day_bias,
+)
 from .lfd_breakout import (
     BreakoutType,
     RiskPolicy,
@@ -23,4 +29,8 @@ __all__ = [
     "RiskPolicy",
     "classify_breakout_path",
     "structure_package_for_setup",
+    "DayBiasResult",
+    "evaluate_day_bias",
+    "day_bias_from_rows",
+    "apply_day_bias_tags",
 ]

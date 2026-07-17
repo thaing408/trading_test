@@ -1,5 +1,18 @@
 # Book-informed auto-trade discipline
 
+## Open-drive day bias (Raschke first-30m)
+
+Objective rule (America/New_York RTH):
+
+- **3 consecutive up bars** in the first 30 minutes (09:30–10:00 ET) → bullish *day bias candidate*
+- **PDL (previous day low)** is the main over/under: bias holds while `last >= PDL`; break below invalidates
+- Symmetric optional: 3 consecutive down + PDH hold → bearish day bias
+- Fail-closed: missing first-30m bars or missing PDL never invents bullish bias
+
+Implementation: `trading_agent.analysis.day_bias` → tags on auto-trade rows
+(`open_drive_3up`, `day_bias_bullish`, `pdl_hold`) via plan.day_bias or
+`~/.trading_agent/sync/day_bias.json`. Soft `priority_boost` only; does not force ENTER.
+
 Mechanisms derived from trading books (not prose summaries), including the
 [SMB Capital Top Ten Trading Books](https://www.smbtraining.com/blog/top-ten-trading-books)
 list (Bellafiore, 2014) plus Shannon MTF from the prior desk goal.
