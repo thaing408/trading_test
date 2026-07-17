@@ -16,6 +16,9 @@ class BacktestConfig:
     prefer_a_tier_only: bool = False
     min_technical_score: float = 40.0
     min_probability_of_success: float = 0.45
+    # B-exception quality floor when prefer_a_tier_only + allow_b_when_aligned
+    min_quality_for_b_exception: float = 70.0
+    allow_b_when_aligned: bool = True
     cio_min_confidence: float = 60.0
     cio_min_risk_reward: float = 2.0
     hold_bars: int = 5  # forward bars for deterministic fill model

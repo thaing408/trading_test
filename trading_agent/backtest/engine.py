@@ -111,6 +111,9 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         prefer_a_tier_only=cfg.prefer_a_tier_only,
         min_technical_score=cfg.min_technical_score,
         min_probability_of_success=cfg.min_probability_of_success,
+        min_quality_for_b_exception=float(
+            getattr(cfg, "min_quality_for_b_exception", 70.0)
+        ),
         top_candidates=cfg.max_trades_per_day,
         # Soften rvol/spread floors so synthetic candidates aren't mass-rejected
         min_relative_volume=1.5,
@@ -590,7 +593,25 @@ def default_sweep_configs() -> List[BacktestConfig]:
             min_setup_grade="B",
             prefer_a_tier_only=True,
             min_technical_score=45.0,
+            min_quality_for_b_exception=70.0,
             cio_min_confidence=65.0,
+            max_trades_per_day=3,
+            require_playbook_checklist=True,
+            enforce_mtf_gate=True,
+            enforce_smb_book_gates=True,
+            enforce_ta_book_gates=True,
+            enforce_discipline_rails=True,
+        ),
+        # Slight-less-cash A/B: conf 55 + B quality 65, still A-prefer + full gates
+        BacktestConfig(
+            name="slight_less_cash_a_tier",
+            min_confidence_score=55.0,
+            min_setup_grade="B",
+            prefer_a_tier_only=True,
+            min_technical_score=45.0,
+            min_quality_for_b_exception=65.0,
+            allow_b_when_aligned=True,
+            cio_min_confidence=55.0,
             max_trades_per_day=3,
             require_playbook_checklist=True,
             enforce_mtf_gate=True,
