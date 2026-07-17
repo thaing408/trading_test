@@ -36,14 +36,17 @@ def _pass_bars(n: int = 80, end: float = 100.0, adr_pct: float = 5.5, vol: int =
 
 
 def test_screener_params_contain_source_thresholds():
-    params = get_screener_params()
+    params = get_screener_params("soft")
     bw = params.best_winners
     pm = params.pre_market
     assert bw.market == "US"
-    assert bw.min_adr_pct == 4.5
-    assert bw.min_pct_above_52w_low == 70.0
+    # Softened defaults (not classic Komar 4.5 / 70%)
+    assert bw.min_adr_pct == 2.5
+    assert bw.min_pct_above_52w_low == 35.0
     assert bw.ema_fast == 8
     assert bw.ema_slow == 21
+    assert bw.require_price_above_ema_fast is True
+    assert bw.require_price_above_ema_slow is False
     assert bw.min_performance_3m_pct == 0.0
     assert bw.min_dollar_volume_avg_30d == 10_000_000.0
     assert bw.min_dollar_volume_prior_day == 5_000_000.0
@@ -52,7 +55,12 @@ def test_screener_params_contain_source_thresholds():
     assert "gap" in pm.source.lower() or "volume" in pm.source.lower()
     d = params.to_dict()
     assert "best_winners" in d and "pre_market" in d
-    assert d["best_winners"]["min_adr_pct"] == 4.5
+    assert d["best_winners"]["min_adr_pct"] == 2.5
+    # Strict profile still available
+    strict = get_screener_params("strict").best_winners
+    assert strict.min_adr_pct == 4.5
+    assert strict.min_pct_above_52w_low == 70.0
+    assert strict.require_price_above_ema_slow is True
 
 
 def test_pass_all_strength_gates():
@@ -60,17 +68,32 @@ def test_pass_all_strength_gates():
     result = evaluate_strength_gates(c, h, l, v)
     assert result.passed is True, result.reasons
     assert result.metrics is not None
-    assert result.metrics.adr_pct >= 4.5
-    assert result.metrics.pct_above_52w_low >= 70.0
+    assert result.metrics.adr_pct >= 2.5
+    assert result.metrics.pct_above_52w_low >= 35.0
     assert result.metrics.price > result.metrics.ema_8
-    assert result.metrics.price > result.metrics.ema_21
     assert result.metrics.performance_3m_pct > 0
     assert result.metrics.dollar_volume_avg_30d >= 10_000_000
     assert result.metrics.dollar_volume_prior_day >= 5_000_000
 
 
+def test_soft_defaults_pass_large_cap_like_profile():
+    """ADR ~3.2, moderate 52w — fails classic 4.5/70, passes soft defaults."""
+    from trading_agent.screener_params import SOFT_BEST_WINNERS, STRICT_BEST_WINNERS
+
+    c, h, l, v = _pass_bars(n=80, end=100.0, adr_pct=3.2, vol=2_000_000)
+    # Cap 52w: raise the series floor so pct_above_52w_low is moderate (~40-50%)
+    # _pass_bars already builds from low_anchor = end/2 → ~100% above low; tighten lows
+    floor = 100.0 / 1.45  # ~45% above 52w low at end=100
+    l = [max(floor, x) for x in l]
+    soft = evaluate_strength_gates(c, h, l, v, params=SOFT_BEST_WINNERS)
+    strict = evaluate_strength_gates(c, h, l, v, params=STRICT_BEST_WINNERS)
+    assert soft.passed is True, soft.reasons
+    assert strict.passed is False, "strict should still reject this large-cap-like profile"
+    assert any("ADR" in r or "52w" in r for r in strict.reasons)
+
+
 def test_fail_adr_gate():
-    c, h, l, v = _pass_bars(adr_pct=2.0)
+    c, h, l, v = _pass_bars(adr_pct=1.0)  # below soft 2.5 floor
     result = evaluate_strength_gates(c, h, l, v)
     assert result.passed is False
     assert any("ADR" in r for r in result.reasons)
@@ -162,8 +185,9 @@ def test_pipeline_fixture_strength_rejections_name_gates():
         f"{[(r.symbol, r.reason) for r in plan.rejection_reasons]}"
     )
     summary = plan.research_summary
-    assert summary.get("strength_profile") == "best_winners"
-    assert summary.get("screener_params", {}).get("min_adr_pct") == 4.5
+    # Profile name is soft_* by default
+    assert "best_winners" in str(summary.get("strength_profile") or "")
+    assert summary.get("screener_params", {}).get("min_adr_pct") == 2.5
     assert summary.get("strength_rejected", 0) >= 1
 
 

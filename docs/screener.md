@@ -36,6 +36,30 @@ set TRADING_AGENT_STRENGTH_MODE=soft
 - **hard**: legacy — strength fail drops from research entirely
 - **off**: skip strength gates
 
+## Strength floors (ADR / 52w / EMA)
+Default profile is **softened** so large-caps in quieter regimes are not mass-rejected:
+
+| Gate | Soft default | Strict Komar (`TRADING_AGENT_STRENGTH_PROFILE=strict`) |
+|------|--------------|--------------------------------------------------------|
+| ADR% | ≥ **2.5** | ≥ **4.5** |
+| 52w above low | ≥ **35%** | ≥ **70%** |
+| EMA | above **EMA8** only | above **EMA8 and EMA21** |
+
+```bash
+# Classic Best Winners floors
+set TRADING_AGENT_STRENGTH_PROFILE=strict
+
+# Or numeric overrides
+set TRADING_AGENT_MIN_ADR_PCT=3.0
+set TRADING_AGENT_MIN_PCT_ABOVE_52W_LOW=50
+set TRADING_AGENT_STRENGTH_EMA_MODE=both
+```
+
+## Discovery vs CIO (mid-session)
+- Morning CIO (≈06:00 PT) is the **initial capital plan**.
+- Discovery slots (07:00 / 09:30 / 11:00 PT) rescreen watchlist — **not** full CIO every 15m cycle.
+- If discovery produces **tradeable ranked setups** after a cash/empty morning, CIO is **promoted once** that day (mid-session capital re-eval). Watchlist rotation alone is never approval.
+
 ## Parallel fetch
 `ScreenerConfig.fetch_workers` (default 6) for live Yahoo multi-symbol scan.
 

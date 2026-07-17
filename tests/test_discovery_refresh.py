@@ -80,6 +80,223 @@ def test_format_discovery_refresh_mentions_slot():
     assert "07:00" in msg
     assert "AMD" in msg
     assert "40" in msg
+    assert "morning CIO" in msg.lower() or "capital plan" in msg.lower()
+
+
+def test_should_promote_to_cio_after_cash_morning():
+    from trading_agent.session.discovery import should_promote_to_cio
+    from trading_agent.models import TradeOpportunity, TechnicalAnalysis, OptionsMetrics
+
+    tech = TechnicalAnalysis(
+        symbol="NVDA",
+        trend="uptrend",
+        rsi=55,
+        macd_signal="bullish",
+        adx=25,
+        atr=2,
+        bollinger_position="mid",
+        support=100,
+        resistance=120,
+        relative_strength=1.1,
+        vwap_relation="above",
+        ma_alignment="bullish",
+        volume_profile_bias="accumulation",
+        score=75,
+    )
+    opts = OptionsMetrics(
+        symbol="NVDA",
+        implied_volatility=30,
+        iv_rank=40,
+        iv_percentile=40,
+        expected_move_pct=2,
+        delta=0.5,
+        gamma=0.05,
+        theta=-0.05,
+        vega=0.1,
+        unusual_activity=False,
+        institutional_flow_bias="bullish",
+        liquidity_score=70,
+        probability_of_profit=0.55,
+    )
+    opp = TradeOpportunity(
+        rank=1,
+        symbol="NVDA",
+        strategy="Long Call",
+        entry_price=100,
+        strike_prices=[105],
+        expiration="2026-08-01",
+        profit_target=110,
+        stop_loss=95,
+        maximum_risk=200,
+        maximum_reward=400,
+        probability_of_success=0.55,
+        confidence_score=70,
+        supporting_reasons=[],
+        technical=tech,
+        options=opts,
+        direction="Bullish",
+        setup_grade="A",
+        checklist_passed=True,
+        edge_complete=True,
+    )
+    plan = DailyTradingPlan(
+        date="2026-07-17",
+        overall_market_bias="Bullish",
+        market_environment_score=60.0,
+        top_watchlist=["NVDA"],
+        ranked_opportunities=[opp],
+        rejection_reasons=[],
+        research_summary={},
+        stay_in_cash=False,
+    )
+    assert should_promote_to_cio(
+        prior_stay_in_cash=True,
+        prior_ranked_count=0,
+        prior_ranked_symbols=[],
+        new_plan=plan,
+    )
+    # No promotion when still cash / empty ranked
+    cash_plan = DailyTradingPlan(
+        date="2026-07-17",
+        overall_market_bias="Bearish",
+        market_environment_score=25.0,
+        top_watchlist=["UVXY"],
+        ranked_opportunities=[],
+        rejection_reasons=[],
+        research_summary={},
+        stay_in_cash=True,
+    )
+    assert not should_promote_to_cio(
+        prior_stay_in_cash=True,
+        prior_ranked_count=0,
+        prior_ranked_symbols=[],
+        new_plan=cash_plan,
+    )
+    # No promotion when same ranked set already known
+    assert not should_promote_to_cio(
+        prior_stay_in_cash=False,
+        prior_ranked_count=1,
+        prior_ranked_symbols=["NVDA"],
+        new_plan=plan,
+    )
+
+
+def test_discovery_promotes_cio_when_tradeable(tmp_path: Path):
+    """Shipped path: cash morning → discovery with ranked opp → CIO re-eval once."""
+    from trading_agent.models import (
+        OptionsMetrics,
+        TechnicalAnalysis,
+        TradeOpportunity,
+    )
+    from trading_agent.session.discovery import run_discovery_refresh
+
+    tech = TechnicalAnalysis(
+        symbol="NVDA",
+        trend="uptrend",
+        rsi=55,
+        macd_signal="bullish",
+        adx=25,
+        atr=2,
+        bollinger_position="mid",
+        support=100,
+        resistance=120,
+        relative_strength=1.1,
+        vwap_relation="above",
+        ma_alignment="bullish",
+        volume_profile_bias="accumulation",
+        score=75,
+    )
+    opts = OptionsMetrics(
+        symbol="NVDA",
+        implied_volatility=30,
+        iv_rank=40,
+        iv_percentile=40,
+        expected_move_pct=2,
+        delta=0.5,
+        gamma=0.05,
+        theta=-0.05,
+        vega=0.1,
+        unusual_activity=False,
+        institutional_flow_bias="bullish",
+        liquidity_score=70,
+        probability_of_profit=0.55,
+    )
+    opp = TradeOpportunity(
+        rank=1,
+        symbol="NVDA",
+        strategy="Long Call",
+        entry_price=100,
+        strike_prices=[105],
+        expiration="2026-08-01",
+        profit_target=110,
+        stop_loss=95,
+        maximum_risk=200,
+        maximum_reward=400,
+        probability_of_success=0.55,
+        confidence_score=75,
+        supporting_reasons=["setup"],
+        technical=tech,
+        options=opts,
+        direction="Bullish",
+        setup_grade="A",
+        checklist_passed=True,
+        edge_complete=True,
+        auto_trade_eligible=True,
+        defined_risk=True,
+    )
+    plan = DailyTradingPlan(
+        date="2026-07-17",
+        overall_market_bias="Bullish",
+        market_environment_score=65.0,
+        top_watchlist=["NVDA", "AMD"],
+        ranked_opportunities=[opp],
+        rejection_reasons=[],
+        research_summary={
+            "candidates_screened": 40,
+            "news_highlights": [],
+            "high_impact_events": [],
+        },
+        stay_in_cash=False,
+        cash_recommendation_reason="",
+    )
+    fake_report = MagicMock()
+    fake_report.approved = [MagicMock(ticker="NVDA")]
+    fake_report.modified = []
+    fake_report.rejected = []
+
+    with patch("trading_agent.session.discovery.run_pipeline", return_value=plan):
+        with patch(
+            "trading_agent.session.discovery.promote_discovery_to_cio",
+            return_value={
+                "approved": ["NVDA"],
+                "modified": [],
+                "rejected_count": 0,
+                "message": "CIO Discovery Promotion — approved NVDA",
+            },
+        ) as promo:
+            from trading_agent.config import AgentConfig
+
+            result = run_discovery_refresh(
+                AgentConfig(fixture_mode=True),
+                session_dir=tmp_path,
+                prior_context={
+                    "top_watchlist": ["UVXY"],
+                    "ranked_symbols": [],
+                    "ranked_opportunities": [],
+                    "stay_in_cash": True,
+                    "cash_recommendation_reason": "morning cash",
+                },
+                slot_label="09:30 PT",
+                scheduled_at=datetime(2026, 7, 17, 9, 30, tzinfo=PT),
+                promote_cio=True,
+                fixture_mode=True,
+            )
+    assert result.opportunities == 1
+    assert result.cio_promoted is True
+    assert "NVDA" in result.cio_approved
+    promo.assert_called_once()
+    msg = format_discovery_refresh(result)
+    assert "CIO mid-session promotion" in msg or "promot" in msg.lower()
 
 
 def test_run_discovery_refresh_merges_plan(tmp_path: Path):

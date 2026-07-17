@@ -271,6 +271,7 @@ def run_session(
                 )
                 cycle_index = 0
                 discovery_done: set[str] = set()
+                discovery_cio_promoted = False
                 # Suppress Discord spam when PT/SL checks repeat the same actions
                 last_intraday_fingerprint: str | None = None
                 # Fixture/dry-run: fire one discovery after first cycle so path is exercised
@@ -399,9 +400,21 @@ def run_session(
                                     prior_context=plan_context,
                                     slot_label=key + " PT",
                                     scheduled_at=slot,
+                                    promote_cio=True,
+                                    fixture_mode=config.fixture_mode,
+                                    portfolio_value=config.portfolio_value,
+                                    already_promoted=discovery_cio_promoted,
                                 )
                                 plan_context = disc.context
                                 plan_path = session_dir / "daily_plan_context.json"
+                                if disc.cio_promoted:
+                                    discovery_cio_promoted = True
+                                    for sym in disc.cio_approved:
+                                        if sym not in watch_symbols:
+                                            watch_symbols.append(sym)
+                                    phase_messages[
+                                        f"cio_discovery_{key.replace(':', '')}"
+                                    ] = disc.cio_message or "CIO discovery promotion"
                                 watch_symbols = list(
                                     dict.fromkeys(
                                         list(disc.watchlist)
@@ -419,6 +432,15 @@ def run_session(
                                     log=log,
                                     posts=posts,
                                 )
+                                if disc.cio_promoted and disc.cio_message:
+                                    _deliver(
+                                        disc.cio_message,
+                                        f"CIO Discovery Promotion {key} PT",
+                                        config=config,
+                                        discord=discord,
+                                        log=log,
+                                        posts=posts,
+                                    )
                             except Exception as disc_exc:  # noqa: BLE001
                                 _log(log, f"[warn] Discovery refresh {key} failed: {disc_exc}")
                                 _log(log, traceback.format_exc())

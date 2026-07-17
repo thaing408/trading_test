@@ -2,9 +2,33 @@
   "source_post": "https://x.com/BlogJulianKomar/status/2075617300611228049",
   "source_video": "https://www.youtube.com/watch?v=2ZGOLcNTi9w",
   "profiles": {
+    "soft_best_winners": {
+      "name": "soft_best_winners",
+      "description": "Default agent strength screen — softened ADR/52w/EMA for large-cap / quieter regimes",
+      "market": "US",
+      "filters": {
+        "min_price": 1.0,
+        "min_adr_pct": 2.5,
+        "adr_lookback": 20,
+        "min_pct_above_52w_low": 35.0,
+        "price_above_ema": [8],
+        "min_performance_3m_pct": 0.0,
+        "min_dollar_volume_avg_30d": 10000000,
+        "min_dollar_volume_prior_day": 5000000
+      },
+      "tradingview_ui_notes": [
+        "Exchange: US stocks",
+        "ADR% (Average Daily Range %) >= 2.5 (soft; classic Komar is 4.5)",
+        "Price distance from 52-week low >= 35% (soft; classic is 70%)",
+        "Close above EMA 8 (EMA 21 optional in soft mode)",
+        "3-month performance > 0%",
+        "Price * average volume 30d >= $10M",
+        "Price * previous day volume >= $5M"
+      ]
+    },
     "best_winners": {
-      "name": "best_winners",
-      "description": "TradingView growth & momentum 'Best Winners' strength screen (Julian Komar)",
+      "name": "strict_best_winners",
+      "description": "TradingView growth & momentum 'Best Winners' strict floors (Julian Komar)",
       "market": "US",
       "filters": {
         "min_price": 1.0,
@@ -37,7 +61,7 @@
       },
       "auto_buy": false,
       "tradingview_ui_notes": [
-        "Apply Best Winners strength filters first",
+        "Apply strength filters first (soft defaults unless strict profile)",
         "Gap up: open vs prior close > 0% (or your threshold)",
         "Unusual relative volume (pre-market or session RVOL)",
         "Observe and prepare — do not auto-buy gaps"
@@ -45,6 +69,8 @@
     }
   },
   "agent_notes": {
+    "default_profile": "soft_best_winners",
+    "strict_profile_env": "TRADING_AGENT_STRENGTH_PROFILE=strict",
     "institutional_floors_still_apply": true,
     "institutional_floors": {
       "min_price": 20.0,
