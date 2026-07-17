@@ -80,6 +80,69 @@ class RiskConfig:
     ta_min_indicator_confluence: int = 2
     ta_pring_min_rvol: float = 1.2
 
+    @classmethod
+    def from_env(cls) -> "RiskConfig":
+        """Build risk floors from env. Defaults stay A-tier tight unless overrides set.
+
+        Slight-less-cash A/B (keeps prefer_a_tier_only / full gates):
+          TRADING_AGENT_SLIGHT_LESS_CASH=1
+            → min_confidence_score=55, min_quality_for_b_exception=65
+
+        Individual knobs (override preset when set):
+          TRADING_AGENT_MIN_CONFIDENCE
+          TRADING_AGENT_MIN_QUALITY_B_EXCEPTION
+          TRADING_AGENT_PREFER_A_TIER_ONLY=0|1
+          TRADING_AGENT_MIN_SETUP_GRADE=B|A|...
+          TRADING_AGENT_MIN_TECHNICAL_SCORE
+          TRADING_AGENT_MIN_RELATIVE_VOLUME  (trade-path RVOL)
+        """
+        cfg = cls()
+        slight = os.getenv("TRADING_AGENT_SLIGHT_LESS_CASH", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if slight:
+            # Tiny loosen only — not full C-book / gates-off
+            cfg.min_confidence_score = 55.0
+            cfg.min_quality_for_b_exception = 65.0
+
+        def _f(name: str, cast, current):
+            raw = os.getenv(name)
+            if raw is None or str(raw).strip() == "":
+                return current
+            return cast(raw)
+
+        cfg.min_confidence_score = float(
+            _f("TRADING_AGENT_MIN_CONFIDENCE", float, cfg.min_confidence_score)
+        )
+        cfg.min_quality_for_b_exception = float(
+            _f(
+                "TRADING_AGENT_MIN_QUALITY_B_EXCEPTION",
+                float,
+                cfg.min_quality_for_b_exception,
+            )
+        )
+        cfg.min_technical_score = float(
+            _f("TRADING_AGENT_MIN_TECHNICAL_SCORE", float, cfg.min_technical_score)
+        )
+        cfg.min_relative_volume = float(
+            _f("TRADING_AGENT_MIN_RELATIVE_VOLUME", float, cfg.min_relative_volume)
+        )
+        prefer = os.getenv("TRADING_AGENT_PREFER_A_TIER_ONLY")
+        if prefer is not None and str(prefer).strip() != "":
+            cfg.prefer_a_tier_only = str(prefer).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        grade = os.getenv("TRADING_AGENT_MIN_SETUP_GRADE")
+        if grade and str(grade).strip():
+            cfg.min_setup_grade = str(grade).strip().upper()
+        return cfg
+
 
 @dataclass
 class ScreenerConfig:
@@ -160,10 +223,13 @@ class AgentConfig:
         if os.getenv("TRADING_AGENT_SCAN_MAX_SYMBOLS"):
             screener.max_symbols = int(os.getenv("TRADING_AGENT_SCAN_MAX_SYMBOLS", "0"))
 
+        risk = RiskConfig.from_env()
+
         return cls(
             use_live_data=live and not fixture,
             fixture_mode=fixture,
             output_file=output,
+            risk=risk,
             apply_strength_gates=strength_on,
             strength_mode=strength_mode if strength_on else "off",
             market_data_provider=provider,

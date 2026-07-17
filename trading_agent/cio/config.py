@@ -32,10 +32,20 @@ class CIOConfig:
     @classmethod
     def from_env(cls) -> "CIOConfig":
         fixture = os.getenv("TRADING_AGENT_FIXTURE", "").lower() in ("1", "true", "yes")
+        conf = float(os.getenv("TRADING_AGENT_CIO_MIN_CONFIDENCE", "60") or 60)
+        # Align CIO slightly with research when slight-less-cash A/B is on
+        if os.getenv("TRADING_AGENT_SLIGHT_LESS_CASH", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ) and os.getenv("TRADING_AGENT_CIO_MIN_CONFIDENCE") is None:
+            conf = 55.0
         return cls(
             fixture_mode=fixture,
             inputs_file=os.getenv("TRADING_AGENT_CIO_INPUTS"),
             session_dir=os.getenv("TRADING_AGENT_SESSION_DIR"),
             output_file=os.getenv("TRADING_AGENT_OUTPUT"),
             portfolio_value=float(os.getenv("TRADING_AGENT_PORTFOLIO_VALUE", "100000")),
+            min_confidence=conf,
         )
