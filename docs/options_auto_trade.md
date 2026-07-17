@@ -60,6 +60,17 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 - Writes `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` for TOS hand entry when MCP cannot place multi-leg packages
 - Discovers **local** books only: `~/.trading_agent/sync/`, session dir, `~/.grok/state/` (not work paths)
 
+### Live place paths (schwab-mcp `place_order`)
+
+| Package | Auto-submit when LIVE=1? | Behavior |
+|---------|--------------------------|----------|
+| **Single-leg debit** (long call / long put, 1 strike) | **Yes** | OCC + `BUY_TO_OPEN` market via `place_order` |
+| **Simple equity buy** | **Yes** | `BUY` equity market via `place_order` |
+| **Multi-leg** (IC, spreads, 2+ strikes) | **No** | `ready` → enter in TOS from ready_orders |
+| **Credit / short premium** | **No** | `ready` → TOS only (no SELL_TO_OPEN auto) |
+
+Separate from this consumer: launchd **`auto_trade_qqq`** still runs the scalp level bot (CALL/PUT rules + reject/break-hold exits).
+
 You do **not** run `pull-and-ready` or `prepare-options-day` every day.  
 Those scripts are **optional recovery** only if launchd is missing.
 

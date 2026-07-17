@@ -372,139 +372,283 @@ def call_schwab_mcp(tool: str, payload: Dict[str, Any], *, timeout: int = 120) -
         return {"error": "bad_json", "message": str(exc), "stdout": text[:500]}
 
 
+# --- Live place path (single-leg debit via place_order; multi-leg ready-only) ---
+
+_MULTILEG_HINTS = (
+    "condor",
+    "iron",
+    "spread",
+    "butterfly",
+    "calendar",
+    "diagonal",
+    "straddle",
+    "strangle",
+    "collar",
+    "jade",
+    "ratio",
+)
+_CREDIT_HINTS = (
+    "credit",
+    "short premium",
+    "cash secured",
+    "csp",
+    "covered call",
+    "sell premium",
+    "short put",
+    "short call",
+)
+
+
+def parse_expiration_date(raw: str) -> Optional[date]:
+    """Parse YYYY-MM-DD or ISO datetime to a calendar date."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        if "T" in s or " " in s:
+            ts = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts)
+            return dt.date()
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def format_occ_symbol(underlying: str, expiration: date, call_put: str, strike: float) -> str:
+    """Schwab OCC: 6-char root + YYMMDD + C/P + strike*1000 (8 digits)."""
+    root = underlying.upper().ljust(6)[:6]
+    yymmdd = expiration.strftime("%y%m%d")
+    cp = "C" if call_put.upper().startswith("C") else "P"
+    strike_int = int(round(float(strike) * 1000))
+    return f"{root}{yymmdd}{cp}{strike_int:08d}"
+
+
+def _blob(order: ReadyOrder) -> str:
+    return " ".join(
+        [
+            order.strategy or "",
+            order.setup_id or "",
+            order.side or "",
+            order.notes or "",
+            " ".join(order.method_tags or []),
+        ]
+    ).lower()
+
+
+def is_multileg_options(order: ReadyOrder) -> bool:
+    """True when package needs multi-leg builder (not supported for live auto)."""
+    instrument = (order.instrument or "").lower()
+    if instrument not in ("options", "option"):
+        return False
+    if len(order.strike_prices or []) >= 2:
+        return True
+    blob = _blob(order)
+    return any(h in blob for h in _MULTILEG_HINTS)
+
+
+def is_credit_options(order: ReadyOrder) -> bool:
+    """Credit / short-premium — do not BUY_TO_OPEN as a debit scalp."""
+    blob = _blob(order)
+    if any(h in blob for h in _CREDIT_HINTS):
+        return True
+    # Explicit short side without long/debit wording
+    side = (order.side or "").lower()
+    if side in ("short", "credit") and "debit" not in blob and "long" not in blob:
+        return True
+    return False
+
+
+def infer_call_put(order: ReadyOrder) -> Optional[str]:
+    """Infer CALL or PUT for a single-leg debit. None if ambiguous/neutral."""
+    blob = _blob(order)
+    side = (order.side or "").lower().strip()
+    # Explicit contract wording wins
+    if "long call" in blob or "debit call" in blob or "buy call" in blob:
+        return "CALL"
+    if "long put" in blob or "debit put" in blob or "buy put" in blob:
+        return "PUT"
+    has_call = "call" in blob
+    has_put = "put" in blob
+    if has_call and not has_put:
+        return "CALL"
+    if has_put and not has_call:
+        return "PUT"
+    if side in ("long", "bull", "call", "buy"):
+        return "CALL"
+    if side in ("short", "bear", "put", "sell"):
+        # For debit directional shorts we still buy puts
+        if "credit" in blob or "sell" in blob and "put" not in blob:
+            return None
+        return "PUT"
+    return None
+
+
+def classify_place_path(order: ReadyOrder) -> str:
+    """
+    Return place path key:
+      single_leg_debit | equity_buy | multi_leg_ready | credit_ready | unsupported
+    """
+    instrument = (order.instrument or "options").lower()
+    if instrument in ("underlying", "equity", "etf", "stock", "shares"):
+        side = (order.side or "").lower()
+        if side in ("short", "sell", "bear") and "long" not in side:
+            return "unsupported"  # no short equity auto
+        return "equity_buy"
+    if instrument not in ("options", "option"):
+        return "unsupported"
+    if is_multileg_options(order):
+        return "multi_leg_ready"
+    if is_credit_options(order):
+        return "credit_ready"
+    if len(order.strike_prices or []) != 1:
+        return "unsupported"
+    if infer_call_put(order) is None:
+        return "unsupported"
+    if not parse_expiration_date(order.expiration):
+        return "unsupported"
+    return "single_leg_debit"
+
+
+def _apply_place_response(order: ReadyOrder, resp: Dict[str, Any], *, occ: str = "") -> ReadyOrder:
+    """Map place_order MCP response onto ReadyOrder status."""
+    order.broker_response = {**resp, **({"occ_symbol": occ} if occ else {})}
+    if resp.get("error"):
+        order.status = "failed"
+        return order
+    status = str(resp.get("status") or "").lower()
+    if status == "submitted" or (resp.get("dry_run") is False and not resp.get("error")):
+        order.status = "submitted"
+        return order
+    if status == "dry_run" or resp.get("dry_run") is True:
+        # Live flag was set but MCP still dry-ran — treat as failed safety
+        order.status = "failed"
+        order.broker_response = {
+            **resp,
+            "message": "place_order returned dry_run despite live submit request",
+        }
+        return order
+    # Unknown shape — leave ready for human if no hard error
+    if resp.get("order_spec") and not resp.get("error"):
+        order.status = "ready"
+        order.broker_response = {
+            **resp,
+            "mode": "ready_only",
+            "message": "place_order did not confirm submit; use ready_orders / TOS",
+        }
+        return order
+    order.status = "failed"
+    return order
+
+
+def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
+    """BUY_TO_OPEN one OCC contract via schwab-mcp place_order."""
+    exp = parse_expiration_date(order.expiration)
+    cp = infer_call_put(order)
+    if not exp or not cp or not order.strike_prices:
+        order.status = "ready"
+        order.broker_response = {
+            "mode": "ready_only",
+            "message": "single-leg debit missing expiration, CALL/PUT, or strike",
+        }
+        return order
+    strike = float(order.strike_prices[0])
+    occ = format_occ_symbol(order.symbol, exp, cp, strike)
+    qty = max(1, int(order.quantity or 1))
+    payload = {
+        "symbol": occ,
+        "quantity": qty,
+        "instruction": "BUY_TO_OPEN",
+        "asset_type": "OPTION",
+        "order_type": "MARKET",
+        "duration": "DAY",
+        "session": "NORMAL",
+        "dry_run": not live,
+        "confirm_live": bool(live),
+    }
+    resp = call_schwab_mcp("place_order", payload)
+    return _apply_place_response(order, resp, occ=occ)
+
+
+def submit_equity_buy(order: ReadyOrder, *, live: bool) -> ReadyOrder:
+    """BUY underlying shares via place_order (no bracket — stops managed elsewhere)."""
+    qty = max(1, int(order.quantity or 1))
+    payload = {
+        "symbol": order.symbol.upper(),
+        "quantity": qty,
+        "instruction": "BUY",
+        "asset_type": "EQUITY",
+        "order_type": "MARKET",
+        "duration": "DAY",
+        "session": "NORMAL",
+        "dry_run": not live,
+        "confirm_live": bool(live),
+    }
+    resp = call_schwab_mcp("place_order", payload)
+    return _apply_place_response(order, resp)
+
+
 def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
-    """Attempt broker submit via Schwab MCP; default dry-run / ready-only."""
+    """Attempt broker submit via Schwab MCP; default dry-run / ready-only.
+
+    Live paths supported on this Mac's schwab-mcp-server:
+      - single-leg **debit** options → ``place_order`` BUY_TO_OPEN (OCC)
+      - simple **equity buy** → ``place_order`` BUY
+
+    Multi-leg packages (iron condor, spreads, etc.) and credit shorts stay
+    ``ready`` for human TOS — no multi-leg builder on MCP yet.
+    """
     if order.status == "skipped":
         return order
     if not live:
+        path = classify_place_path(order)
         order.status = "dry_run"
         order.broker_response = {
             "mode": "dry_run",
-            "message": "Ready order written; set TRADING_AGENT_AUTO_TRADE_LIVE=1 to submit",
+            "place_path": path,
+            "message": (
+                "Ready order written; set TRADING_AGENT_AUTO_TRADE_LIVE=1 to submit "
+                f"(path={path})"
+            ),
         }
         return order
 
-    # Live path: try known MCP tools. Prefer dedicated book/auto tools, then previews.
-    instrument = order.instrument.lower()
-    payload_common = {
-        "symbol": order.symbol,
-        "side": order.side,
-        "strategy": order.strategy,
-        "setup_id": order.setup_id,
-        "entry": order.entry,
-        "stop": order.stop,
-        "target": order.target,
-        "max_risk_dollars": order.max_risk_dollars,
-        "quantity": order.quantity,
-        "dry_run": False,
-        "source": "trading_agent_mac_execute",
-        "order_id": order.order_id,
-    }
+    path = classify_place_path(order)
 
-    # 1) Book-aware tools if custom schwab-mcp-server provides them
-    for tool in ("execute_auto_trade_entry", "auto_trade_enter", "place_auto_trade"):
-        resp = call_schwab_mcp(tool, {**payload_common, **order.to_dict()})
-        if not resp.get("error") or resp.get("error") not in (
-            "schwab_mcp_python_missing",
-            "schwab_mcp_invoke_failed",
-        ):
-            # tool may be unknown — continue on tool-not-found style errors
-            err = str(resp.get("error") or resp.get("message") or "").lower()
-            if "unknown" in err or "not found" in err or "no such" in err:
-                continue
-            if resp.get("error"):
-                order.status = "failed"
-                order.broker_response = resp
-                return order
-            order.status = "submitted"
-            order.broker_response = resp
-            return order
+    if path == "single_leg_debit":
+        return submit_single_leg_debit(order, live=True)
 
-    # 2) QQQ scalp tool exists on home Mac (healthcheck) — only for QQQ underlying
-    if order.symbol == "QQQ" and instrument in ("underlying", "equity", "etf"):
-        resp = call_schwab_mcp(
-            "auto_trade_qqq",
-            {"dry_run": False, "force_enter": True, "signal": order.to_dict()},
-        )
-        if not resp.get("error"):
-            order.status = "submitted"
-            order.broker_response = resp
-            return order
-        # still try dry path info
-        order.broker_response = resp
+    if path == "equity_buy":
+        return submit_equity_buy(order, live=True)
 
-    # 3) Options: preview tools (jkoelker-style) — place only if preview_id returned
-    if instrument in ("options", "option") and order.strike_prices:
-        preview = call_schwab_mcp(
-            "preview_option_order",
-            {
-                "symbol": order.symbol,
-                "instruction": "BUY_TO_OPEN",
-                "quantity": max(1, order.quantity),
-                "strikes": order.strike_prices,
-                "expiration": order.expiration,
-                "strategy": order.strategy,
-                "limit_price": order.entry,
-            },
-        )
-        if preview.get("preview_id") and not preview.get("error"):
-            placed = call_schwab_mcp(
-                "place_previewed_order",
-                {"preview_id": preview["preview_id"]},
-            )
-            if not placed.get("error"):
-                order.status = "submitted"
-                order.broker_response = {"preview": preview, "place": placed}
-                return order
-            order.status = "failed"
-            order.broker_response = {"preview": preview, "place": placed}
-            return order
-        # No place capability — leave as ready for human TOS
+    if path == "multi_leg_ready":
         order.status = "ready"
         order.broker_response = {
             "mode": "ready_only",
-            "message": "Live set but no supported Schwab MCP place tool for this options package",
-            "preview_attempt": preview,
+            "place_path": path,
+            "message": (
+                "Multi-leg options package — no MCP multi-leg builder; "
+                "enter in TOS from ready_orders.json"
+            ),
         }
         return order
 
-    # 4) Equity bracket preview
-    if instrument in ("underlying", "equity", "etf"):
-        preview = call_schwab_mcp(
-            "preview_bracket_order",
-            {
-                "symbol": order.symbol,
-                "quantity": max(1, order.quantity),
-                "instruction": "BUY" if "bull" in order.side.lower() or order.side.lower() == "long" else "SELL",
-                "entry_price": order.entry,
-                "take_profit_price": order.target,
-                "stop_price": order.stop,
-            },
-        )
-        if preview.get("preview_id") and not preview.get("error"):
-            placed = call_schwab_mcp(
-                "place_previewed_order",
-                {"preview_id": preview["preview_id"]},
-            )
-            if not placed.get("error"):
-                order.status = "submitted"
-                order.broker_response = {"preview": preview, "place": placed}
-                return order
-            order.status = "failed"
-            order.broker_response = {"preview": preview, "place": placed}
-            return order
+    if path == "credit_ready":
         order.status = "ready"
         order.broker_response = {
             "mode": "ready_only",
-            "message": "Live set but equity place tool unavailable; ready order only",
-            "preview_attempt": preview,
+            "place_path": path,
+            "message": (
+                "Credit/short-premium not auto-submitted (debit BUY_TO_OPEN only); "
+                "use TOS from ready_orders.json"
+            ),
         }
         return order
 
     order.status = "ready"
     order.broker_response = {
         "mode": "ready_only",
-        "message": "No MCP place path matched; human TOS from ready_orders.json",
+        "place_path": path,
+        "message": "No safe live place path; human TOS from ready_orders.json",
     }
     return order
 
@@ -533,11 +677,19 @@ def format_checklist(orders: Sequence[ReadyOrder], *, live: bool) -> str:
             lines.append(f"   skip={o.skip_reason}")
         if o.broker_response:
             mode = o.broker_response.get("mode") or o.broker_response.get("error") or "ok"
-            lines.append(f"   broker={mode}")
+            path = o.broker_response.get("place_path")
+            occ = o.broker_response.get("occ_symbol")
+            extra = f" path={path}" if path else ""
+            if occ:
+                extra += f" occ={occ}"
+            lines.append(f"   broker={mode}{extra}")
         if o.notes:
             lines.append(f"   notes: {o.notes[:120]}")
         lines.append("")
-    lines.append("TOS: open ready_orders JSON or match strikes/DTE in thinkorswim.")
+    lines.append(
+        "Live auto: single-leg debit BUY_TO_OPEN via place_order only. "
+        "Multi-leg/credit → TOS from ready_orders JSON."
+    )
     return "\n".join(lines)
 
 
