@@ -43,7 +43,9 @@ from trading_agent.session.play_formatter import (
     format_cio_plays,
     format_cio_review,
     format_intelligence_brief,
+    format_intraday_discord_title,
     format_intraday_plays,
+    should_post_intraday_discord,
     format_performance_plays,
     format_preopen_check,
     format_research_plays,
@@ -269,6 +271,8 @@ def run_session(
                 )
                 cycle_index = 0
                 discovery_done: set[str] = set()
+                # Suppress Discord spam when PT/SL checks repeat the same actions
+                last_intraday_fingerprint: str | None = None
                 # Fixture/dry-run: fire one discovery after first cycle so path is exercised
                 fixture_discovery_done = False
                 while True:
@@ -435,14 +439,26 @@ def run_session(
                     message = format_intraday_plays(report, cycle_index)
                     key = f"intraday_{cycle_index}"
                     phase_messages[key] = message
-                    _deliver(
-                        message,
-                        f"Trading Desk — cycle {cycle_index}",
-                        config=config,
-                        discord=discord,
-                        log=log,
-                        posts=posts,
+                    title = format_intraday_discord_title(report, cycle_index)
+                    post_discord, last_intraday_fingerprint = should_post_intraday_discord(
+                        report,
+                        cycle=cycle_index,
+                        previous_fingerprint=last_intraday_fingerprint,
                     )
+                    if post_discord:
+                        _deliver(
+                            message,
+                            title,
+                            config=config,
+                            discord=discord,
+                            log=log,
+                            posts=posts,
+                        )
+                    else:
+                        # Always keep full text in session log; skip Discord noise
+                        _log(log, "")
+                        _log(log, f"=== {title} (check #{cycle_index}, Discord quiet — unchanged) ===")
+                        _log(log, message)
 
                     if live_adaptive:
                         if not is_regular_session(datetime.now(tz), schedule):

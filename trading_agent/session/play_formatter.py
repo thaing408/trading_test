@@ -472,9 +472,131 @@ def build_watchlist_plays(report: IntradayReport) -> list[str]:
     return plays
 
 
+# Actions that do not warrant a fresh Discord ping by themselves
+_IDLE_ACTIONS = frozenset({"Hold", "Take No Action"})
+
+_ACTION_SHORT = {
+    "Take Partial Profit": "Partial",
+    "Move Stop Loss": "Move SL",
+    "Scale In": "Scale-in",
+    "Scale Out": "Scale-out",
+    "Take No Action": "No action",
+}
+
+
+def summarize_intraday_actions(report: IntradayReport) -> str:
+    """Short human summary for titles: 'Exit×5 · Partial×4' or 'Watchlist'."""
+    from collections import Counter
+
+    counts = Counter(rec.action for rec in report.recommendations)
+    if counts:
+        bits: list[str] = []
+        # Prefer risk-first order
+        preferred = (
+            "Exit",
+            "Take Partial Profit",
+            "Move Stop Loss",
+            "Scale Out",
+            "Hedge",
+            "Adjust",
+            "Roll",
+            "Scale In",
+            "Enter",
+            "Hold",
+            "Take No Action",
+        )
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for name in preferred:
+            if name in counts:
+                ordered.append(name)
+                seen.add(name)
+        for name in sorted(counts.keys()):
+            if name not in seen:
+                ordered.append(name)
+        for action in ordered:
+            n = counts[action]
+            if action in _IDLE_ACTIONS and len(counts) > 1:
+                continue  # don't clutter title with Hold×N when real actions exist
+            short = _ACTION_SHORT.get(action, action)
+            bits.append(f"{short}×{n}" if n > 1 else short)
+        if bits:
+            return " · ".join(bits[:6])
+
+    severities = {(a.severity or "").lower() for a in report.notifications}
+    if "critical" in severities:
+        return "Critical alerts"
+    if "high" in severities:
+        return "High alerts"
+    if report.notifications:
+        return "Alerts"
+    if report.session.regime_shift:
+        return "Regime shift"
+    if report.no_open_positions:
+        return "Watchlist"
+    return "Status"
+
+
+def intraday_cycle_fingerprint(report: IntradayReport) -> str:
+    """Stable signature of *actionable* content — used to suppress repeat Discord posts."""
+    parts: list[str] = []
+    for rec in sorted(report.recommendations, key=lambda r: r.symbol):
+        # Skip pure holds so price-only churn doesn't re-ping; keep non-idle
+        if rec.action in _IDLE_ACTIONS:
+            continue
+        parts.append(f"{rec.symbol}:{rec.action}")
+    for alert in report.notifications:
+        sev = (alert.severity or "").lower()
+        if sev in {"critical", "high"}:
+            parts.append(f"A:{alert.symbol}:{alert.alert_type}:{sev}")
+    if report.session.regime_shift:
+        parts.append(f"R:{report.session.regime_description}")
+    if not parts and report.no_open_positions:
+        # Flat book: one fingerprint for "watching" — suppress repeat scout spam
+        parts.append("flat")
+    elif not parts:
+        parts.append("idle")
+    return "|".join(parts)
+
+
+def should_post_intraday_discord(
+    report: IntradayReport,
+    *,
+    cycle: int,
+    previous_fingerprint: str | None,
+) -> tuple[bool, str]:
+    """Post cycle 1 always; later only when the action/alert fingerprint changes."""
+    fp = intraday_cycle_fingerprint(report)
+    if cycle <= 1:
+        return True, fp
+    if previous_fingerprint is None:
+        return True, fp
+    if fp != previous_fingerprint:
+        return True, fp
+    return False, fp
+
+
+def format_intraday_discord_title(report: IntradayReport, cycle: int) -> str:
+    """Discord post title — action summary, not bare 'cycle N'."""
+    summary = summarize_intraday_actions(report)
+    # Compact clock from report timestamp when present
+    ts = (report.timestamp or "").strip()
+    clock = ""
+    if ts:
+        # Accept '2026-07-16 13:30 UTC' or ISO-ish
+        for token in reversed(ts.replace("T", " ").split()):
+            if ":" in token and token[0].isdigit():
+                clock = token[:5]
+                break
+    if clock:
+        return f"Trading Desk · {summary} · {clock}"
+    return f"Trading Desk · {summary}"
+
+
 def format_intraday_plays(report: IntradayReport, cycle: int) -> str:
+    summary = summarize_intraday_actions(report)
     lines = [
-        f"**Trading Desk — cycle {cycle}** ({report.timestamp})",
+        f"**Trading Desk · {summary}** (check #{cycle} · {report.timestamp})",
         f"**Regime:** {report.session.regime_description}",
         f"**Session score:** {report.session.session_score:.1f}/100 | Risk: {report.session.risk_environment}",
         "",
@@ -488,8 +610,11 @@ def format_intraday_plays(report: IntradayReport, cycle: int) -> str:
         lines.append("")
 
     if report.recommendations:
+        # Surface non-idle first so pings stay scannable
+        active = [r for r in report.recommendations if r.action not in _IDLE_ACTIONS]
+        idle = [r for r in report.recommendations if r.action in _IDLE_ACTIONS]
         lines.append("**Position actions:**")
-        for rec in report.recommendations:
+        for rec in active + idle:
             lines.append(f"- **{rec.symbol}** — **{rec.action}**: {rec.why_recommended}")
     elif report.no_open_positions:
         watch_plays = build_watchlist_plays(report)
