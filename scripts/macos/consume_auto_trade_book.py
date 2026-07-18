@@ -29,6 +29,7 @@ if str(_REPO) not in sys.path:
 
 
 def _load_env_files() -> None:
+    """Load home env; AUTO_TRADE_* / TRADING_AGENT_* always refresh from file."""
     for p in (
         Path.home() / ".grok" / "trading-agent.env",
         Path.home() / ".grok" / "discord.env",
@@ -43,14 +44,42 @@ def _load_env_files() -> None:
                     continue
                 k, _, v = line.partition("=")
                 k, v = k.strip(), v.strip().strip('"').strip("'")
-                if k and k not in os.environ:
+                if not k:
+                    continue
+                if k.startswith("AUTO_TRADE_") or k.startswith("TRADING_AGENT_"):
+                    os.environ[k] = v
+                elif k not in os.environ:
                     os.environ[k] = v
         except OSError:
             continue
 
 
+def _log_unified_universe() -> None:
+    """Align consumer with scalp bot: log shared desk+movers universe if present."""
+    import json
+
+    for p in (
+        Path.home() / ".grok" / "state" / "auto_trade_universe.json",
+        Path.home() / ".trading_agent" / "sync" / "auto_trade_universe.json",
+    ):
+        if not p.is_file():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            syms = data.get("scan_symbols") or data.get("symbols") or []
+            print(
+                f"[unified] {p.name}: n={len(syms)} source={data.get('source')} "
+                f"system={data.get('system')} movers={data.get('movers_symbols')}",
+                flush=True,
+            )
+            return
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+
+
 def main(argv: list[str] | None = None) -> int:
     _load_env_files()
+    _log_unified_universe()
     parser = argparse.ArgumentParser(description="Consume local auto-trade books on macOS")
     parser.add_argument(
         "book",
