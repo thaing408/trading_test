@@ -113,3 +113,72 @@ def test_evaluate_risk_splits_qualified_and_rejected():
     assert qualified[0][0].symbol == "GOOD"
     assert len(rejected) == 1
     assert rejected[0].symbol == "BAD"
+def test_lcid_like_fails_without_liquid_mid_exception():
+    """Sub-$20 names fail institutional min_price=$20 by default."""
+    from trading_agent.risk.manager import liquid_mid_price_eligible
+
+    cand = _make_candidate(
+        symbol="LCID",
+        price=7.36,
+        volume=20_000_000,
+        avg_daily_volume=18_000_000,
+        relative_volume=2.5,
+        market_cap=8_000_000_000,
+    )
+    cfg = RiskConfig()  # allow_liquid_mid_price=False
+    assert liquid_mid_price_eligible(cand, cfg) is False
+    result = passes_risk_checks(cand, _make_analysis(), _make_options(), cfg)
+    assert result.passed is False
+    assert any("Price" in r and "20" in r for r in result.reasons)
+
+
+def test_lcid_like_passes_with_liquid_mid_exception():
+    """Liquid mid-price profile: high ADV/$ volume sub-$20 can clear risk."""
+    from trading_agent.risk.manager import liquid_mid_price_eligible
+
+    cand = _make_candidate(
+        symbol="LCID",
+        price=7.36,
+        volume=20_000_000,
+        avg_daily_volume=18_000_000,
+        relative_volume=2.5,
+        market_cap=8_000_000_000,
+        options_liquidity_score=70.0,
+        open_interest=10_000,
+        bid_ask_spread_pct=0.8,
+        institutional_score=55.0,
+    )
+    cfg = RiskConfig(allow_liquid_mid_price=True)
+    assert liquid_mid_price_eligible(cand, cfg) is True
+    result = passes_risk_checks(cand, _make_analysis(), _make_options(), cfg)
+    assert result.passed is True, result.reasons
+
+
+def test_liquid_mid_still_rejects_illiquid_penny():
+    """Exception requires ADV + $ volume floors — not a free pass under $20."""
+    from trading_agent.risk.manager import liquid_mid_price_eligible
+
+    cand = _make_candidate(
+        symbol="PENNY",
+        price=6.0,
+        volume=100_000,
+        avg_daily_volume=80_000,
+        relative_volume=1.2,
+        market_cap=500_000_000,
+    )
+    cfg = RiskConfig(allow_liquid_mid_price=True)
+    assert liquid_mid_price_eligible(cand, cfg) is False
+    result = passes_risk_checks(cand, _make_analysis(), _make_options(), cfg)
+    assert result.passed is False
+
+
+def test_risk_from_env_liquid_mid_profile(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_LIQUID_MID_PRICE", "1")
+    monkeypatch.setenv("TRADING_AGENT_LIQUID_MID_MIN_PRICE", "5")
+    cfg = RiskConfig.from_env()
+    assert cfg.allow_liquid_mid_price is True
+    assert cfg.liquid_mid_min_price == 5.0
+    monkeypatch.delenv("TRADING_AGENT_LIQUID_MID_PRICE", raising=False)
+    monkeypatch.setenv("TRADING_AGENT_RISK_PROFILE", "liquid_mid")
+    cfg2 = RiskConfig.from_env()
+    assert cfg2.allow_liquid_mid_price is True

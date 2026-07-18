@@ -46,7 +46,13 @@ def _passes_scan_floors(
     sc: ScreenerConfig,
 ) -> tuple[bool, str]:
     """Soft scan-tier floors (looser than RiskConfig trade path)."""
-    if price < sc.min_price or price > sc.max_price:
+    scan_floor = float(sc.min_price)
+    if getattr(sc, "allow_liquid_mid_price", False):
+        scan_floor = min(
+            scan_floor,
+            float(getattr(sc, "liquid_mid_min_price", 5.0) or 5.0),
+        )
+    if price < scan_floor or price > sc.max_price:
         return False, f"price ${price:.2f} outside scan band"
     hard_adv = int(sc.min_avg_daily_volume * max(0.05, float(sc.hard_adv_fraction)))
     if avg_vol < hard_adv:

@@ -32,6 +32,14 @@ class RiskConfig:
     min_options_liquidity_score: float = 50.0
     min_price: float = 20.0
     min_market_cap: float = 2_000_000_000.0  # $2B
+    # Liquid mid-price exception (e.g. LCID ~$5–$20 with huge ADV/$ volume)
+    # Off by default; enable via TRADING_AGENT_LIQUID_MID_PRICE=1 or RISK_PROFILE=liquid_mid
+    allow_liquid_mid_price: bool = False
+    liquid_mid_min_price: float = 5.0  # floor when exception applies
+    liquid_mid_min_avg_daily_volume: int = 5_000_000  # stricter ADV than standard 2M
+    liquid_mid_min_dollar_volume: float = 30_000_000.0  # price × ADV
+    liquid_mid_min_market_cap: float = 1_000_000_000.0  # $1B (softer than $2B)
+    liquid_mid_min_relative_volume: float = 1.5
     min_institutional_score: float = 40.0
     min_technical_score: float = 45.0  # aligned with winning sweep arm
     top_watchlist_size: int = 20  # wider watchlist after expanded scan universe
@@ -95,6 +103,9 @@ class RiskConfig:
           TRADING_AGENT_MIN_SETUP_GRADE=B|A|...
           TRADING_AGENT_MIN_TECHNICAL_SCORE
           TRADING_AGENT_MIN_RELATIVE_VOLUME  (trade-path RVOL)
+          TRADING_AGENT_MIN_PRICE
+          TRADING_AGENT_LIQUID_MID_PRICE=1  (or RISK_PROFILE=liquid_mid)
+          TRADING_AGENT_LIQUID_MID_MIN_PRICE (default 5)
         """
         cfg = cls()
         slight = os.getenv("TRADING_AGENT_SLIGHT_LESS_CASH", "").strip().lower() in (
@@ -107,6 +118,18 @@ class RiskConfig:
             # Tiny loosen only — not full C-book / gates-off
             cfg.min_confidence_score = 55.0
             cfg.min_quality_for_b_exception = 65.0
+
+        profile = (
+            os.getenv("TRADING_AGENT_RISK_PROFILE", "") or ""
+        ).strip().lower()
+        liquid_mid_env = os.getenv("TRADING_AGENT_LIQUID_MID_PRICE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if profile in ("liquid_mid", "liquid_mid_price", "mid_price", "sub20") or liquid_mid_env:
+            cfg.allow_liquid_mid_price = True
 
         def _f(name: str, cast, current):
             raw = os.getenv(name)
@@ -129,6 +152,24 @@ class RiskConfig:
         )
         cfg.min_relative_volume = float(
             _f("TRADING_AGENT_MIN_RELATIVE_VOLUME", float, cfg.min_relative_volume)
+        )
+        cfg.min_price = float(_f("TRADING_AGENT_MIN_PRICE", float, cfg.min_price))
+        cfg.liquid_mid_min_price = float(
+            _f("TRADING_AGENT_LIQUID_MID_MIN_PRICE", float, cfg.liquid_mid_min_price)
+        )
+        cfg.liquid_mid_min_avg_daily_volume = int(
+            _f(
+                "TRADING_AGENT_LIQUID_MID_MIN_ADV",
+                int,
+                cfg.liquid_mid_min_avg_daily_volume,
+            )
+        )
+        cfg.liquid_mid_min_dollar_volume = float(
+            _f(
+                "TRADING_AGENT_LIQUID_MID_MIN_DOLLAR_VOL",
+                float,
+                cfg.liquid_mid_min_dollar_volume,
+            )
         )
         prefer = os.getenv("TRADING_AGENT_PREFER_A_TIER_ONLY")
         if prefer is not None and str(prefer).strip() != "":
@@ -170,6 +211,9 @@ class ScreenerConfig:
     max_symbols: int = 0
     # Concurrent Yahoo fetches (1 = sequential)
     fetch_workers: int = 6
+    # Align scan band with liquid mid-price trade exception when enabled
+    allow_liquid_mid_price: bool = False
+    liquid_mid_min_price: float = 5.0
 
 
 @dataclass
@@ -224,6 +268,11 @@ class AgentConfig:
             screener.max_symbols = int(os.getenv("TRADING_AGENT_SCAN_MAX_SYMBOLS", "0"))
 
         risk = RiskConfig.from_env()
+        # Screener scan floor follows liquid mid when trade exception is on
+        if risk.allow_liquid_mid_price:
+            screener.allow_liquid_mid_price = True
+            screener.liquid_mid_min_price = risk.liquid_mid_min_price
+            screener.min_price = min(screener.min_price, risk.liquid_mid_min_price)
 
         return cls(
             use_live_data=live and not fixture,

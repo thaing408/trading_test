@@ -55,6 +55,39 @@ set TRADING_AGENT_MIN_PCT_ABOVE_52W_LOW=50
 set TRADING_AGENT_STRENGTH_EMA_MODE=both
 ```
 
+## Liquid mid-price trade path (optional)
+
+Default trade floor is still **`min_price = $20`**. Liquid names like **LCID** (~$5–$15 with huge ADV) fail that floor even when strength passes.
+
+Enable an **exception path** (not a global price cut):
+
+```bash
+set TRADING_AGENT_LIQUID_MID_PRICE=1
+# or
+set TRADING_AGENT_RISK_PROFILE=liquid_mid
+```
+
+When enabled, a name with price in **[`liquid_mid_min_price`, `min_price`)** may pass risk only if:
+
+| Floor | Default |
+|-------|---------|
+| Min price | **$5** |
+| ADV | **≥ 5M** (stricter than standard 2M) |
+| Dollar volume (price × ADV) | **≥ $30M** |
+| Market cap | **≥ $1B** |
+| RVOL | **≥ 1.5** |
+
+Illiquid sub-$20 names still fail. Override knobs:
+
+```bash
+set TRADING_AGENT_MIN_PRICE=20
+set TRADING_AGENT_LIQUID_MID_MIN_PRICE=5
+set TRADING_AGENT_LIQUID_MID_MIN_ADV=5000000
+set TRADING_AGENT_LIQUID_MID_MIN_DOLLAR_VOL=30000000
+```
+
+Scan band also drops to the liquid mid min when the exception is on so names can enter the screener.
+
 ## Discovery vs CIO (mid-session)
 - Morning CIO (≈06:00 PT) is the **initial capital plan**.
 - Discovery slots (07:00 / 09:30 / 11:00 PT) rescreen watchlist — **not** full CIO every 15m cycle.
