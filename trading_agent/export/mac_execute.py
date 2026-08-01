@@ -725,13 +725,25 @@ def run_consume(
     live: bool = False,
     force_outside_window: bool = False,
     mark_processed: bool = True,
+    use_oms: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Load local books, build ready orders, optionally submit via Schwab MCP."""
-    if not force_outside_window and not in_consumer_window() and not os.getenv(
-        "TRADING_AGENT_AUTO_TRADE_ANYTIME", ""
-    ).strip():
-        # Still allow dry inventory when forced via env or caller
-        pass  # soft: still process books (launchd scripts gate time)
+    """Load local books, build ready orders, optionally submit via Schwab MCP.
+
+    By default routes through the OMS pipeline (pretrade, audit, lots, manage).
+    Set TRADING_AGENT_OMS=0 for legacy consume-only behavior.
+    """
+    _ = force_outside_window  # launchd scripts gate time; soft here
+    if use_oms is None:
+        use_oms = os.getenv("TRADING_AGENT_OMS", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+    if use_oms:
+        from trading_agent.oms.pipeline import run_oms_consume
+
+        return run_oms_consume(paths=paths, live=live, mark_processed=mark_processed)
 
     candidates = list(paths) if paths else book_candidates()
     books: List[Dict[str, Any]] = []
@@ -752,12 +764,10 @@ def run_consume(
             continue
         orders[i] = submit_order(order, live=live)
         if orders[i].status in ("submitted", "dry_run", "ready") and mark_processed:
-            # only mark submitted/failed-finalized as processed when live submitted
             if orders[i].status == "submitted":
                 processed.add(orders[i].order_id)
                 submitted_ids.append(orders[i].order_id)
             elif not live and orders[i].status == "dry_run":
-                # dry-run does not mark processed so live later can still act
                 pass
 
     if mark_processed and submitted_ids:

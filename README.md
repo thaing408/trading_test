@@ -100,7 +100,7 @@ python -m trading_agent performance --fixture
 3. Home Mac **QT + auto-trade** (06:25/06:30 PT): open-window model + book consumer → ready orders  
 4. Optional Discord `PULL_LATEST` only if you need an ad-hoc pull before next launchd  
 
-See **`docs/dual_system.md`** and **`docs/options_auto_trade.md`**.
+See **`docs/dual_system.md`**, **`docs/options_auto_trade.md`**, and **`docs/quant_institution_roadmap.md`** (future goals + fully auto-trade gaps).
 
 ## Automation
 

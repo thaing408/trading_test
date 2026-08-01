@@ -6,7 +6,7 @@ Assumptions (labeled in reports):
 - Neutral strategies: small premium capture if price stays inside ATR band,
   else loss capped at risk unit. Strong trends raise breakout risk.
 - Exit on first stop/target hit over hold_bars, else mark-to-market at hold end.
-- No slippage, commissions, or options Greeks decay — relative ranking only.
+- Optional commission + slippage_bps (round-trip) via apply_trade_costs.
 """
 
 from __future__ import annotations
@@ -62,6 +62,18 @@ def simulate_neutral_exit(
         if h > upper or l < lower:
             return entry - risk_unit, "range_break", i + 1
     return entry + risk_unit * 0.45, "premium_capture", len(future_closes)
+
+
+def apply_trade_costs(
+    pnl: float,
+    *,
+    risk_dollars: float,
+    commission_per_trade: float = 0.0,
+    slippage_bps: float = 0.0,
+) -> float:
+    """Subtract commissions and round-trip slippage scaled to risk notional."""
+    slip = abs(float(risk_dollars or 0.0)) * (float(slippage_bps or 0.0) / 10_000.0) * 2.0
+    return float(pnl) - float(commission_per_trade or 0.0) - slip
 
 
 def pnl_dollars(

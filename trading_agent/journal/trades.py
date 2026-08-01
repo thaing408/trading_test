@@ -35,6 +35,12 @@ class JournalTrade:
     discovery_slot: str = ""
     revenge_reentry: bool = False
     notes: str = ""
+    # Slippage / OMS fields (optional; backward compatible)
+    expected_entry: float = 0.0
+    fill_entry: float = 0.0
+    slippage: float = 0.0
+    lot_id: str = ""
+    place_path: str = ""
 
 
 def default_journal_dir() -> Path:

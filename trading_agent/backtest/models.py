@@ -35,6 +35,10 @@ class BacktestConfig:
     enforce_ta_book_gates: bool = True
     # Simulate PST discovery refreshes: re-research N times per bar-day (1 = morning only)
     discovery_passes: int = 1
+    # Cost model (G3.2) — applied to simulated trade P/L
+    commission_per_trade: float = 0.0
+    slippage_bps: float = 0.0  # one-way; round-trip ≈ 2x on notional risk unit
+    use_historical_ohlcv: bool = False  # reserved: real bars vs synthetic
 
 
 @dataclass

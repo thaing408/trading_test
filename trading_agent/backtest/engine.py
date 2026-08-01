@@ -9,6 +9,7 @@ from trading_agent.analysis.options import compute_options_metrics, iv_rank as c
 from trading_agent.analysis.technical import compute_technical_analysis
 from trading_agent.backtest.data import default_backtest_universe
 from trading_agent.backtest.fills import (
+    apply_trade_costs,
     max_drawdown_from_equity,
     pnl_dollars,
     simulate_directional_exit,
@@ -39,6 +40,7 @@ ASSUMPTIONS = [
     "Multi-regime synthetic OHLCV (bull/chop/bear/recovery) — deterministic, offline",
     "News/calendar thinned; research risk+ranking+CIO is the measured core",
     "Neutral strategies lose on range breaks; directional hit stops in counter-trend",
+    "Optional costs: commission_per_trade + slippage_bps (round-trip on risk unit)",
 ]
 
 
@@ -378,6 +380,13 @@ def _simulate_trade(
             stop=stop,
             exit_reason=reason,
         )
+
+    pl = apply_trade_costs(
+        pl,
+        risk_dollars=risk_dollars,
+        commission_per_trade=float(getattr(cfg, "commission_per_trade", 0.0) or 0.0),
+        slippage_bps=float(getattr(cfg, "slippage_bps", 0.0) or 0.0),
+    )
 
     return SimulatedTrade(
         symbol=opp.symbol,

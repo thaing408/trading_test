@@ -1,5 +1,7 @@
 # Options auto-trade research (Windows) → execute (Mac)
 
+**Roadmap / full-auto gaps:** see [`docs/quant_institution_roadmap.md`](quant_institution_roadmap.md) (institutional goals + missing pieces for ultimate fully auto trade).
+
 ## Goal
 Windows builds **defined-risk options** suggestions with IV/POP/DTE/liquidity gates and posts them to Discord.  
 Mac pulls **code only** from git, then trades in **local TOS** using Discord cards + optional local book file.
@@ -66,8 +68,27 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 |---------|--------------------------|----------|
 | **Single-leg debit** (long call / long put, 1 strike) | **Yes** | OCC + `BUY_TO_OPEN` market via `place_order` |
 | **Simple equity buy** | **Yes** | `BUY` equity market via `place_order` |
-| **Multi-leg** (IC, spreads, 2+ strikes) | **No** | `ready` → enter in TOS from ready_orders |
-| **Credit / short premium** | **No** | `ready` → TOS only (no SELL_TO_OPEN auto) |
+| **Multi-leg** (IC, spreads, 2+ strikes) | **Package built** | Structured legs in `ready_orders`; sequential live only if `TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1` (default **off**) |
+| **Credit / short premium** | **Same** | Package / ready-only unless sequential flag on |
+
+### OMS (default on)
+
+Consumer routes through `trading_agent.oms` when `TRADING_AGENT_OMS=1` (default):
+
+- Pre-trade: kill switch, day-loss, max open lots/risk, max per consume  
+- Audit JSONL under `~/.trading_agent/oms/audit/`  
+- Lot state `~/.trading_agent/oms/state.json`  
+- Manage loop: software stop/target + kill flatten (`python -m trading_agent oms manage`)  
+
+| Env | Role |
+|-----|------|
+| `TRADING_AGENT_OMS` | `0` = legacy consume only |
+| `TRADING_AGENT_KILL_SWITCH` / `oms kill` | Block new entries |
+| `TRADING_AGENT_MAX_OPEN_LOTS` | Default 5 |
+| `TRADING_AGENT_MAX_OPEN_RISK` | Default 1500 |
+| `TRADING_AGENT_MAX_DAY_LOSS` | Default 500 |
+| `TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG` | Dangerous multi-leg leg-by-leg (default off) |
+| `TRADING_AGENT_OMS_MANAGE` | Run exit loop after consume (default on) |
 
 Separate from this consumer: launchd **`auto_trade_qqq`** still runs the scalp level bot (CALL/PUT rules + reject/break-hold exits).
 

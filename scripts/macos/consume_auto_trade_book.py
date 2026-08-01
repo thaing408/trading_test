@@ -141,13 +141,24 @@ def main(argv: list[str] | None = None) -> int:
             mark_processed=True,
         )
         if not args.quiet:
-            print(result["checklist"])
-            print(f"ready_orders: {result['ready_orders_path']}")
-            if result["books"]:
-                print("books:", ", ".join(result["books"]))
+            if result.get("checklist"):
+                print(result["checklist"])
+            if result.get("blocked"):
+                print(f"BLOCKED: {result.get('reason')} kill={result.get('kill_switch')}")
+            if result.get("ready_orders_path"):
+                print(f"ready_orders: {result['ready_orders_path']}")
+            if result.get("pretrade"):
+                print(f"pretrade: {result['pretrade']}")
+            if result.get("manage"):
+                print(f"manage: {result['manage']}")
+            books = result.get("books") or []
+            if books:
+                print("books:", ", ".join(books))
             else:
                 print("books: (none found — run local research/QT or pass a path)")
-        if not result["books"]:
+        if result.get("blocked"):
+            return 2
+        if not result.get("books"):
             return 1
         return 0
 
