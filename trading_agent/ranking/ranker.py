@@ -18,6 +18,7 @@ from trading_agent.ranking.grades import (
     assign_setup_grade,
     grade_sort_key,
 )
+from trading_agent.strategy.competition import select_strategy_competitive
 from trading_agent.strategy.selector import StrategySelection, select_strategy
 
 
@@ -301,11 +302,35 @@ def build_opportunities(
 
     scored: List[dict] = []
 
+    # Multi-sleeve competition on by default; TRADING_AGENT_SLEEVE_COMPETE=0 disables
+    use_compete = os.getenv("TRADING_AGENT_SLEEVE_COMPETE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
     for candidate, technical, options in qualified:
         confidence = compute_confidence_score(technical, options, candidate)
         if confidence < risk_config.min_confidence_score:
             continue
-        strategy = select_strategy(technical, options, candidate.price)
+        competition = None
+        competed_setup_id = ""
+        if use_compete:
+            strategy, competed_setup_id, competition = select_strategy_competitive(
+                candidate, technical, options
+            )
+            # Blend sleeve win score into confidence slightly (capped)
+            if competition.winner and competition.winner.viable:
+                confidence = min(
+                    100.0,
+                    confidence + max(0.0, (competition.winner.score - 50.0) * 0.15),
+                )
+        else:
+            strategy = select_strategy(technical, options, candidate.price)
+        # Always defined so sleeve competition can append tags even if method gates off
+        method_tags: list[str] = []
+        method_notes = ""
         quality = compute_trade_quality_score(technical, options, candidate, confidence)
         grade_result = assign_setup_grade(
             technical,
@@ -363,6 +388,14 @@ def build_opportunities(
             context=play_ctx,
             require_named=require_pb,
         )
+        # Prefer sleeve competition setup_id when playbook did not assign a named id
+        if competed_setup_id and (
+            not setup_id or setup_id in ("", "generic", "unspecified")
+        ):
+            setup_id = competed_setup_id
+        elif competed_setup_id and competition and competition.winner:
+            # Keep playbook id but tag winner sleeve
+            pass
         if require_pb and not pb_ok:
             continue
 
@@ -532,8 +565,7 @@ def build_opportunities(
                 break
 
         # Web/process method tags (risk package, checklist, HTF, size, revenge, volume…)
-        method_tags: list[str] = []
-        method_notes = ""
+        # method_tags / method_notes already initialized; extend below
         if enforce_methods and methods_list:
             from trading_agent.methods.web_methods import evaluate_methods_for_setup
 
@@ -649,6 +681,24 @@ def build_opportunities(
             )
         ) and bool(checklist.passed if checklist else (not require_pb)) and edge.ok and defined_risk
 
+        compete_summary = ""
+        if competition is not None:
+            compete_summary = competition.scoreboard_summary(6)
+            if competition.winner:
+                method_tags = list(
+                    dict.fromkeys(
+                        method_tags
+                        + [
+                            f"sleeve:{competition.winner.sleeve_id}",
+                            f"setup:{competition.winner.setup_id}",
+                        ]
+                    )
+                )
+                method_notes = (
+                    f"Sleeve WIN {competition.winner.sleeve_id} "
+                    f"score={competition.winner.score:.0f}; {compete_summary}"
+                )[:240]
+
         scored.append(
             {
                 "grade": grade_result.grade,
@@ -667,6 +717,7 @@ def build_opportunities(
                 "checklist_summary": pb_summary,
                 "edge_complete": edge.ok,
                 "edge_summary": edge.summary,
+                "competition_summary": compete_summary,
                 "mtf_gate_reason": mtf_reason,
                 "proposed_risk_pct": proposed_risk_pct,
                 "smb_summary": smb.summary,
@@ -753,6 +804,7 @@ def build_opportunities(
         reasons = [
             f"Setup grade {grade} (score {grade_score:.1f}) — trade priority "
             f"{'HIGH (A-tier first)' if grade in ('A+', 'A') else 'secondary'}",
+            f"Sleeve competition: {row.get('competition_summary') or 'off'}",
             f"Playbook: {row['playbook_name'] or row['setup_id'] or 'n/a'} — {row['checklist_summary']}",
             f"Edge: {row['edge_summary']}",
             f"SMB books: {row.get('smb_summary') or 'n/a'}",

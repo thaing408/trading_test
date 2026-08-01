@@ -234,6 +234,37 @@ def _run_oms(args: argparse.Namespace) -> int:
         )
         print(json.dumps({"manage": results, "open_lots": len(store.open_lots())}, indent=2))
         return 0
+    if cmd == "reconcile":
+        import json
+
+        from trading_agent.export.mac_execute import call_schwab_mcp
+        from trading_agent.oms.lifecycle import reconcile_open_lots
+        from trading_agent.oms.state import OmsStore
+
+        store = OmsStore()
+        result = reconcile_open_lots(store, lambda t, p: call_schwab_mcp(t, p))
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result.get("ok") else 1
+    if cmd == "flatten":
+        import json
+
+        from trading_agent.export.mac_execute import call_schwab_mcp
+        from trading_agent.oms.exits import flatten_all_lots
+        from trading_agent.oms.kill_switch import set_kill_switch
+        from trading_agent.oms.state import OmsStore
+
+        live = bool(getattr(args, "live", False))
+        if getattr(args, "kill", False):
+            set_kill_switch("flatten_cli", flatten=True, source="cli_flatten")
+        store = OmsStore()
+        result = flatten_all_lots(
+            store,
+            live=live,
+            call_mcp=lambda t, p: call_schwab_mcp(t, p),
+            also_broker_account=True,
+        )
+        print(json.dumps({"live": live, **result}, indent=2, default=str))
+        return 0
     if cmd == "consume":
         import os
 
@@ -249,7 +280,10 @@ def _run_oms(args: argparse.Namespace) -> int:
             print(f"blocked: {result.get('reason')}")
             return 2
         return 0
-    print("oms commands: status | kill | clear-kill | manage | consume", file=sys.stderr)
+    print(
+        "oms commands: status | kill | clear-kill | manage | reconcile | flatten | consume",
+        file=sys.stderr,
+    )
     return 2
 
 
@@ -327,6 +361,18 @@ def _run_research(args: argparse.Namespace) -> int:
         )
         print("names:", ", ".join(names))
         return 0
+    if cmd == "manage-summary":
+        import json
+        from datetime import date as date_cls
+
+        from trading_agent.intraday.manage_log import manage_log_path, summarize_manage_log
+
+        day_s = getattr(args, "day", None)
+        day = date_cls.fromisoformat(day_s) if day_s else None
+        summary = summarize_manage_log(day=day)
+        print(json.dumps(summary, indent=2))
+        print(f"log: {manage_log_path(day)}")
+        return 0
     if cmd == "scalp-backtest":
         from trading_agent.scalp.backtest import (
             format_scalp_backtest_report,
@@ -375,8 +421,9 @@ def _run_research(args: argparse.Namespace) -> int:
                 handle.write(text)
         return 0
     print(
+    print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
-        "features | scalp-backtest | methods-backtest",
+        "features | manage-summary | scalp-backtest | methods-backtest",
         file=sys.stderr,
     )
     return 2
@@ -390,11 +437,20 @@ def _run_backtest(args: argparse.Namespace) -> int:
 
     slip = float(getattr(args, "slippage_bps", 0.0) or 0.0)
     comm = float(getattr(args, "commission", 0.0) or 0.0)
+    exit_mode = str(getattr(args, "exit_mode", "path") or "path")
+    manage_n = int(getattr(args, "manage_every_n", 1) or 1)
     ohlcv = None
     if getattr(args, "historical", False):
         from trading_agent.backtest.historical import load_historical_ohlcv
 
         ohlcv = load_historical_ohlcv(period=getattr(args, "period", "1y") or "1y")
+
+    def _apply_manage(cfg):
+        return replace(
+            cfg,
+            exit_mode=exit_mode,
+            manage_every_n_bars=manage_n,
+        )
 
     if getattr(args, "walk_forward", False):
         from trading_agent.backtest.walk_forward import format_walk_forward_report, run_walk_forward
@@ -407,6 +463,7 @@ def _run_backtest(args: argparse.Namespace) -> int:
             use_historical_ohlcv=bool(ohlcv),
             name=f"{cfg.name}_wf",
         )
+        cfg = _apply_manage(cfg)
         if ohlcv is None:
             from trading_agent.backtest.data import default_backtest_universe
 
@@ -422,18 +479,20 @@ def _run_backtest(args: argparse.Namespace) -> int:
     if args.single and not args.sweep:
         cfg = default_sweep_configs()[0]
         cfg = replace(cfg, slippage_bps=slip, commission_per_trade=comm)
+        cfg = _apply_manage(cfg)
         result = run_backtest(cfg, ohlcv=ohlcv)
         text = render_period_report(result)
     else:
-        if slip or comm or ohlcv is not None:
+        if slip or comm or ohlcv is not None or exit_mode != "path" or manage_n != 1:
             cfg = default_sweep_configs()[0]
             cfg = replace(
                 cfg,
                 slippage_bps=slip,
                 commission_per_trade=comm,
-                name=f"{cfg.name}_costs_slip{slip}_c{comm}",
+                name=f"{cfg.name}_costs_slip{slip}_c{comm}_{exit_mode}_n{manage_n}",
                 use_historical_ohlcv=bool(ohlcv),
             )
+            cfg = _apply_manage(cfg)
             result = run_backtest(cfg, ohlcv=ohlcv)
             text = render_period_report(result)
         else:
@@ -752,6 +811,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Walk-forward OOS evaluation (use with --single or baseline)",
     )
+    backtest.add_argument(
+        "--exit-mode",
+        default="path",
+        choices=["path", "close_only"],
+        help="Directional exit: path=high/low tags (fast manage); close_only=slower",
+    )
+    backtest.add_argument(
+        "--manage-every-n",
+        type=int,
+        default=1,
+        help="Only evaluate stop/target every N forward bars (default 1)",
+    )
 
     oms = subparsers.add_parser(
         "oms",
@@ -765,6 +836,10 @@ def main(argv: list[str] | None = None) -> int:
     oms_sub.add_parser("clear-kill", help="Clear kill switch")
     manage_p = oms_sub.add_parser("manage", help="Run exit/manage loop on open lots")
     manage_p.add_argument("--live", action="store_true", help="Submit closes live")
+    oms_sub.add_parser("reconcile", help="Match open OMS lots to Schwab positions")
+    flat_p = oms_sub.add_parser("flatten", help="Close all OMS lots (+ broker sweep)")
+    flat_p.add_argument("--live", action="store_true", help="Submit live closes")
+    flat_p.add_argument("--kill", action="store_true", help="Also set kill switch + flatten flag")
     consume_p = oms_sub.add_parser("consume", help="OMS-aware book consume")
     consume_p.add_argument("--live", action="store_true")
     consume_p.add_argument("--anytime", action="store_true")
@@ -808,6 +883,15 @@ def main(argv: list[str] | None = None) -> int:
     feat = research_sub.add_parser("features", help="Build feature panel stats (synthetic or hist)")
     feat.add_argument("--synthetic", action="store_true", default=True)
     feat.add_argument("--period", default="6mo")
+    msum = research_sub.add_parser(
+        "manage-summary",
+        help="Summarize live manage cadence / exit logs for a day",
+    )
+    msum.add_argument(
+        "--day",
+        default=None,
+        help="YYYY-MM-DD (default: today UTC)",
+    )
     scalp_bt = research_sub.add_parser(
         "scalp-backtest",
         help="Apply QQQ scalp rules to multiple tickers; report win rates",

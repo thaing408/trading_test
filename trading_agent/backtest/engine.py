@@ -41,6 +41,7 @@ ASSUMPTIONS = [
     "News/calendar thinned; research risk+ranking+CIO is the measured core",
     "Neutral strategies lose on range breaks; directional hit stops in counter-trend",
     "Optional costs: commission_per_trade + slippage_bps (round-trip on risk unit)",
+    "Optional manage sim: exit_mode=path|close_only; manage_every_n_bars (directional)",
 ]
 
 
@@ -370,7 +371,15 @@ def _simulate_trade(
             pl = -abs(risk_dollars)
     else:
         exit_px, reason, held = simulate_directional_exit(
-            entry, stop, target, fh, fl, fc, bullish=bullish
+            entry,
+            stop,
+            target,
+            fh,
+            fl,
+            fc,
+            bullish=bullish,
+            exit_mode=str(getattr(cfg, "exit_mode", "path") or "path"),
+            manage_every_n_bars=int(getattr(cfg, "manage_every_n_bars", 1) or 1),
         )
         pl = pnl_dollars(
             entry,

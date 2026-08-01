@@ -1,5 +1,27 @@
 # System trade-readiness + methods research (2026-08-01)
 
+## 0. Multi-sleeve competition (2026-08-01)
+
+**Default ON** (`TRADING_AGENT_SLEEVE_COMPETE=1`).
+
+Each qualified ticker is scored by **all sleeves**; highest viable score wins:
+
+| Sleeve family | Examples |
+|---------------|----------|
+| Options variants | Iron condor, bull put, covered call, bear call, debit spreads, long call/put |
+| Gap | Gap continuation |
+| Momentum / RS | Trend + RS + breakout state |
+| ORB+VWAP | Daily proxy (break resistance / lose support) |
+| Mean reversion | Overbought / oversold fades |
+
+Winner strategy + `setup_id` feed playbook/edge/CIO as before. Scoreboard appears in opportunity reasons (`Sleeve competition: WIN …`).
+
+Disable: `TRADING_AGENT_SLEEVE_COMPETE=0` (old single `select_strategy` only).
+
+Module: `trading_agent/strategy/competition.py` · wired in `ranking/ranker.py`.
+
+---
+
 ## 1. Can the system trade today?
 
 **Yes, semi-auto — not fully auto.**
@@ -45,11 +67,11 @@ python3 -m trading_agent research scalp-backtest --period 60d
 
 ### Critical for true desk auto
 
-1. Atomic multi-leg + credit place  
-2. Broker OCO/brackets after fill  
-3. Position truth from Schwab for exits  
-4. Kill → flatten-all  
-5. Journal from fills  
+1. ~~Atomic multi-leg~~ → **Sequential multi-leg LIVE (opt-in)** with wing-first + reverse on fail (`TRADING_AGENT_MULTILEG_LIVE=1`) — not true atomic broker multi-leg  
+2. Software stops/targets via OMS manage (broker OCO still not available on MCP)  
+3. **Position reconcile** via `oms reconcile` / manage  
+4. **Kill → flatten-all** via `oms flatten --live --kill`  
+5. **Journal on lot close** (OMS exits)
 
 ### Critical for better edge
 

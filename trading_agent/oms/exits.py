@@ -8,6 +8,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 from trading_agent.journal.trades import JournalTrade, append_journal_trade
 from trading_agent.oms.audit import append_audit
+from trading_agent.oms.broker import (
+    close_instruction_for_open_leg,
+    flatten_symbols,
+    order_submitted_ok,
+    place_equity,
+    place_option,
+)
 from trading_agent.oms.kill_switch import should_flatten
 from trading_agent.oms.protect import should_exit_lot
 from trading_agent.oms.state import LotStatus, OpenLot, OmsStore
@@ -19,13 +26,27 @@ McpCaller = Callable[[str, Dict[str, Any]], Dict[str, Any]]
 def _close_instruction(lot: OpenLot) -> str:
     instr = (lot.instrument or "").lower()
     if instr in ("options", "option"):
-        # Debit long → SELL_TO_CLOSE; credit short premium → BUY_TO_CLOSE
         path = (lot.place_path or "").lower()
-        if "credit" in path or "short" in (lot.side or "").lower():
-            if "debit" not in (lot.strategy or "").lower():
+        strat = (lot.strategy or "").lower()
+        if "credit" in path or "credit" in strat or "short" in (lot.side or "").lower():
+            if "debit" not in strat:
                 return "BUY_TO_CLOSE"
         return "SELL_TO_CLOSE"
     return "SELL"
+
+
+def _legs_for_lot(lot: OpenLot) -> List[Dict[str, Any]]:
+    legs = (lot.broker_meta or {}).get("legs") or []
+    if isinstance(legs, list) and legs:
+        return [leg for leg in legs if isinstance(leg, dict)]
+    pkg = (lot.broker_meta or {}).get("multileg_package") or {}
+    if isinstance(pkg, dict):
+        return [leg for leg in (pkg.get("legs") or []) if isinstance(leg, dict)]
+    # also check nested place responses
+    for item in (lot.broker_meta or {}).get("responses") or []:
+        if isinstance(item, dict) and isinstance(item.get("leg"), dict):
+            legs.append(item["leg"])
+    return [leg for leg in legs if isinstance(leg, dict)]
 
 
 def submit_close(
@@ -35,10 +56,39 @@ def submit_close(
     call_mcp: McpCaller,
     reason: str,
 ) -> Dict[str, Any]:
-    """Submit close for a lot. Multi-leg lots without OCC stay ready-only."""
+    """Submit close for a lot. Multi-leg closes each OCC with inverse instruction."""
     qty = max(1, int(lot.quantity or 1))
     instrument = (lot.instrument or "").lower()
-    dry = not live
+    legs = _legs_for_lot(lot)
+
+    if instrument in ("options", "option") and len(legs) >= 2:
+        responses = []
+        all_ok = True
+        for leg in legs:
+            occ = str(leg.get("occ_symbol") or "")
+            if not occ:
+                continue
+            open_i = str(leg.get("instruction") or "BUY_TO_OPEN")
+            close_i = close_instruction_for_open_leg(open_i)
+            lqty = int(leg.get("quantity") or qty)
+            resp = place_option(
+                call_mcp,
+                occ=occ,
+                quantity=lqty,
+                instruction=close_i,
+                live=live,
+            )
+            responses.append({"occ": occ, "instruction": close_i, "response": resp})
+            if not order_submitted_ok(resp):
+                all_ok = False
+        return {
+            "mode": "multileg_close",
+            "status": "submitted" if all_ok and live else ("dry_run" if not live else "partial"),
+            "dry_run": not live,
+            "reason": reason,
+            "responses": responses,
+            "error": None if all_ok else "partial_multileg_close",
+        }
 
     if instrument in ("options", "option"):
         symbol = (lot.occ_symbol or "").strip()
@@ -49,30 +99,21 @@ def submit_close(
                 "message": "No OCC on lot — close multi-leg in TOS",
                 "reason": reason,
             }
-        payload = {
-            "symbol": symbol,
-            "quantity": qty,
-            "instruction": _close_instruction(lot),
-            "asset_type": "OPTION",
-            "order_type": "MARKET",
-            "duration": "DAY",
-            "session": "NORMAL",
-            "dry_run": dry,
-            "confirm_live": bool(live),
-        }
-    else:
-        payload = {
-            "symbol": lot.symbol.upper(),
-            "quantity": qty,
-            "instruction": "SELL",
-            "asset_type": "EQUITY",
-            "order_type": "MARKET",
-            "duration": "DAY",
-            "session": "NORMAL",
-            "dry_run": dry,
-            "confirm_live": bool(live),
-        }
-    return call_mcp("place_order", payload)
+        return place_option(
+            call_mcp,
+            occ=symbol,
+            quantity=qty,
+            instruction=_close_instruction(lot),
+            live=live,
+        )
+
+    return place_equity(
+        call_mcp,
+        symbol=lot.symbol,
+        quantity=qty,
+        instruction="SELL",
+        live=live,
+    )
 
 
 def close_lot(
@@ -153,6 +194,37 @@ def _journal_close(lot: OpenLot, *, pnl: float) -> None:
     )
 
 
+def flatten_all_lots(
+    store: OmsStore,
+    *,
+    live: bool,
+    call_mcp: McpCaller,
+    also_broker_account: bool = True,
+) -> Dict[str, Any]:
+    """Close every OMS open lot; optionally also flatten matching broker positions."""
+    results = []
+    for lot in list(store.open_lots()):
+        close_lot(
+            store,
+            lot,
+            live=live,
+            call_mcp=call_mcp,
+            reason="flatten_all",
+        )
+        results.append({"lot_id": lot.lot_id, "status": lot.status})
+    broker = {}
+    if also_broker_account:
+        # Flatten OMS symbols + full account sweep when kill flatten is requested
+        syms = list({lot.symbol for lot in store.all_lots() if lot.status != LotStatus.CLOSED.value})
+        broker = flatten_symbols(call_mcp, live=live, symbols=syms or None)
+    store.save()
+    append_audit(
+        "flatten_all",
+        payload={"live": live, "lots": len(results), "broker_ok": broker.get("ok")},
+    )
+    return {"lots": results, "broker": broker}
+
+
 def manage_open_lots(
     store: OmsStore,
     *,
@@ -160,12 +232,26 @@ def manage_open_lots(
     call_mcp: McpCaller,
     marks: Optional[Dict[str, float]] = None,
     underlying_marks: Optional[Dict[str, float]] = None,
+    reconcile_first: bool = True,
 ) -> List[Dict[str, Any]]:
     """Evaluate open lots for stop/target or flatten kill."""
     marks = marks or {}
     underlying_marks = underlying_marks or {}
     results: List[Dict[str, Any]] = []
+
+    if reconcile_first and live:
+        try:
+            from trading_agent.oms.lifecycle import reconcile_open_lots
+
+            reconcile_open_lots(store, call_mcp)
+        except Exception as exc:
+            append_audit("reconcile_exception", payload={"error": str(exc)})
+
     flatten = should_flatten()
+    if flatten:
+        flat = flatten_all_lots(store, live=live, call_mcp=call_mcp, also_broker_account=True)
+        results.append({"action": "flatten_all", "detail": flat})
+        return results
 
     for lot in list(store.open_lots()):
         if lot.status not in (
@@ -174,17 +260,6 @@ def manage_open_lots(
             LotStatus.SUBMITTED.value,
             LotStatus.EXITING.value,
         ):
-            continue
-        if flatten:
-            close_lot(
-                store,
-                lot,
-                live=live,
-                call_mcp=call_mcp,
-                reason="kill_switch_flatten",
-                exit_price=marks.get(lot.symbol.upper(), 0.0),
-            )
-            results.append({"lot_id": lot.lot_id, "action": "flatten", "status": lot.status})
             continue
 
         und = underlying_marks.get(lot.symbol.upper())
@@ -199,7 +274,14 @@ def manage_open_lots(
                 reason=reason,
                 exit_price=float(und or mark or 0),
             )
-            results.append({"lot_id": lot.lot_id, "action": "exit", "reason": reason, "status": lot.status})
+            results.append(
+                {
+                    "lot_id": lot.lot_id,
+                    "action": "exit",
+                    "reason": reason,
+                    "status": lot.status,
+                }
+            )
         else:
             results.append({"lot_id": lot.lot_id, "action": "hold", "status": lot.status})
     store.save()

@@ -23,22 +23,51 @@ def simulate_directional_exit(
     future_closes: Sequence[float],
     *,
     bullish: bool,
+    exit_mode: str = "path",
+    manage_every_n_bars: int = 1,
 ) -> Tuple[float, str, int]:
-    """Return (exit_price, reason, bars_held)."""
+    """Return (exit_price, reason, bars_held).
+
+    exit_mode:
+      - path: stop/target if high/low tags within bar (default; continuous-ish)
+      - close_only: only exit if bar **close** beyond stop/target (slower manage)
+    manage_every_n_bars: only evaluate exits on every Nth bar (1 = every bar).
+      Simulates less frequent PT/SL checks (e.g. 15m manage vs continuous).
+    """
     if not future_closes:
         return entry, "no_forward_bars", 0
 
+    mode = (exit_mode or "path").strip().lower()
+    step = max(1, int(manage_every_n_bars or 1))
+
     for i, (h, l, c) in enumerate(zip(future_highs, future_lows, future_closes)):
-        if bullish:
-            if l <= stop:
-                return stop, "stop_loss", i + 1
-            if h >= target:
-                return target, "profit_target", i + 1
+        # Only "check" on sample bars (except last bar always eligible for time_exit later)
+        if (i + 1) % step != 0 and i != len(future_closes) - 1:
+            continue
+        if mode in ("close_only", "close", "eod"):
+            # Infrequent manage: react to close only
+            if bullish:
+                if c <= stop:
+                    return float(c), "stop_loss_close", i + 1
+                if c >= target:
+                    return float(c), "profit_target_close", i + 1
+            else:
+                if c >= stop:
+                    return float(c), "stop_loss_close", i + 1
+                if c <= target:
+                    return float(c), "profit_target_close", i + 1
         else:
-            if h >= stop:
-                return stop, "stop_loss", i + 1
-            if l <= target:
-                return target, "profit_target", i + 1
+            # path: intrabar extremes (more like frequent manage / continuous)
+            if bullish:
+                if l <= stop:
+                    return stop, "stop_loss", i + 1
+                if h >= target:
+                    return target, "profit_target", i + 1
+            else:
+                if h >= stop:
+                    return stop, "stop_loss", i + 1
+                if l <= target:
+                    return target, "profit_target", i + 1
     return float(future_closes[-1]), "time_exit", len(future_closes)
 
 

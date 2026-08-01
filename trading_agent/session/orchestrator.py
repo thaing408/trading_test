@@ -280,6 +280,32 @@ def run_session(
                     cycle_index += 1
                     has_pos = session_has_open_positions(config)
                     wait_mins = resolve_intraday_wait_minutes(config, has_open_positions=has_pos)
+                    try:
+                        from trading_agent.intraday.manage_log import log_interval_decision
+
+                        open_syms: list[str] = []
+                        try:
+                            from trading_agent.intraday.plan_loader import load_positions
+
+                            open_syms = [
+                                p.symbol
+                                for p in load_positions(
+                                    config.positions_file, config.fixture_mode
+                                )
+                                if p.symbol and p.quantity > 0
+                            ]
+                        except Exception:
+                            open_syms = []
+                        log_interval_decision(
+                            cycle=cycle_index,
+                            wait_minutes=wait_mins,
+                            baseline_minutes=baseline,
+                            in_position_minutes=fast,
+                            has_open_positions=has_pos,
+                            open_symbols=open_syms,
+                        )
+                    except Exception:
+                        pass
 
                     if wait:
                         if cycle_index == 1:
@@ -458,6 +484,17 @@ def run_session(
                     report = run_intraday_pipeline(intraday_config)
                     for rec in report.recommendations:
                         intraday_flags[rec.symbol] = rec.action
+                    try:
+                        from trading_agent.intraday.manage_log import log_manage_recommendations
+
+                        log_manage_recommendations(
+                            cycle=cycle_index,
+                            wait_minutes=wait_mins,
+                            has_open_positions=has_pos,
+                            recommendations=report.recommendations or [],
+                        )
+                    except Exception:
+                        pass
                     message = format_intraday_plays(report, cycle_index)
                     key = f"intraday_{cycle_index}"
                     phase_messages[key] = message

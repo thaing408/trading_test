@@ -39,6 +39,11 @@ class BacktestConfig:
     commission_per_trade: float = 0.0
     slippage_bps: float = 0.0  # one-way; round-trip ≈ 2x on notional risk unit
     use_historical_ohlcv: bool = False  # reserved: real bars vs synthetic
+    # Manage-frequency simulation (directional exits)
+    # path = high/low tags (default); close_only = only bar close triggers
+    exit_mode: str = "path"
+    # Evaluate stop/target only every N forward bars (1 = every bar)
+    manage_every_n_bars: int = 1
 
 
 @dataclass

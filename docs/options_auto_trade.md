@@ -68,8 +68,8 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 |---------|--------------------------|----------|
 | **Single-leg debit** (long call / long put, 1 strike) | **Yes** | OCC + `BUY_TO_OPEN` market via `place_order` |
 | **Simple equity buy** | **Yes** | `BUY` equity market via `place_order` |
-| **Multi-leg** (IC, spreads, 2+ strikes) | **Package built** | Structured legs in `ready_orders`; sequential live only if `TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1` (default **off**) |
-| **Credit / short premium** | **Same** | Package / ready-only unless sequential flag on |
+| **Multi-leg** (IC, spreads, 2+ strikes) | **Opt-in LIVE** | Package always in `ready_orders`. LIVE wing-first sequential when `TRADING_AGENT_MULTILEG_LIVE=1` (or `ALLOW_SEQUENTIAL_MULTILEG=1`); **reverse opened legs** if a later leg fails |
+| **Credit / short premium** (2+ strikes) | **Same as multi-leg** | Wings bought first; naked single-leg credit still **never** auto |
 
 ### OMS (default on)
 
@@ -87,8 +87,17 @@ Consumer routes through `trading_agent.oms` when `TRADING_AGENT_OMS=1` (default)
 | `TRADING_AGENT_MAX_OPEN_LOTS` | Default 5 |
 | `TRADING_AGENT_MAX_OPEN_RISK` | Default 1500 |
 | `TRADING_AGENT_MAX_DAY_LOSS` | Default 500 |
-| `TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG` | Dangerous multi-leg leg-by-leg (default off) |
+| `TRADING_AGENT_MULTILEG_LIVE` | Enable multi-leg LIVE (wing-first + reverse on fail; default **off**) |
+| `TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG` | Alias for multi-leg LIVE (default off) |
 | `TRADING_AGENT_OMS_MANAGE` | Run exit loop after consume (default on) |
+
+### Execution truth CLI
+
+```bash
+python -m trading_agent oms reconcile          # match lots ↔ Schwab positions
+python -m trading_agent oms manage --live      # stops/targets + kill flatten
+python -m trading_agent oms flatten --live --kill   # close OMS lots + broker sweep + kill
+```
 
 Separate from this consumer: launchd **`auto_trade_qqq`** still runs the scalp level bot (CALL/PUT rules + reject/break-hold exits).
 

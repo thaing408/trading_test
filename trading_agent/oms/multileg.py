@@ -1,24 +1,30 @@
-"""Multi-leg / credit order specs for ready_orders and future MCP multi-leg submit.
+"""Multi-leg / credit order specs + safe sequential LIVE with one-leg protection.
 
-Schwab MCP place_order is single-instrument today. We:
-- Build structured multi-leg packages for TOS handoff
-- Optionally allow sequential single-leg legs only when
-  TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1 (dangerous; default off)
-- Credit packages stay ready_only unless that flag is on and all legs are explicit
+Schwab MCP place_order is single-instrument. Sequential multi-leg is only
+enabled when TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1.
+
+Safety:
+- Credit: BUY wings first, then SELL body
+- Debit: BUY long first, then SELL short
+- On leg failure: immediately reverse any already-opened legs (one-leg protection)
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import date
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from trading_agent.export.mac_execute import (
     ReadyOrder,
     format_occ_symbol,
-    infer_call_put,
     parse_expiration_date,
+)
+from trading_agent.oms.audit import append_audit
+from trading_agent.oms.broker import (
+    close_instruction_for_open_leg,
+    order_submitted_ok,
+    place_option,
 )
 
 
@@ -29,7 +35,7 @@ class LegSpec:
     quantity: int
     call_put: str = ""
     strike: float = 0.0
-    role: str = ""  # long_put, short_put, ...
+    role: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -42,7 +48,7 @@ class MultiLegPackage:
     setup_id: str
     expiration: str
     legs: List[LegSpec] = field(default_factory=list)
-    net_debit_credit: str = ""  # debit | credit | unknown
+    net_debit_credit: str = ""
     defined_risk: bool = True
     notes: str = ""
     live_capable: bool = False
@@ -70,10 +76,31 @@ def sequential_multileg_enabled() -> bool:
     )
 
 
+def multileg_live_default_on() -> bool:
+    """When true, sequential multi-leg is allowed whenever LIVE consume runs.
+
+    Still requires TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1 OR this flag.
+    Safer default remains off unless user opts in.
+    """
+    return os.getenv("TRADING_AGENT_MULTILEG_LIVE", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def multileg_live_allowed() -> bool:
+    return sequential_multileg_enabled() or multileg_live_default_on()
+
+
+def _round_level(value: float) -> float:
+    return round(float(value), 2)
+
+
 def _cp_from_strike_index(i: int, n: int, strategy: str) -> str:
     s = strategy.lower()
     if "iron" in s or "condor" in s:
-        # typical IC: put put call call ordered low→high
         if n >= 4:
             return "PUT" if i < 2 else "CALL"
     if "bull put" in s or "put credit" in s or "put_spread" in s:
@@ -89,16 +116,15 @@ def _cp_from_strike_index(i: int, n: int, strategy: str) -> str:
 
 def _instruction_for_leg(i: int, n: int, strategy: str, net: str) -> str:
     s = strategy.lower()
-    # Vertical debit: buy closer ATM, sell farther
     if "debit" in s or net == "debit":
         if n == 2:
             return "BUY_TO_OPEN" if i == 0 else "SELL_TO_OPEN"
         return "BUY_TO_OPEN" if i in (1, 2) else "SELL_TO_OPEN"
-    # Credit vertical / IC: sell body, buy wings
     if n == 2:
-        return "SELL_TO_OPEN" if i == 0 else "BUY_TO_OPEN"
+        # credit vertical: short closer, long wing — sorted low→high;
+        # for bull put: short higher strike, long lower → SELL on higher index
+        return "BUY_TO_OPEN" if i == 0 else "SELL_TO_OPEN"
     if n >= 4:
-        # wings long, body short
         return "BUY_TO_OPEN" if i in (0, n - 1) else "SELL_TO_OPEN"
     return "SELL_TO_OPEN"
 
@@ -117,7 +143,6 @@ def classify_net(order: ReadyOrder) -> str:
 
 
 def build_multileg_package(order: ReadyOrder) -> Optional[MultiLegPackage]:
-    """Build leg package from ready order strikes. Returns None if not multi-leg."""
     strikes = list(order.strike_prices or [])
     if len(strikes) < 2:
         return None
@@ -142,7 +167,7 @@ def build_multileg_package(order: ReadyOrder) -> Optional[MultiLegPackage]:
                 role=f"leg_{i}",
             )
         )
-    pkg = MultiLegPackage(
+    return MultiLegPackage(
         symbol=order.symbol,
         strategy=order.strategy,
         setup_id=order.setup_id,
@@ -150,14 +175,12 @@ def build_multileg_package(order: ReadyOrder) -> Optional[MultiLegPackage]:
         legs=legs,
         net_debit_credit=net,
         defined_risk=bool(order.defined_risk),
-        notes="Structured for TOS / future multi-leg MCP; sequential live off by default",
-        live_capable=sequential_multileg_enabled(),
+        notes="Sequential LIVE uses wing-first + reverse on failure",
+        live_capable=multileg_live_allowed(),
     )
-    return pkg
 
 
 def attach_package_to_order(order: ReadyOrder) -> ReadyOrder:
-    """Embed multi-leg package into broker_response for ready_orders JSON."""
     pkg = build_multileg_package(order)
     if not pkg:
         return order
@@ -168,69 +191,111 @@ def attach_package_to_order(order: ReadyOrder) -> ReadyOrder:
     return order
 
 
+def _leg_sort_key_for_open(net: str, leg: LegSpec) -> int:
+    """Lower first: protection legs before short premium."""
+    instr = leg.instruction.upper()
+    if net == "credit":
+        return 0 if instr == "BUY_TO_OPEN" else 1
+    if net == "debit":
+        return 0 if instr == "BUY_TO_OPEN" else 1
+    return 0 if instr == "BUY_TO_OPEN" else 1
+
+
+def _reverse_opened_legs(call_mcp, opened: List[Dict[str, Any]], *, live: bool) -> List[Dict[str, Any]]:
+    """One-leg protection: close any legs already opened on failure."""
+    revs = []
+    for item in reversed(opened):
+        leg = item.get("leg") or {}
+        occ = str(leg.get("occ_symbol") or "")
+        instr = str(leg.get("instruction") or "BUY_TO_OPEN")
+        qty = int(leg.get("quantity") or 1)
+        if not occ:
+            continue
+        close_i = close_instruction_for_open_leg(instr)
+        resp = place_option(
+            call_mcp,
+            occ=occ,
+            quantity=qty,
+            instruction=close_i,
+            live=live,
+        )
+        revs.append({"leg": leg, "close_instruction": close_i, "response": resp})
+        append_audit(
+            "multileg_leg_reversed",
+            payload={"occ": occ, "close": close_i, "ok": order_submitted_ok(resp)},
+        )
+    return revs
+
+
 def try_sequential_submit(
     order: ReadyOrder,
     *,
     live: bool,
     call_mcp,
 ) -> ReadyOrder:
-    """DANGEROUS: place legs one-by-one if explicitly enabled.
-
-    Default: attach package and leave ready. If enabled and live, submit wings
-    first for credit (buy protection before short) / body second.
-    """
+    """Place multi-leg sequentially with wing-first order and reverse on fail."""
     pkg = build_multileg_package(order)
     if not pkg:
         order.status = "ready"
-        order.broker_response = {
-            "mode": "ready_only",
-            "message": "not a multi-leg package",
-        }
+        order.broker_response = {"mode": "ready_only", "message": "not a multi-leg package"}
         return order
 
     order = attach_package_to_order(order)
-    if not live or not sequential_multileg_enabled():
+    if not live or not multileg_live_allowed():
         order.status = "ready"
         order.broker_response = {
             **(order.broker_response or {}),
             "mode": "ready_only",
             "place_path": "multi_leg_ready",
             "message": (
-                "Multi-leg package built; sequential live disabled "
-                "(set TRADING_AGENT_ALLOW_SEQUENTIAL_MULTILEG=1 to enable)"
+                "Multi-leg package built; set TRADING_AGENT_MULTILEG_LIVE=1 "
+                "(or ALLOW_SEQUENTIAL_MULTILEG=1) with --live to submit wing-first"
             ),
         }
         return order
 
-    # Credit: buy wings first; debit: buy long first
-    legs = list(pkg.legs)
-    if pkg.net_debit_credit == "credit":
-        legs = sorted(legs, key=lambda leg: 0 if leg.instruction == "BUY_TO_OPEN" else 1)
-
+    legs = sorted(
+        list(pkg.legs),
+        key=lambda leg: _leg_sort_key_for_open(pkg.net_debit_credit, leg),
+    )
+    opened: List[Dict[str, Any]] = []
     responses: List[Dict[str, Any]] = []
+
     for leg in legs:
-        payload = {
-            "symbol": leg.occ_symbol,
-            "quantity": leg.quantity,
-            "instruction": leg.instruction,
-            "asset_type": "OPTION",
-            "order_type": "MARKET",
-            "duration": "DAY",
-            "session": "NORMAL",
-            "dry_run": not live,
-            "confirm_live": bool(live),
-        }
-        resp = call_mcp("place_order", payload)
-        responses.append({"leg": leg.to_dict(), "response": resp})
-        if resp.get("error"):
+        resp = place_option(
+            call_mcp,
+            occ=leg.occ_symbol,
+            quantity=leg.quantity,
+            instruction=leg.instruction,
+            live=True,
+        )
+        item = {"leg": leg.to_dict(), "response": resp}
+        responses.append(item)
+        append_audit(
+            "multileg_leg_submit",
+            payload={
+                "occ": leg.occ_symbol,
+                "instruction": leg.instruction,
+                "ok": order_submitted_ok(resp),
+            },
+        )
+        if not order_submitted_ok(resp) or resp.get("error"):
+            # reverse any successful opens
+            revs = _reverse_opened_legs(call_mcp, opened, live=True)
             order.status = "failed"
             order.broker_response = {
                 "mode": "sequential_multileg",
                 "error": "leg_failed",
                 "responses": responses,
-                "message": "Partial multi-leg risk possible — check TOS immediately",
+                "reversals": revs,
+                "multileg_package": pkg.to_dict(),
+                "message": (
+                    "Multi-leg aborted; attempted reverse of opened legs "
+                    "(verify TOS if any reverse failed)"
+                ),
             }
             return order
+        opened.append(item)
 
     order.status = "submitted"
     order.broker_response = {
@@ -238,5 +303,7 @@ def try_sequential_submit(
         "status": "submitted",
         "responses": responses,
         "multileg_package": pkg.to_dict(),
+        "legs_opened": [x["leg"] for x in opened],
+        "message": "All legs submitted (wing-first); manage exits via OMS",
     }
     return order

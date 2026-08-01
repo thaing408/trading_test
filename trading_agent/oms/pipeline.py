@@ -10,9 +10,16 @@ from trading_agent.export import mac_execute as mx
 from trading_agent.oms.audit import append_audit
 from trading_agent.oms.exits import manage_enabled, manage_open_lots
 from trading_agent.oms.kill_switch import is_killed, kill_switch_status
-from trading_agent.oms.multileg import attach_package_to_order, try_sequential_submit
+from trading_agent.oms.lifecycle import (
+    extract_legs_from_broker_response,
+    register_submitted_lot,
+)
+from trading_agent.oms.multileg import (
+    attach_package_to_order,
+    multileg_live_allowed,
+    try_sequential_submit,
+)
 from trading_agent.oms.pretrade import PretradeConfig, evaluate_pretrade, pretrade_snapshot
-from trading_agent.oms.protect import mark_lot_open_from_submit
 from trading_agent.oms.state import LotStatus, OpenLot, OmsStore
 
 
@@ -124,28 +131,32 @@ def run_oms_consume(
             )
             continue
 
-        # Multi-leg / credit: build package; optional sequential
+        # Multi-leg / credit: package always; LIVE sequential when MULTILEG_LIVE allowed
         if place_path in ("multi_leg_ready", "credit_ready"):
             if place_path == "multi_leg_ready" or (
                 place_path == "credit_ready" and len(order.strike_prices or []) >= 2
             ):
-                if live:
+                if live and multileg_live_allowed():
                     orders[i] = try_sequential_submit(
                         order,
-                        live=live,
+                        live=True,
                         call_mcp=lambda t, p: mx.call_schwab_mcp(t, p),
                     )
                 else:
                     orders[i] = attach_package_to_order(order)
-                    orders[i].status = "dry_run"
+                    orders[i].status = "dry_run" if not live else "ready"
                     orders[i].broker_response = {
                         **(orders[i].broker_response or {}),
-                        "mode": "dry_run",
+                        "mode": "dry_run" if not live else "ready_only",
                         "place_path": place_path,
-                        "message": "Multi-leg/credit package ready; live sequential off by default",
+                        "message": (
+                            "Multi-leg package ready; enable "
+                            "TRADING_AGENT_MULTILEG_LIVE=1 for wing-first LIVE "
+                            "(with one-leg reverse on failure)"
+                        ),
                     }
             else:
-                # single-leg credit (e.g. short put naked) — never auto
+                # single-leg credit naked — never auto
                 orders[i] = mx.submit_order(order, live=False)
                 orders[i].status = "ready"
                 orders[i].broker_response = {
@@ -173,13 +184,13 @@ def run_oms_consume(
             submit_count += 1
             submitted_ids.append(order.order_id)
             lot = _lot_from_order(order, place_path)
-            lot.status = LotStatus.SUBMITTED.value
-            lot.submitted_at = datetime.now(timezone.utc).isoformat()
-            mark_lot_open_from_submit(
+            legs = extract_legs_from_broker_response(order.broker_response or {})
+            register_submitted_lot(
                 oms,
                 lot,
                 broker_response=order.broker_response,
                 fill_entry=float(order.entry or 0),
+                legs=legs or None,
             )
             if mark_processed:
                 oms.mark_processed(order.order_id)
@@ -187,7 +198,6 @@ def run_oms_consume(
             "multi_leg_ready",
             "credit_ready",
         ):
-            # Ensure package present for TOS
             orders[i] = attach_package_to_order(order)
 
     if mark_processed and submitted_ids:
