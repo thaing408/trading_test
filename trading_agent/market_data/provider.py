@@ -1,4 +1,8 @@
-"""Unified OHLCV: Schwab-first (auto), with yfinance fallback."""
+"""Unified OHLCV: IBKR research (optional) → Schwab → yfinance.
+
+IBKR is research-only (historical bars). Never places orders from this module.
+Enable with IBKR_ENABLED=1 and a running TWS/Gateway API socket.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +34,12 @@ def reset_ohlcv_cache() -> None:
     from trading_agent.market_data.schwab_ohlcv import clear_schwab_cache
 
     clear_schwab_cache()
+    try:
+        from trading_agent.market_data.ibkr_ohlcv import clear_ibkr_cache
+
+        clear_ibkr_cache()
+    except Exception:  # noqa: BLE001
+        pass
     _YF_CACHE.clear()
     _LAST_SOURCE.clear()
 
@@ -38,6 +48,10 @@ def _provider_pref(config: AgentConfig | None) -> str:
     if config is not None and getattr(config, "market_data_provider", None):
         return str(config.market_data_provider).strip().lower()
     return os.getenv("TRADING_AGENT_MARKET_DATA", "auto").strip().lower() or "auto"
+
+
+def _ibkr_enabled() -> bool:
+    return os.getenv("IBKR_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _yfinance_ohlcv(symbol: str, interval: str, period: str) -> Dict[str, List[float]]:
@@ -73,7 +87,8 @@ def get_ohlcv(
     Load OHLCV bars for strength gates and technical analysis.
 
     Provider preference (TRADING_AGENT_MARKET_DATA or config.market_data_provider):
-      - auto (default): Schwab when token available, else yfinance
+      - auto (default): IBKR (if IBKR_ENABLED) → Schwab → yfinance
+      - ibkr: IBKR research only (empty on failure)
       - schwab: Schwab only (empty on failure)
       - yfinance: yfinance only
     """
@@ -112,8 +127,42 @@ def get_ohlcv(
     pref = _provider_pref(config)
     empty = {"close": [], "high": [], "low": [], "volume": []}
 
+    want_ibkr = pref in ("auto", "ibkr", "ibkr_tws", "tws") and (
+        pref != "auto" or _ibkr_enabled()
+    )
     want_schwab = pref in ("auto", "schwab")
     want_yf = pref in ("auto", "yfinance", "yf")
+
+    # Research-only IBKR (never used for order placement in this module)
+    if want_ibkr:
+        try:
+            from trading_agent.market_data.ibkr_ohlcv import (
+                fetch_ibkr_ohlcv,
+                ibkr_available,
+                last_ibkr_error,
+            )
+
+            if ibkr_available():
+                bars = fetch_ibkr_ohlcv(symbol, interval=interval, period=period)
+                if bars.get("close"):
+                    _LAST_SOURCE[symbol.upper()] = "ibkr"
+                    return bars
+                logger.warning(
+                    "IBKR empty bars for %s %s/%s (%s)",
+                    symbol,
+                    interval,
+                    period,
+                    last_ibkr_error() or "no data",
+                )
+            elif pref in ("ibkr", "ibkr_tws", "tws"):
+                logger.warning("IBKR not available for %s", symbol)
+                _LAST_SOURCE[symbol.upper()] = "ibkr_unavailable"
+                return empty
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IBKR OHLCV failed for %s: %s", symbol, exc)
+            if pref in ("ibkr", "ibkr_tws", "tws"):
+                _LAST_SOURCE[symbol.upper()] = "ibkr_error"
+                return empty
 
     if want_schwab:
         try:

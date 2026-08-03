@@ -271,6 +271,7 @@ def decide_candidate(
         setup_grade=grade,
         grade_score=float(getattr(candidate, "grade_score", 0.0) or 0.0),
         hold_style=hold,
+        market_data_source=getattr(candidate, "market_data_source", "") or "",
     )
     apply_risk_rating(approved, rr)
     return decision, approved.decision_explanation, scorecard, scorecard.challenges, approved
@@ -350,6 +351,7 @@ def process_all_candidates(
                     why_it_fails=_why_it_fails(candidate, scorecard),
                     thesis_invalidation=_thesis_invalidation(candidate, context),
                     hedge_fund_approve="No",
+                    market_data_source=getattr(candidate, "market_data_source", "") or "",
                 )
             )
 

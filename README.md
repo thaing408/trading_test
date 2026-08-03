@@ -142,7 +142,7 @@ The desk uses a **pluggable multi-provider layer** (`trading_agent/providers/`) 
 | **yfinance** | Primary free quotes / OHLCV / news |
 | **Finnhub, Alpha Vantage, Twelve Data, Tiingo, Marketstack** | Env-gated secondary HTTP market data / news |
 | **Alpaca, Tradier** | Optional brokerage positions (fail-closed if keys missing) |
-| **IBKR TWS** | Optional advanced brokerage (flag only; requires Gateway) |
+| **IBKR TWS** | **Research OHLCV** when `IBKR_ENABLED=1` (read-only history; no order placement). Live trading stays Schwab. |
 
 See **[docs/provider_phase_mapping.md](docs/provider_phase_mapping.md)** for the full OBJECTIVE source → phase table.
 
@@ -184,8 +184,10 @@ See `.env.example`. Key vars (written by the installer):
 - `TRADING_AGENT_DRY_RUN=1` / `TRADING_AGENT_NO_DISCORD=1` — no Discord posts
 - `TRADING_AGENT_ENV_FILE` — alternate env path
 - `TRADING_AGENT_TIMEZONE=America/Los_Angeles`
-- `TRADING_AGENT_MARKET_DATA=auto|schwab|yfinance` — OHLCV for TR strength/technicals (default **auto**: Schwab `~/.schwab-mcp/token.json`, else yfinance)
+- `TRADING_AGENT_MARKET_DATA=auto|ibkr|schwab|yfinance` — OHLCV for TR strength/technicals (default **auto**: IBKR if `IBKR_ENABLED`, else Schwab `~/.schwab-mcp/token.json`, else yfinance)
+- `IBKR_ENABLED=1` — research-only IBKR historical bars via TWS/Gateway (`pip install ib_insync`; ports: TWS live **7496** / paper 7497, Gateway 4001/4002). Optional: `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID`, `IBKR_READONLY=1`
 - `SCHWAB_TOKEN_PATH` — override Schwab OAuth token path
+- Ping: `IBKR_ENABLED=1 python scripts/ibkr_research_ping.py` (and `--via-provider` for full chain)
 - `TRADING_AGENT_INTRADAY_INTERVAL` — baseline desk cycle minutes when **flat** (default **15**)
 - `TRADING_AGENT_INTRADAY_IN_POSITION_INTERVAL` — PT/SL re-check minutes while **open positions** exist (default **3**, must be &lt; baseline)
 

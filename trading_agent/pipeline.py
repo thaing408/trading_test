@@ -295,11 +295,35 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             pattern_hits.append(f"{cand.symbol}: {tech.pattern_summary}")
     # Also scan strength rejects' technical if available — analyzed only survivors+passed path
     # Include rejections that still went through analysis (only analyzed list)
+    # Stamp per-name OHLCV provider for CIO research visibility (not trading).
+    try:
+        from trading_agent.market_data import last_ohlcv_source
+
+        for opp in opportunities:
+            src = last_ohlcv_source(opp.symbol) or ("fixture" if config.fixture_mode else "unknown")
+            opp.market_data_source = src
+    except Exception:  # noqa: BLE001
+        pass
+
+    ohlcv_sources = {
+        o.symbol: (o.market_data_source or "unknown") for o in opportunities
+    }
+    ibkr_n = sum(1 for s in ohlcv_sources.values() if s == "ibkr")
     research_summary: Dict[str, Any] = {
         "market_source": market.source,
         "calendar_source": calendar.source,
         "news_source": news.source,
         "screener_source": screener.source,
+        "ohlcv_sources": ohlcv_sources,
+        "ohlcv_ibkr_count": ibkr_n,
+        "ohlcv_source_majority": (
+            max(set(ohlcv_sources.values()), key=list(ohlcv_sources.values()).count)
+            if ohlcv_sources
+            else ("fixture" if config.fixture_mode else "unknown")
+        ),
+        "ohlcv_research_note": (
+            "Bars for ranked setups only — IBKR never routes orders; Mac LIVE = Schwab"
+        ),
         "candidates_screened": len(screener.candidates),
         "scan_universe_size": len(getattr(config.screener, "symbols", []) or []),
         "rejected_count": len(all_rejections),

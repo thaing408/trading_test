@@ -35,7 +35,9 @@ def test_candles_to_ohlcv_sorts():
     assert o["volume"] == [5.0, 10.0]
 
 
-def test_provider_prefers_schwab_when_available():
+def test_provider_prefers_schwab_when_available(monkeypatch):
+    # Without IBKR_ENABLED, auto chain is Schwab → yfinance
+    monkeypatch.delenv("IBKR_ENABLED", raising=False)
     reset_ohlcv_cache()
     schwab_bars = {
         "open": [1.0],
@@ -63,7 +65,8 @@ def test_provider_prefers_schwab_when_available():
     yf.assert_not_called()
 
 
-def test_provider_falls_back_to_yfinance_on_schwab_error():
+def test_provider_falls_back_to_yfinance_on_schwab_error(monkeypatch):
+    monkeypatch.delenv("IBKR_ENABLED", raising=False)
     reset_ohlcv_cache()
     cfg = AgentConfig(fixture_mode=False, use_live_data=True, market_data_provider="auto")
     yf_bars = {"close": [10.0], "high": [11.0], "low": [9.0], "volume": [1.0], "open": [10.0]}

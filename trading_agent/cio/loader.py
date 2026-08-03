@@ -21,11 +21,29 @@ def _load_json(path: Path) -> dict:
         return json.load(f)
 
 
+def _trade_candidate_from_dict(raw: dict) -> TradeCandidate:
+    """Build TradeCandidate ignoring unknown keys (forward/back compat)."""
+    import dataclasses
+
+    names = {f.name for f in dataclasses.fields(TradeCandidate)}
+    payload = {k: v for k, v in raw.items() if k in names}
+    return TradeCandidate(**payload)
+
+
 def load_from_fixture(path: str | None) -> Tuple[List[TradeCandidate], PhaseContext]:
     file_path = Path(path) if path else FIXTURE_DIR / "cio_inputs.json"
     data = _load_json(file_path)
-    candidates = [TradeCandidate(**c) for c in data.get("candidates", [])]
+    candidates = [_trade_candidate_from_dict(c) for c in data.get("candidates", [])]
+    for c in candidates:
+        if not c.market_data_source:
+            c.market_data_source = "fixture"
     ctx_data = data.get("context", {})
+    sources = dict(ctx_data.get("research_data_sources") or {})
+    board = list(ctx_data.get("research_board_lines") or [])
+    if not sources or not board:
+        auto_s, auto_b = _research_board_from_candidates(candidates)
+        sources = sources or auto_s
+        board = board or auto_b
     context = PhaseContext(
         overall_market_bias=ctx_data.get("overall_market_bias", ""),
         market_environment_score=ctx_data.get("market_environment_score", 50.0),
@@ -36,6 +54,13 @@ def load_from_fixture(path: str | None) -> Tuple[List[TradeCandidate], PhaseCont
         sector_refinement=ctx_data.get("sector_refinement", {}),
         weakest_strategies=ctx_data.get("weakest_strategies", []),
         performance_notes=ctx_data.get("performance_notes", []),
+        research_data_sources=sources,
+        research_board_lines=board,
+        research_ohlcv_note=ctx_data.get(
+            "research_ohlcv_note",
+            "OHLCV is research-only (IBKR when enabled → Schwab → yfinance). "
+            "Live orders stay on Schwab — IBKR never places trades here.",
+        ),
     )
     return candidates, context
 
@@ -84,13 +109,39 @@ def _candidate_from_ranked(item: dict, rank: int) -> TradeCandidate:
     )
 
 
+def _research_board_from_candidates(candidates: List[TradeCandidate]) -> tuple[dict, list]:
+    """Build CIO-facing research board (sources + display lines)."""
+    sources: dict[str, str] = {}
+    lines: list[str] = []
+    for c in candidates:
+        src = (getattr(c, "market_data_source", None) or "unknown").strip() or "unknown"
+        sources[c.symbol] = src
+        tag = src.upper() if src != "unknown" else "?"
+        lines.append(
+            f"#{c.phase1_rank} **{c.symbol}** [{getattr(c, 'setup_grade', 'C') or 'C'}] "
+            f"{c.direction} {c.strategy} | conf {c.confidence_score:.0f} | "
+            f"bars=`{tag}`"
+        )
+    return sources, lines
+
+
 def build_cio_context_from_plan(plan: DailyTradingPlan, intraday_flags: dict | None = None) -> PhaseContext:
+    rs = plan.research_summary or {}
+    sources = dict(rs.get("ohlcv_sources") or {})
     return PhaseContext(
         overall_market_bias=plan.overall_market_bias,
         market_environment_score=plan.market_environment_score,
         market_regime=infer_market_regime(plan.overall_market_bias),
         stay_in_cash=plan.stay_in_cash,
         intraday_flags=intraday_flags or {},
+        research_data_sources=sources,
+        research_ohlcv_note=str(
+            rs.get("ohlcv_research_note")
+            or (
+                "OHLCV is research-only (IBKR when enabled → Schwab → yfinance). "
+                "Live orders stay on Schwab — IBKR never places trades here."
+            )
+        ),
     )
 
 
@@ -108,12 +159,18 @@ def build_cio_approval_inputs(
                 else "Bearish" if opp.technical.trend == "downtrend"
                 else "Neutral"
             )
+            bar_src = (
+                getattr(opp, "market_data_source", None)
+                or (plan.research_summary or {}).get("ohlcv_sources", {}).get(opp.symbol)
+                or ("fixture" if fixture_mode else "unknown")
+            )
             confirmations = [
                 f"trend:{opp.technical.trend}",
                 f"macd:{opp.technical.macd_signal}",
                 f"vwap:{opp.technical.vwap_relation}",
                 f"ma:{opp.technical.ma_alignment}",
                 f"momentum:{getattr(opp.technical, 'momentum', 'neutral')}",
+                f"ohlcv:{bar_src}",
             ]
             candidates.append(
                 TradeCandidate(
@@ -133,7 +190,8 @@ def build_cio_approval_inputs(
                     catalyst_type="technical_breakout" if "breakout" in (opp.technical.breakout_state or "") else "technical",
                     technical_summary=(
                         f"Trend {opp.technical.trend}, RSI {opp.technical.rsi:.0f}, "
-                        f"ADX {opp.technical.adx:.0f}, TF {opp.technical.timeframe_alignment}"
+                        f"ADX {opp.technical.adx:.0f}, TF {opp.technical.timeframe_alignment} "
+                        f"[bars:{bar_src}]"
                     ),
                     technical_confirmations=confirmations,
                     options_summary=f"IV rank {opp.options.iv_rank:.0f}, liquidity {opp.options.liquidity_score:.0f}",
@@ -150,11 +208,19 @@ def build_cio_approval_inputs(
                     setup_grade=getattr(opp, "setup_grade", "C") or "C",
                     grade_score=float(getattr(opp, "grade_score", 0.0) or 0.0),
                     hold_style=getattr(opp, "hold_style", "") or "",
+                    market_data_source=str(bar_src),
                 )
             )
+        sources, board = _research_board_from_candidates(candidates)
+        context.research_data_sources = sources
+        context.research_board_lines = board
         return candidates, context
     if fixture_mode:
         candidates, fixture_ctx = load_from_fixture(None)
+        for c in candidates:
+            if not getattr(c, "market_data_source", None):
+                c.market_data_source = "fixture"
+        sources, board = _research_board_from_candidates(candidates)
         context = PhaseContext(
             overall_market_bias=plan.overall_market_bias,
             market_environment_score=plan.market_environment_score,
@@ -165,6 +231,10 @@ def build_cio_approval_inputs(
             sector_refinement=fixture_ctx.sector_refinement,
             weakest_strategies=fixture_ctx.weakest_strategies,
             performance_notes=fixture_ctx.performance_notes,
+            research_data_sources=sources or dict(fixture_ctx.research_data_sources or {}),
+            research_board_lines=board or list(fixture_ctx.research_board_lines or []),
+            research_ohlcv_note=fixture_ctx.research_ohlcv_note
+            or context.research_ohlcv_note,
         )
         return candidates, context
     return [], context
@@ -179,7 +249,7 @@ def load_from_session_dir(
         raise FileNotFoundError(f"Missing CIO inputs at {inputs_path}")
 
     data = _load_json(inputs_path)
-    candidates = [TradeCandidate(**c) for c in data.get("candidates", [])]
+    candidates = [_trade_candidate_from_dict(c) for c in data.get("candidates", [])]
     ctx_data = dict(data.get("context", {}))
 
     if mode == "review":
@@ -196,6 +266,12 @@ def load_from_session_dir(
         if flags_path.exists():
             ctx_data["intraday_flags"] = _load_json(flags_path)
 
+    sources = dict(ctx_data.get("research_data_sources") or {})
+    board = list(ctx_data.get("research_board_lines") or [])
+    if candidates and (not sources or not board):
+        auto_s, auto_b = _research_board_from_candidates(candidates)
+        sources = sources or auto_s
+        board = board or auto_b
     context = PhaseContext(
         overall_market_bias=ctx_data.get("overall_market_bias", ""),
         market_environment_score=ctx_data.get("market_environment_score", 50.0),
@@ -206,6 +282,13 @@ def load_from_session_dir(
         sector_refinement=ctx_data.get("sector_refinement", {}),
         weakest_strategies=ctx_data.get("weakest_strategies", []),
         performance_notes=ctx_data.get("performance_notes", []),
+        research_data_sources=sources,
+        research_board_lines=board,
+        research_ohlcv_note=ctx_data.get(
+            "research_ohlcv_note",
+            "OHLCV is research-only (IBKR when enabled → Schwab → yfinance). "
+            "Live orders stay on Schwab — IBKR never places trades here.",
+        ),
     )
     return candidates, context
 

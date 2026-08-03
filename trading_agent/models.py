@@ -203,6 +203,9 @@ class TradeOpportunity:
     pattern_height: float = 0.0
     structure_notes: str = ""
     breakout_type: str = ""  # type_1_momentum … type_4_failed | unknown (live path)
+    # OHLCV provider used for this name's research bars (ibkr|schwab|yfinance|fixture|…)
+    # Research visibility for CIO only — never implies IBKR order routing.
+    market_data_source: str = ""
 
 
 @dataclass

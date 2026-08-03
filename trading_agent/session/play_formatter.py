@@ -304,16 +304,36 @@ def format_cio_plays(report: CIOReport, title: str = "CIO Decision Summary") -> 
         f"Cap efficiency {p.capital_efficiency_score:.0f}",
         "",
     ]
+    # Full research board so CIO (and Discord) can see IBKR-backed setups before decisions
+    board = list(getattr(report.context, "research_board_lines", None) or [])
+    sources = dict(getattr(report.context, "research_data_sources", None) or {})
+    if board or sources:
+        ibkr_n = sum(1 for s in sources.values() if str(s).lower() == "ibkr")
+        lines.append(
+            f"**Research board (CIO visibility — decide trade/no-trade; "
+            f"not IBKR execution):** {len(board) or len(sources)} setup(s)"
+            + (f" | **{ibkr_n}** with bars=`IBKR`" if sources else "")
+        )
+        note = getattr(report.context, "research_ohlcv_note", "") or ""
+        if note:
+            lines.append(f"_{note}_")
+        for row in board[:12]:
+            lines.append(f"- {row}")
+        if len(board) > 12:
+            lines.append(f"_…and **{len(board) - 12}** more on the research board._")
+        lines.append("")
     if report.approved:
         lines.append("**Approved trades** (A+/A first, then by conviction):")
         for trade in report.approved:
+            bars = getattr(trade, "market_data_source", "") or ""
+            bars_bit = f" | bars=`{bars.upper()}`" if bars else ""
             lines.extend(
                 [
                     f"- **#{trade.conviction_rank} {trade.ticker}** [{getattr(trade, 'setup_grade', 'C')}] — {trade.decision}: "
                     f"{trade.direction} {trade.strategy}",
                     f"  Entry ${trade.entry_price:.2f} | Size {trade.position_size_pct:.0f}% | "
                     f"Conf {trade.confidence_score:.0f} | Conviction {trade.conviction_score:.0f} | "
-                    f"R:R {trade.reward_to_risk:.1f}",
+                    f"R:R {trade.reward_to_risk:.1f}{bars_bit}",
                     f"  Works: {(trade.why_it_works or '')[:120]}…",
                     f"  HF approve: {trade.hedge_fund_approve}",
                 ]
@@ -341,7 +361,9 @@ def format_cio_plays(report: CIOReport, title: str = "CIO Decision Summary") -> 
         if not shown_r:
             lines.append("_No rejection detail list (count only)._")
         for item in shown_r:
-            lines.append(f"- {item.ticker} — {item.decision}: {item.explanation}")
+            bars = getattr(item, "market_data_source", "") or ""
+            bars_bit = f" | bars=`{bars}`" if bars else ""
+            lines.append(f"- {item.ticker} — {item.decision}: {item.explanation}{bars_bit}")
         if total_r > len(shown_r):
             lines.append(f"_…and **{total_r - len(shown_r)}** more rejection(s) not shown._")
     if p.sector_allocation:

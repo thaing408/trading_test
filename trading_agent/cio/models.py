@@ -47,6 +47,9 @@ class TradeCandidate:
     setup_grade: str = "C"
     grade_score: float = 0.0
     hold_style: str = ""
+    # Research OHLCV provider for this candidate (ibkr|schwab|yfinance|fixture|…)
+    # Visibility for CIO decisions only — not a broker route.
+    market_data_source: str = ""
 
 
 @dataclass
@@ -62,6 +65,13 @@ class PhaseContext:
     performance_notes: List[str] = field(default_factory=list)
     # Optional sector strength map (e.g. XLK: +0.5) from MI when available
     sector_strength: Dict[str, float] = field(default_factory=dict)
+    # Research board for CIO visibility (names + bar source). Not execution.
+    research_data_sources: Dict[str, str] = field(default_factory=dict)
+    research_board_lines: List[str] = field(default_factory=list)
+    research_ohlcv_note: str = (
+        "OHLCV is research-only (IBKR when enabled → Schwab → yfinance). "
+        "Live orders stay on Schwab — IBKR never places trades here."
+    )
 
 
 @dataclass
@@ -132,6 +142,7 @@ class ApprovedTrade:
     setup_grade: str = "C"
     grade_score: float = 0.0
     hold_style: str = ""
+    market_data_source: str = ""
 
 
 @dataclass
@@ -143,6 +154,7 @@ class RejectedDecision:
     why_it_fails: str = ""
     thesis_invalidation: str = ""
     hedge_fund_approve: str = "No"
+    market_data_source: str = ""
 
 
 @dataclass

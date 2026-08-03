@@ -421,7 +421,6 @@ def _run_research(args: argparse.Namespace) -> int:
                 handle.write(text)
         return 0
     print(
-    print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | methods-backtest",
         file=sys.stderr,
