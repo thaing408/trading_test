@@ -45,6 +45,10 @@ class OpenPosition:
     negation_level: float = 0.0
     measured_target: float = 0.0
     breakout_type: str = ""
+    # equity | option — never compare option premium PT/SL to underlying stock
+    instrument_type: str = "equity"
+    underlying: str = ""
+    mark_source: str = ""
 
 
 @dataclass

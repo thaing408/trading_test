@@ -37,10 +37,20 @@ def detect_alerts(
     if int(getattr(position, "quantity", 0) or 0) <= 0:
         return alerts
 
-    sym_data = snapshot.symbols.get(position.symbol)
-    price = sym_data.price if sym_data else position.current_price or position.entry_price
+    instr = (getattr(position, "instrument_type", None) or "equity").lower()
+    is_option = instr == "option" or "option" in (position.strategy or "").lower()
+    # Options: always use premium mark on the lot (never underlying equity print).
+    sym_data = None if is_option else snapshot.symbols.get(position.symbol)
+    if not is_option and sym_data is None and getattr(position, "underlying", None):
+        sym_data = snapshot.symbols.get(position.underlying)
+    if is_option:
+        price = position.current_price or position.entry_price
+    else:
+        price = sym_data.price if sym_data else position.current_price or position.entry_price
     # Missing quotes (price<=0) used to force stop-loss on junk/None rows.
     has_price = price is not None and price > 0
+    unit = "prem" if is_option else "px"
+    mark_src = getattr(position, "mark_source", "") or ("premium" if is_option else "quote")
 
     if has_price and position.stop_loss > 0 and price <= position.stop_loss * (
         1 + risk_config.stop_loss_tolerance_pct / 100
@@ -49,7 +59,11 @@ def detect_alerts(
             Alert(
                 alert_type="stop_loss_triggered",
                 symbol=position.symbol,
-                message=f"Price ${price:.2f} at/below stop ${position.stop_loss:.2f}",
+                message=(
+                    f"{unit} ${price:.2f} ≤ stop ${position.stop_loss:.2f}"
+                    f" (entry ${position.entry_price:.2f}, src={mark_src}"
+                    f"{', OPTION' if is_option else ''})"
+                ),
                 recommended_response="Exit position immediately to limit loss",
                 severity="critical",
             )
@@ -62,14 +76,19 @@ def detect_alerts(
             Alert(
                 alert_type="profit_target_reached",
                 symbol=position.symbol,
-                message=f"Price ${price:.2f} at/above target ${position.profit_target:.2f}",
+                message=(
+                    f"{unit} ${price:.2f} ≥ target ${position.profit_target:.2f}"
+                    f" (entry ${position.entry_price:.2f}, src={mark_src}"
+                    f"{', OPTION' if is_option else ''})"
+                ),
                 recommended_response="Take Partial Profit or Exit per plan",
                 severity="high",
             )
         )
 
     # Brandt LFD / TechCharts Type 1–4 path alerts (structure, not fixed %)
-    if has_price:
+    # Skip for option premium lots — structure levels are underlying-based.
+    if has_price and not is_option:
         levels = _structure_levels(position)
         lfd = levels["lfd_level"]
         brk = levels["breakout_level"]

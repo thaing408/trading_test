@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -359,18 +359,279 @@ def render_breakout_backtest(result: OdteBacktestResult) -> str:
     return style_note + "\n" + text
 
 
-def format_breakout_brief(symbol: str = "QQQ", *, cfg: BreakoutPlaybookConfig | None = None) -> str:
+@dataclass
+class BreakoutSnapshot:
+    """Live 888 TI decision inputs (opening-range continuation)."""
+
+    symbol: str
+    decision: str  # LONG | SHORT | WAIT | NO_OR | ERROR
+    last: Optional[float]
+    orh: Optional[float]
+    orl: Optional[float]
+    or_ready: bool
+    in_trade_window: bool
+    session_date: str = ""
+    asof_et: str = ""
+    data_source: str = ""
+    bar_interval: str = "15m"
+    error: str = ""
+    note: str = ""
+
+
+def compute_breakout_snapshot(
+    symbol: str = "QQQ",
+    *,
+    cfg: BreakoutPlaybookConfig | None = None,
+    data_source: str = "auto",
+    period: str = "5d",
+    now_et: Optional[datetime] = None,
+    df=None,
+) -> BreakoutSnapshot:
+    """Compute OR levels + simple LONG/SHORT/WAIT decision for 888 TI card."""
+    from trading_agent.odte.backtest import ET, _day_slice, _session_days
+
     cfg = cfg or BreakoutPlaybookConfig(symbol=symbol)
+    cfg.symbol = symbol.upper().strip()
+    now = now_et or datetime.now(ET)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ET)
+    else:
+        now = now.astimezone(ET)
+
+    try:
+        if df is None:
+            df = fetch_htf_bars(
+                cfg.symbol,
+                period=period,
+                interval=cfg.bar_interval,
+                source=data_source,
+            )
+        days = _session_days(df)
+        if not days:
+            return BreakoutSnapshot(
+                symbol=cfg.symbol,
+                decision="ERROR",
+                last=None,
+                orh=None,
+                orl=None,
+                or_ready=False,
+                in_trade_window=False,
+                error="no session days in bars",
+                data_source=str(getattr(df, "attrs", {}).get("data_source") or data_source),
+                bar_interval=cfg.bar_interval,
+            )
+        # Prefer today's RTH session; else last available session (after close / weekend)
+        today = now.date()
+        d = today if today in days else days[-1]
+        day_df = _day_slice(df, d)
+        rth = day_df.between_time(time(9, 30), time(16, 0))
+        or_n = _or_bar_count(cfg.bar_interval, cfg.or_minutes)
+        or_ready = len(rth) >= or_n
+        orh = orl = None
+        if or_ready:
+            head = rth.iloc[:or_n]
+            orh = float(head["High"].max())
+            orl = float(head["Low"].min())
+        last = None
+        if not rth.empty:
+            last = float(rth["Close"].iloc[-1])
+        elif not day_df.empty:
+            last = float(day_df["Close"].iloc[-1])
+
+        t_now = now.timetz().replace(tzinfo=None) if False else now.time()
+        # Window only meaningful on the session day we're viewing
+        in_window = (
+            d == today
+            and cfg.window_start_et <= t_now <= cfg.window_end_et
+        )
+        # Before OR complete
+        if not or_ready or orh is None or orl is None:
+            decision = "NO_OR"
+            note = f"Need first {cfg.or_minutes}m of RTH for OR box"
+        elif last is None:
+            decision = "ERROR"
+            note = "No last price"
+        else:
+            side = breakout_side_from_close(
+                last,
+                orh,
+                orl,
+                require_close_beyond=cfg.require_close_beyond,
+            )
+            if side == "CALL":
+                decision = "LONG"
+                note = "Close above OR high → continuation long (calls)"
+            elif side == "PUT":
+                decision = "SHORT"
+                note = "Close below OR low → continuation short (puts)"
+            else:
+                decision = "WAIT"
+                note = "Inside OR box — no breakout yet"
+            if decision in ("LONG", "SHORT") and d == today and not in_window:
+                note += " · outside preferred entry window (still a structure read)"
+            if d != today:
+                note += f" · levels from last session {d.isoformat()}"
+
+        if cfg.puts_only and decision == "LONG":
+            decision = "WAIT"
+            note = "Puts-only mode — ignore long breakouts"
+        if cfg.calls_only and decision == "SHORT":
+            decision = "WAIT"
+            note = "Calls-only mode — ignore short breakouts"
+
+        return BreakoutSnapshot(
+            symbol=cfg.symbol,
+            decision=decision,
+            last=last,
+            orh=orh,
+            orl=orl,
+            or_ready=or_ready,
+            in_trade_window=in_window,
+            session_date=d.isoformat(),
+            asof_et=now.strftime("%Y-%m-%d %H:%M ET"),
+            data_source=str(getattr(df, "attrs", {}).get("data_source") or data_source),
+            bar_interval=cfg.bar_interval,
+            note=note,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return BreakoutSnapshot(
+            symbol=cfg.symbol,
+            decision="ERROR",
+            last=None,
+            orh=None,
+            orl=None,
+            or_ready=False,
+            in_trade_window=False,
+            asof_et=now.strftime("%Y-%m-%d %H:%M ET"),
+            data_source=data_source,
+            bar_interval=cfg.bar_interval,
+            error=str(exc)[:200],
+            note="Could not load bars",
+        )
+
+
+def format_888_ti_card(snap: BreakoutSnapshot, *, cfg: BreakoutPlaybookConfig | None = None) -> str:
+    """Visually simple 888 TI decision card (Discord / terminal)."""
+    cfg = cfg or BreakoutPlaybookConfig(symbol=snap.symbol)
+    dec = (snap.decision or "WAIT").upper()
+    emoji = {
+        "LONG": "🟢 LONG",
+        "SHORT": "🔴 SHORT",
+        "WAIT": "🟡 WAIT",
+        "NO_OR": "⚪ WAIT",
+        "ERROR": "⚠️ ERROR",
+    }.get(dec, f"🟡 {dec}")
+
+    def _px(x: Optional[float]) -> str:
+        if x is None:
+            return "—"
+        return f"{x:,.2f}"
+
+    # Simple ladder: ORH / last / ORL
+    orh_s = _px(snap.orh)
+    orl_s = _px(snap.orl)
+    last_s = _px(snap.last)
+    mid_mark = "●"
+    if snap.last is not None and snap.orh is not None and snap.orl is not None:
+        if snap.last > snap.orh:
+            mid_mark = "▲ LONG zone"
+        elif snap.last < snap.orl:
+            mid_mark = "▼ SHORT zone"
+        else:
+            mid_mark = "● inside box"
+
+    # Distance to levels
+    dist_lines: list[str] = []
+    if snap.last is not None and snap.orh is not None and snap.orl is not None:
+        up = snap.orh - snap.last
+        dn = snap.last - snap.orl
+        if dec == "WAIT" or dec == "NO_OR":
+            dist_lines.append(f"  to LONG break:  +{_px(up)}  (need close > ORH)")
+            dist_lines.append(f"  to SHORT break: -{_px(dn)}  (need close < ORL)")
+        elif dec == "LONG":
+            dist_lines.append(f"  above ORH by {_px(snap.last - snap.orh)}")
+        elif dec == "SHORT":
+            dist_lines.append(f"  below ORL by {_px(snap.orl - snap.last)}")
+
+    action = {
+        "LONG": "ACTION → consider CALL / long debit  |  stop if back inside OR",
+        "SHORT": "ACTION → consider PUT / short debit  |  stop if back inside OR",
+        "WAIT": "ACTION → NO TRADE  |  wait for close outside the box",
+        "NO_OR": "ACTION → NO TRADE  |  wait for opening range to print",
+        "ERROR": "ACTION → NO TRADE  |  fix data / retry",
+    }.get(dec, "ACTION → NO TRADE")
+
     lines = [
-        format_style_brief(TradingStyle.BREAKOUT).rstrip(),
+        "╔══════════════════════════════════════╗",
+        f"║  888 TI · {snap.symbol:<5} · BREAKOUT      ║",
+        "╚══════════════════════════════════════╝",
         "",
-        f"**{cfg.symbol} breakout rules (desk)**",
-        f"- Bars: {cfg.bar_interval} | OR: first {cfg.or_minutes}m from 9:30 ET",
-        f"- Window: {cfg.window_start_et.strftime('%H:%M')}–{cfg.window_end_et.strftime('%H:%M')} ET",
-        f"- CALL: close above OR high | PUT: close below OR low",
-        f"- Target DTE≈{cfg.target_dte} | TP +{cfg.take_profit_pct:.0%} / SL -{cfg.stop_loss_pct * 100:.0f}%",
-        "- Opposite of Shen mean-reversion (do not fade OR with RSI extremes on this path)",
+        f"  DECISION   {emoji}",
+        f"  {action}",
         "",
-        "_Educational scaffold — confirm on chart; not auto-execution._",
+        "  ── Opening range (box) ──",
+        f"       ORH  {orh_s:>10}   ← break above = LONG",
+        f"            {mid_mark}",
+        f"      LAST  {last_s:>10}",
+        f"            │",
+        f"       ORL  {orl_s:>10}   ← break below = SHORT",
+        "",
     ]
+    if dist_lines:
+        lines.extend(dist_lines)
+        lines.append("")
+
+    lines.extend(
+        [
+            "  ── One-screen rules ──",
+            "  ✅ Trade WITH the break (continuation)",
+            "  ❌ Do NOT fade OR with RSI (that’s Shen MR)",
+            f"  🛑 Invalid: reclaim back inside OR after break",
+            f"  🎯 Bracket: TP +{cfg.take_profit_pct:.0%}  /  SL −{cfg.stop_loss_pct:.0%}"
+            f"  ·  DTE~{cfg.target_dte}  ·  {cfg.bar_interval}",
+            f"  ⏰ Window: {cfg.window_start_et.strftime('%H:%M')}–"
+            f"{cfg.window_end_et.strftime('%H:%M')} ET"
+            + ("  · IN WINDOW" if snap.in_trade_window else ""),
+            "",
+            f"  session {snap.session_date or '—'}  ·  {snap.asof_et or '—'}"
+            f"  ·  bars:{snap.data_source or '?'}",
+        ]
+    )
+    if snap.note:
+        lines.append(f"  note: {snap.note}")
+    if snap.error:
+        lines.append(f"  error: {snap.error}")
+    lines.append("")
+    lines.append("_888 TI card — confirm on chart · not auto-execution · Schwab for live_")
     return "\n".join(lines) + "\n"
+
+
+def format_breakout_brief(
+    symbol: str = "QQQ",
+    *,
+    cfg: BreakoutPlaybookConfig | None = None,
+    data_source: str = "auto",
+    period: str = "5d",
+    live: bool = True,
+) -> str:
+    """888 TI decision card (simple visual). Falls back to static card if offline."""
+    cfg = cfg or BreakoutPlaybookConfig(symbol=symbol)
+    if live:
+        snap = compute_breakout_snapshot(
+            symbol, cfg=cfg, data_source=data_source, period=period
+        )
+        return format_888_ti_card(snap, cfg=cfg)
+
+    # Offline / fixture: static visual without prices
+    snap = BreakoutSnapshot(
+        symbol=cfg.symbol.upper(),
+        decision="WAIT",
+        last=None,
+        orh=None,
+        orl=None,
+        or_ready=False,
+        in_trade_window=False,
+        note="Static card (live=False) — pass live data for levels",
+        bar_interval=cfg.bar_interval,
+    )
+    return format_888_ti_card(snap, cfg=cfg)

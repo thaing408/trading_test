@@ -77,6 +77,16 @@ def position_from_row(row: Mapping[str, Any]) -> OpenPosition | None:
     if not isinstance(strikes, list):
         strikes = []
 
+    instr = str(row.get("instrument_type") or row.get("asset_type") or "equity").lower()
+    if "option" in instr:
+        instr = "option"
+    else:
+        instr = "equity"
+    underlying = str(row.get("underlying") or "").strip().upper()
+    if not underlying and instr == "option":
+        # "PLTR 08/07/26 120 Put" style thesis/symbol fallback
+        underlying = symbol.split()[0].upper() if symbol else ""
+
     return OpenPosition(
         symbol=symbol,
         strategy=str(row.get("strategy") or row.get("broker") or "position"),
@@ -94,6 +104,9 @@ def position_from_row(row: Mapping[str, Any]) -> OpenPosition | None:
         trailing_stop_pct=float(row.get("trailing_stop_pct") or 2.0),
         max_risk_dollars=float(row.get("max_risk_dollars") or 500.0),
         pending_entry=bool(row.get("pending_entry", False)),
+        instrument_type=instr,
+        underlying=underlying,
+        mark_source=str(row.get("mark_source") or ("premium" if instr == "option" else "file")),
     )
 
 

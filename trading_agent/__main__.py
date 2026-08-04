@@ -62,7 +62,10 @@ def _run_odte(args: argparse.Namespace) -> int:
                 with open(args.output, "w", encoding="utf-8") as handle:
                     handle.write(text)
             return 0
-        text = format_breakout_brief(cfg.symbol, cfg=cfg)
+        # Simple visual 888 TI decision card (not long rule lists)
+        text = format_breakout_brief(
+            cfg.symbol, cfg=cfg, data_source=source, period="5d", live=True
+        )
         print(text)
         if args.output:
             with open(args.output, "w", encoding="utf-8") as handle:
@@ -285,6 +288,57 @@ def _run_oms(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 2
+
+
+def _run_ti888(args: argparse.Namespace) -> int:
+    """888 TI TV panel → one-glance card (optionally Discord)."""
+    import sys
+
+    from trading_agent.ti888.panel import format_ti888_card, parse_ti888_text
+
+    raw = getattr(args, "paste", None) or ""
+    paste_file = getattr(args, "paste_file", None)
+    if paste_file:
+        with open(paste_file, encoding="utf-8") as handle:
+            raw = handle.read()
+    if not (raw or "").strip() and not sys.stdin.isatty():
+        raw = sys.stdin.read()
+    if not (raw or "").strip():
+        print(
+            "Paste 888 TI panel text via --paste '...' or --paste-file or stdin.\n"
+            "Example fields: WAIT, Confidence 49/100, Market PASS..., Structure FAIL...",
+            file=sys.stderr,
+        )
+        return 2
+
+    panel = parse_ti888_text(raw, symbol=getattr(args, "symbol", "") or "")
+    text = format_ti888_card(panel)
+    print(text)
+    if getattr(args, "output", None):
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    if getattr(args, "discord", False):
+        import os
+
+        from trading_agent.discord.config import DiscordConfig
+        from trading_agent.discord.poster import post_message
+
+        if not os.getenv("DISCORD_TOKEN") and os.getenv("DISCORD_BOT_TOKEN"):
+            os.environ["DISCORD_TOKEN"] = os.environ["DISCORD_BOT_TOKEN"]
+        if os.getenv("DISCORD_DESK_CHANNEL_ID") and not os.getenv("DISCORD_CHANNEL_ID"):
+            os.environ["DISCORD_CHANNEL_ID"] = os.environ["DISCORD_DESK_CHANNEL_ID"]
+        cfg = DiscordConfig.from_env()
+        if cfg.bot_token and cfg.channel_id:
+            cfg = DiscordConfig(
+                webhook_url=None,
+                bot_token=cfg.bot_token,
+                channel_id=cfg.channel_id,
+            )
+        body = f"```\n{text.rstrip()}\n```"
+        post_message(body, cfg, username="888 TI")
+        print("[discord] posted 888 TI simple card", file=sys.stderr)
+    return 0
 
 
 def _run_research(args: argparse.Namespace) -> int:
@@ -750,6 +804,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     odte.add_argument("--output", "-o", metavar="FILE", help="Write brief/report to file")
 
+    ti888 = subparsers.add_parser(
+        "ti888",
+        help="888 TI (TradingView panel) → simple DECISION card (paste panel text)",
+    )
+    ti888.add_argument("--symbol", default="", help="Ticker (e.g. ORCL)")
+    ti888.add_argument(
+        "--paste",
+        default=None,
+        help="Paste of 888 TI table (or use --paste-file / stdin)",
+    )
+    ti888.add_argument(
+        "--paste-file",
+        default=None,
+        metavar="FILE",
+        help="File with pasted 888 TI table text",
+    )
+    ti888.add_argument(
+        "--discord",
+        action="store_true",
+        help="Post simple card to Discord desk channel",
+    )
+    ti888.add_argument("--output", "-o", metavar="FILE", help="Write card to file")
+
     qt = subparsers.add_parser(
         "qt",
         help="QT open-window mech model (9:30–9:50 ET PO3+CISD proxies → auto-trade book)",
@@ -955,6 +1032,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_backtest(args)
     if args.command == "odte":
         return _run_odte(args)
+    if args.command == "ti888":
+        return _run_ti888(args)
     if args.command == "qt":
         return _run_qt(args)
     if args.command == "oms":

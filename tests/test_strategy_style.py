@@ -115,5 +115,7 @@ def test_run_breakout_backtest_on_synthetic():
     text = render_breakout_backtest(result)
     assert "Breakout" in text
     assert "Win rate" in text
-    brief = format_breakout_brief("QQQ")
-    assert "OR" in brief or "breakout" in brief.lower()
+    brief = format_breakout_brief("QQQ", live=False)
+    assert "888 TI" in brief
+    assert "DECISION" in brief
+    assert "ORH" in brief and "ORL" in brief

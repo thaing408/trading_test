@@ -637,7 +637,17 @@ def format_intraday_plays(report: IntradayReport, cycle: int) -> str:
         idle = [r for r in report.recommendations if r.action in _IDLE_ACTIONS]
         lines.append("**Position actions:**")
         for rec in active + idle:
-            lines.append(f"- **{rec.symbol}** — **{rec.action}**: {rec.why_recommended}")
+            # Prefer alert messages that include mark vs stop/target for auditability
+            detail = rec.why_recommended
+            for a in rec.alerts or []:
+                if a.alert_type in (
+                    "stop_loss_triggered",
+                    "profit_target_reached",
+                    "risk_limit_breach",
+                ) and a.message:
+                    detail = a.message
+                    break
+            lines.append(f"- **{rec.symbol}** — **{rec.action}**: {detail}")
     elif report.no_open_positions:
         watch_plays = build_watchlist_plays(report)
         if watch_plays:

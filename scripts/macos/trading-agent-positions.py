@@ -55,13 +55,23 @@ def schwab_to_trading_agent(schwab_payload: dict) -> dict:
             parsed = _parse_occ(symbol)
             underlying = parsed["underlying"] if parsed else symbol.split()[0]
             entry = avg if avg > 0 else max(mkt / max(qty * 100, 1), 0.01)
+            # Option mark = premium per share (not underlying stock)
             current = mkt / max(qty * 100, 1) if mkt else entry
             strike = parsed["strike"] if parsed else entry
             expiry = parsed["expiration"] if parsed else "2099-12-31"
-            strat = f"Long {parsed['option_type']}" if parsed else "Long Option"
+            otype = parsed["option_type"] if parsed else "Option"
+            strat = f"Long {otype}"
+            # Distinct manage key so desk never quotes PLTR stock against option premium levels
+            if parsed:
+                cp = "C" if otype == "Call" else "P"
+                manage_sym = f"{underlying}_{expiry.replace('-', '')[2:]}{cp}{int(round(strike * 1000)):08d}"
+            else:
+                manage_sym = f"{underlying}_OPT"
             positions.append(
                 {
-                    "symbol": underlying,
+                    "symbol": manage_sym,
+                    "underlying": underlying,
+                    "instrument_type": "option",
                     "strategy": strat,
                     "entry_price": round(entry, 4),
                     "stop_loss": round(entry * 0.7, 4),
@@ -69,13 +79,16 @@ def schwab_to_trading_agent(schwab_payload: dict) -> dict:
                     "strike_prices": [strike],
                     "expiration": expiry,
                     "quantity": qty,
-                    "thesis": row.get("description") or f"Open {underlying} position",
+                    "thesis": row.get("description")
+                    or f"{underlying} {expiry} ${strike:g} {otype}",
                     "original_probability": 0.5,
                     "original_confidence": 60.0,
                     "current_price": round(current, 4),
+                    "mark_source": "schwab_premium",
                     "allows_averaging_down": False,
                     "trailing_stop_pct": 2.0,
                     "max_risk_dollars": round(entry * qty * 100, 2),
+                    "broker_symbol": symbol,
                 }
             )
         else:
@@ -84,6 +97,8 @@ def schwab_to_trading_agent(schwab_payload: dict) -> dict:
             positions.append(
                 {
                     "symbol": symbol,
+                    "underlying": symbol,
+                    "instrument_type": "equity",
                     "strategy": "Long Equity",
                     "entry_price": round(entry, 4),
                     "stop_loss": round(entry * 0.92, 4),
@@ -95,9 +110,11 @@ def schwab_to_trading_agent(schwab_payload: dict) -> dict:
                     "original_probability": 0.5,
                     "original_confidence": 60.0,
                     "current_price": round(current, 4),
+                    "mark_source": "schwab_equity",
                     "allows_averaging_down": False,
                     "trailing_stop_pct": 2.0,
                     "max_risk_dollars": round(mkt, 2),
+                    "broker_symbol": symbol,
                 }
             )
     return {"positions": positions}

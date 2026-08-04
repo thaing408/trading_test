@@ -141,7 +141,21 @@ def collect_session_snapshot(
     positions: List[OpenPosition],
     plan_context: dict,
 ) -> SessionSnapshot:
-    symbols = list({p.symbol for p in positions} | set(config.watch_symbols))
+    # Quote equities + option underlyings only (never OCC-like manage keys as stock)
+    quote_syms: set[str] = set(config.watch_symbols or [])
+    for p in positions:
+        instr = (getattr(p, "instrument_type", None) or "equity").lower()
+        strat = (p.strategy or "").lower()
+        is_opt = instr == "option" or "option" in strat or " put" in strat or " call" in strat
+        if is_opt:
+            u = (getattr(p, "underlying", None) or "").strip().upper()
+            if u:
+                quote_syms.add(u)
+            # do not add manage key (e.g. PLTR_260807P...) to yfinance
+        else:
+            if p.symbol and "_" not in p.symbol:
+                quote_syms.add(p.symbol)
+    symbols = list(quote_syms)
     if config.fixture_mode or not config.use_live_data:
         return _fixture_snapshot(symbols, config.session_file)
 

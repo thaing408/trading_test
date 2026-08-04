@@ -13,6 +13,9 @@ from trading_agent.odte.multidte import (
 )
 from trading_agent.odte.breakout import (
     BreakoutPlaybookConfig,
+    BreakoutSnapshot,
+    compute_breakout_snapshot,
+    format_888_ti_card,
     format_breakout_brief,
     run_breakout_backtest,
 )
@@ -26,6 +29,9 @@ __all__ = [
     "format_multidte_brief",
     "run_multidte_backtest",
     "BreakoutPlaybookConfig",
+    "BreakoutSnapshot",
+    "compute_breakout_snapshot",
+    "format_888_ti_card",
     "format_breakout_brief",
     "run_breakout_backtest",
 ]

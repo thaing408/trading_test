@@ -99,9 +99,21 @@ def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
     recommendations = []
     all_notifications: List[Alert] = []
     for pos in positions:
-        sym = snapshot.symbols.get(pos.symbol)
-        if sym:
-            pos.current_price = sym.price
+        # Equity: live session print. Options: keep premium mark from positions file
+        # (never overwrite option stop/target geometry with underlying stock price).
+        instr = (getattr(pos, "instrument_type", None) or "equity").lower()
+        strat = (pos.strategy or "").lower()
+        is_option = instr == "option" or "option" in strat or " put" in strat or " call" in strat
+        if is_option:
+            pos.instrument_type = "option"
+            pos.mark_source = pos.mark_source or "option_premium"
+        else:
+            sym = snapshot.symbols.get(pos.symbol)
+            if not sym and getattr(pos, "underlying", None):
+                sym = snapshot.symbols.get(pos.underlying)
+            if sym and sym.price and sym.price > 0:
+                pos.current_price = sym.price
+                pos.mark_source = "session_quote"
         rec = evaluate_position(pos, snapshot, synthesis, config.risk, better_opp)
         recommendations.append(rec)
         all_notifications.extend(rec.alerts)

@@ -197,7 +197,11 @@ See `.env.example`. Key vars (written by the installer):
 # Mean reversion (default): Shen 0DTE / multi-DTE RSI fades at levels
 python -m trading_agent odte --style mean_reversion --backtest --period 10d --source schwab
 
-# Breakout: opening-range high/low *continuation* (15m HTF)
+# Breakout / 888 TI: simple visual decision card (LONG · SHORT · WAIT)
+python -m trading_agent odte --style breakout --symbol QQQ
+python -m trading_agent odte --mode breakout --symbol SPY
+
+# Breakout backtest (OR continuation, 15m HTF)
 python -m trading_agent odte --style breakout --backtest --period 10d --source schwab
 python -m trading_agent odte --mode breakout   # same path
 ```
