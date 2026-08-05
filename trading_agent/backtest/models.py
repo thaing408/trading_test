@@ -21,6 +21,7 @@ class BacktestConfig:
     allow_b_when_aligned: bool = True
     cio_min_confidence: float = 60.0
     cio_min_risk_reward: float = 2.0
+    cio_min_technical_confirmations: int = 3
     hold_bars: int = 5  # forward bars for deterministic fill model
     risk_per_trade_pct: float = 1.0  # % of portfolio risked per trade
     portfolio_value: float = 100_000.0

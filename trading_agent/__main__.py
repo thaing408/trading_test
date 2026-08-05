@@ -452,6 +452,23 @@ def _run_research(args: argparse.Namespace) -> int:
             with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(text)
         return 0
+    if cmd == "scalp-universe":
+        from trading_agent.scalp.universe_card import (
+            format_scalp_universe_card,
+            post_scalp_universe_card,
+        )
+
+        if getattr(args, "discord", False):
+            text = post_scalp_universe_card(discord=True)
+            print(text)
+            print("[discord] posted scalp universe link", file=sys.stderr)
+        else:
+            text = format_scalp_universe_card()
+            print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
     if cmd == "methods-backtest":
         from trading_agent.sleeves.momentum import format_momentum_report, run_momentum_backtest
         from trading_agent.sleeves.orb_vwap import format_orb_report, run_orb_vwap_backtest
@@ -476,7 +493,7 @@ def _run_research(args: argparse.Namespace) -> int:
         return 0
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
-        "features | manage-summary | scalp-backtest | methods-backtest",
+        "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest",
         file=sys.stderr,
     )
     return 2
@@ -968,6 +985,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="YYYY-MM-DD (default: today UTC)",
     )
+    scalp_uni = research_sub.add_parser(
+        "scalp-universe",
+        help="Show desk+gainer/loser link to QQQ scalp rules (optional Discord)",
+    )
+    scalp_uni.add_argument(
+        "--discord",
+        action="store_true",
+        help="Post card to Discord (scalp/alerts channel if set, else desk)",
+    )
+    scalp_uni.add_argument("--output", "-o", metavar="FILE")
     scalp_bt = research_sub.add_parser(
         "scalp-backtest",
         help="Apply QQQ scalp rules to multiple tickers; report win rates",

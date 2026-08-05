@@ -1,5 +1,5 @@
-"""QQQ-style scalp rules applied multi-ticker (research / offline backtest)."""
+"""Scalp research tools (multi-ticker BT + universe card)."""
 
-from trading_agent.scalp.backtest import ScalpBacktestResult, run_multi_symbol_scalp_backtest
+from trading_agent.scalp.universe_card import format_scalp_universe_card, post_scalp_universe_card
 
-__all__ = ["ScalpBacktestResult", "run_multi_symbol_scalp_backtest"]
+__all__ = ["format_scalp_universe_card", "post_scalp_universe_card"]

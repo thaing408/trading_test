@@ -146,6 +146,9 @@ def _cio_from_bt(cfg: BacktestConfig) -> CIOConfig:
         portfolio_value=cfg.portfolio_value,
         min_confidence=cfg.cio_min_confidence,
         min_risk_reward=cfg.cio_min_risk_reward,
+        min_technical_confirmations=int(
+            getattr(cfg, "cio_min_technical_confirmations", 3) or 3
+        ),
     )
 
 
