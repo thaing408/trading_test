@@ -70,10 +70,15 @@ def _risk_limit_notifications(risk_eval: RiskLimitEvaluation) -> List[Alert]:
 
 def run_intraday_pipeline(config: IntradayConfig) -> IntradayReport:
     plan_context = load_plan_context(config.plan_file, config.fixture_mode)
-    # Defense in depth: never evaluate flat / invalid lots (qty<=0, blank symbol).
+    # Live: refresh Schwab book before each manage cycle (default on) so Discord
+    # is not stuck on the 01:55 snapshot after closes/new options.
     positions = [
         p
-        for p in load_positions(config.positions_file, config.fixture_mode)
+        for p in load_positions(
+            config.positions_file,
+            config.fixture_mode,
+            refresh=(not config.fixture_mode and bool(config.use_live_data)),
+        )
         if p.symbol and str(p.symbol).strip().lower() not in {"none", "null"} and p.quantity > 0
     ]
 

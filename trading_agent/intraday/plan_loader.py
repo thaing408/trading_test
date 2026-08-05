@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, List, Mapping
 
 from trading_agent.intraday.models import OpenPosition
+
+logger = logging.getLogger(__name__)
 
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 
@@ -126,13 +132,73 @@ def positions_from_payload(data: Mapping[str, Any] | list) -> List[OpenPosition]
     return out
 
 
-def load_positions(path: str | None, fixture_mode: bool) -> List[OpenPosition]:
+def refresh_schwab_positions_file(path: str | Path | None = None) -> bool:
+    """Re-export Schwab MCP positions into trading_agent positions.json.
+
+    Returns True on success. Fail-closed (returns False) on any error so manage
+    can continue with the last good file rather than crash the desk.
+    """
+    out = Path(path or os.getenv("TRADING_AGENT_POSITIONS_FILE") or "").expanduser()
+    if not out.parts:
+        out = Path.home() / ".trading_agent" / "positions.json"
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "macos"
+        / "trading-agent-positions.py"
+    )
+    if not script.is_file():
+        logger.warning("positions export script missing: %s", script)
+        return False
+    py = os.getenv("TRADING_AGENT_PYTHON") or sys.executable
+    try:
+        proc = subprocess.run(
+            [py, str(script), str(out)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if proc.returncode != 0:
+            logger.warning(
+                "Schwab positions refresh failed (%s): %s",
+                proc.returncode,
+                (proc.stderr or proc.stdout or "")[:300],
+            )
+            return False
+        logger.info("Schwab positions refreshed -> %s (%s)", out, (proc.stdout or "").strip())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Schwab positions refresh error: %s", exc)
+        return False
+
+
+def load_positions(
+    path: str | None,
+    fixture_mode: bool,
+    *,
+    refresh: bool | None = None,
+) -> List[OpenPosition]:
     """Load open positions: explicit file → fixture → optional brokerage → empty.
 
     Live path never synthesizes demo positions when brokerage is unconfigured.
     Flat (qty 0), blank/`None` symbols, and zero-price junk rows are dropped so
     the desk does not alert on already-closed names (e.g. TSLA after exit).
+
+    When ``refresh`` is True (or env TRADING_AGENT_REFRESH_POSITIONS=1 and path
+    is set and not fixture), re-pull Schwab before reading the file so manage
+    Discord is not stuck on the 01:55 export.
     """
+    if refresh is None:
+        refresh = (
+            not fixture_mode
+            and bool(path)
+            and os.getenv("TRADING_AGENT_REFRESH_POSITIONS", "1").strip().lower()
+            not in ("0", "false", "no", "off")
+        )
+    if refresh and path and not fixture_mode:
+        refresh_schwab_positions_file(path)
+
     if path:
         with Path(path).open(encoding="utf-8") as handle:
             data = json.load(handle)
