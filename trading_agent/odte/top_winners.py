@@ -297,6 +297,26 @@ def symbols_from_auto_trade_book(list_size: int = 10) -> List[str]:
     return []
 
 
+# Inverse / ultra-short products — not CALL-winner candidates
+_INVERSE_ETFS = frozenset(
+    {
+        "SQQQ",
+        "SPXU",
+        "SOXS",
+        "TZA",
+        "SDOW",
+        "SDS",
+        "QID",
+        "FAZ",
+        "LABD",
+        "DRV",
+        "ERY",
+        "YANG",
+        "FNGD",
+    }
+)
+
+
 def load_top_winner_symbols(
     *,
     list_size: int = 10,
@@ -308,7 +328,7 @@ def load_top_winner_symbols(
         seen = set()
         for s in symbols_override:
             sym = str(s).upper().strip()
-            if sym and sym not in seen:
+            if sym and sym not in seen and sym not in _INVERSE_ETFS:
                 seen.add(sym)
                 out.append(sym)
             if len(out) >= list_size:
@@ -317,14 +337,69 @@ def load_top_winner_symbols(
 
     gap_syms = symbols_from_gap_book(gap_book, list_size=list_size)
     if gap_syms:
-        return gap_syms, "gap_screener_book"
+        return [s for s in gap_syms if s not in _INVERSE_ETFS][:list_size], "gap_screener_book"
     at_syms = symbols_from_auto_trade_book(list_size=list_size)
     if at_syms:
-        return at_syms, "auto_trade_book"
+        return [s for s in at_syms if s not in _INVERSE_ETFS][:list_size], "auto_trade_book"
     pl = playlist_candidate_symbols(load_playlist_book())
     if pl:
-        return pl[:list_size], "watchlist_playlist"
+        return [s for s in pl if s not in _INVERSE_ETFS][:list_size], "watchlist_playlist"
     return [], "none"
+
+
+def resolve_data_driven_pool(
+    *,
+    max_symbols: int = 80,
+    prefer_researcher: bool = True,
+) -> Tuple[List[str], str]:
+    """Build BT/live scan pool from data — not a hardcoded mega-cap list.
+
+    Order:
+      1. Researcher gap up-candidates (wide)
+      2. auto_trade watchlist / scan_symbols
+      3. playlist
+      4. Screener expanded liquid universe (fill)
+    Inverse ETFs stripped. Deduped, capped at max_symbols.
+    """
+    seen: set[str] = set()
+    out: List[str] = []
+    sources: List[str] = []
+
+    def _add(syms: Sequence[str], label: str) -> None:
+        nonlocal out, sources
+        added = 0
+        for s in syms:
+            sym = str(s).upper().strip()
+            if not sym or sym in seen or sym in _INVERSE_ETFS:
+                continue
+            seen.add(sym)
+            out.append(sym)
+            added += 1
+            if len(out) >= max_symbols:
+                break
+        if added:
+            sources.append(label)
+
+    if prefer_researcher:
+        _add(symbols_from_gap_book(list_size=max_symbols), "gap_screener")
+        if len(out) < max_symbols:
+            _add(symbols_from_auto_trade_book(list_size=max_symbols), "auto_trade")
+        if len(out) < max_symbols:
+            _add(playlist_candidate_symbols(load_playlist_book()), "playlist")
+
+    if len(out) < max(20, max_symbols // 2):
+        try:
+            from trading_agent.screener.universe import default_expanded_universe
+
+            _add(default_expanded_universe(), "expanded_screener")
+        except Exception:  # noqa: BLE001
+            _add(list(DEFAULT_FIXED_UNIVERSE), "fallback_core")
+
+    if not out:
+        _add(list(DEFAULT_FIXED_UNIVERSE), "fallback_core")
+
+    src = "+".join(sources) if sources else "empty"
+    return out[:max_symbols], src
 
 
 # ── Price / session helpers ───────────────────────────────────────────────
@@ -1140,15 +1215,26 @@ def run_top_winners_backtest(
     interval = bar_interval or ("1m" if days_req <= 8 else "5m")
 
     if symbols:
-        pool = [s.upper().strip() for s in symbols if str(s).strip()]
-        rank_mode = "fixed_universe_l1_rerank"
+        pool = [
+            s.upper().strip()
+            for s in symbols
+            if str(s).strip() and str(s).upper().strip() not in _INVERSE_ETFS
+        ]
+        rank_mode = "cli_symbols_l1_rerank"
+        pool_source = "cli"
     else:
-        pool = [s.upper().strip() for s in (universe or []) if str(s).strip()]
-        if not pool:
-            pool = list(DEFAULT_FIXED_UNIVERSE)
-            rank_mode = "default_universe_l1_rerank"
-        else:
+        pool = [
+            s.upper().strip()
+            for s in (universe or [])
+            if str(s).strip() and str(s).upper().strip() not in _INVERSE_ETFS
+        ]
+        if pool:
             rank_mode = "universe_l1_rerank"
+            pool_source = "arg_universe"
+        else:
+            # Data-driven: researcher books + expanded screener (no hardcoded top-10)
+            pool, pool_source = resolve_data_driven_pool(max_symbols=80)
+            rank_mode = f"data_driven_l1_rerank:{pool_source}"
 
     frames: Dict[str, Any] = {}
     load_errors: List[str] = []
@@ -1302,7 +1388,8 @@ def run_top_winners_backtest(
         trades=trades,
         assumptions=[
             "Style: top_winners L1–L4 (re-rank, pullback, trail/time exit, universe quality)",
-            f"Rank mode: {rank_mode}; pool={pool}",
+            f"Rank mode: {rank_mode}; pool_n={len(pool)}; pool_source={pool_source if symbols is None else 'cli'}",
+            f"Pool (first 25): {pool[:25]}{'...' if len(pool) > 25 else ''}",
             f"Entry mode={cfg.entry_mode}; decision→window "
             f"{entry_time_et(cfg).strftime('%H:%M')}–{entry_window_end_et(cfg).strftime('%H:%M')} ET",
             f"Bracket {cfg.bracket_name}: TP +{cfg.take_profit_pct:.0%} / "
@@ -1320,6 +1407,8 @@ def run_top_winners_backtest(
             "style": "top_winners_l1_l4",
             "rank_mode": rank_mode,
             "pool": pool,
+            "pool_source": pool_source if not symbols else "cli",
+            "pool_n": len(pool),
             "bar_interval": interval,
             "bracket_name": cfg.bracket_name,
             "entry_mode": cfg.entry_mode,
