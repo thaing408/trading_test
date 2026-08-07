@@ -495,6 +495,49 @@ def _run_research(args: argparse.Namespace) -> int:
         print(json.dumps(summary, indent=2))
         print(f"log: {manage_log_path(day)}")
         return 0
+    if cmd in ("soulz", "soulz-pa", "soulz-brief", "soulz-backtest"):
+        from trading_agent.scalp.soulz_pa import (
+            SoulzPaConfig,
+            format_soulz_brief,
+            render_soulz_backtest,
+            run_soulz_backtest,
+            run_soulz_brief,
+        )
+
+        symbol = (getattr(args, "symbol", None) or "QQQ").upper()
+        period = getattr(args, "period", None) or "60d"
+        interval = getattr(args, "interval", None) or "15m"
+        source = getattr(args, "source", None) or "yfinance"
+        conf = int(getattr(args, "min_confluence", None) or 2)
+        cfg = SoulzPaConfig(
+            symbol=symbol,
+            min_confluence=conf,
+            rth_only=symbol not in ("BTC-USD", "ETH-USD", "BTCUSD", "ETHUSD"),
+            calls_only=bool(getattr(args, "calls_only", False)),
+            puts_only=bool(getattr(args, "puts_only", False)),
+        )
+        do_bt = cmd == "soulz-backtest" or bool(getattr(args, "backtest", False))
+        if do_bt:
+            result = run_soulz_backtest(
+                symbol, period=period, interval=interval, cfg=cfg, data_source=source
+            )
+            text = render_soulz_backtest(result)
+            print(text)
+            if getattr(args, "output", None):
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            return 0
+        brief = run_soulz_brief(
+            symbol, cfg=cfg, data_source=source, period="10d", interval=interval
+        )
+        text = format_soulz_brief(brief)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0 if not brief.errors else 1
+
+
     if cmd == "scalp-backtest":
         from trading_agent.scalp.backtest import (
             format_scalp_backtest_report,
@@ -561,7 +604,8 @@ def _run_research(args: argparse.Namespace) -> int:
         return 0
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
-        "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest",
+        "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
+        "soulz | soulz-backtest",
         file=sys.stderr,
     )
     return 2
@@ -1271,6 +1315,33 @@ def main(argv: list[str] | None = None) -> int:
     methods_bt.add_argument("--period", default="60d", help="ORB intraday period")
     methods_bt.add_argument("--mom-period", default="1y", help="Momentum/regime daily period")
     methods_bt.add_argument("--output", "-o", metavar="FILE")
+
+    soulz_p = research_sub.add_parser(
+        "soulz",
+        help="Soulz-style PA scalp brief (BRR + Range + Fib confluence)",
+    )
+    soulz_p.add_argument("--symbol", default="QQQ")
+    soulz_p.add_argument("--period", default="10d")
+    soulz_p.add_argument("--interval", default="15m")
+    soulz_p.add_argument("--source", default="yfinance")
+    soulz_p.add_argument("--min-confluence", type=int, default=2)
+    soulz_p.add_argument("--backtest", action="store_true", help="Run backtest instead of brief")
+    soulz_p.add_argument("--calls-only", action="store_true")
+    soulz_p.add_argument("--puts-only", action="store_true")
+    soulz_p.add_argument("--output", "-o", metavar="FILE")
+
+    soulz_bt = research_sub.add_parser(
+        "soulz-backtest",
+        help="Backtest Soulz PA scalp (BRR + Range + Fib confluence)",
+    )
+    soulz_bt.add_argument("--symbol", default="QQQ")
+    soulz_bt.add_argument("--period", default="60d")
+    soulz_bt.add_argument("--interval", default="15m")
+    soulz_bt.add_argument("--source", default="yfinance")
+    soulz_bt.add_argument("--min-confluence", type=int, default=2)
+    soulz_bt.add_argument("--calls-only", action="store_true")
+    soulz_bt.add_argument("--puts-only", action="store_true")
+    soulz_bt.add_argument("--output", "-o", metavar="FILE")
 
     process = subparsers.add_parser(
         "process",
