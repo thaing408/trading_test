@@ -62,6 +62,22 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 - Writes `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` for TOS hand entry when MCP cannot place multi-leg packages
 - Discovers **local** books only: `~/.trading_agent/sync/`, session dir, `~/.grok/state/` (not work paths)
 
+### Researcher host handoff (10.0.0.52 → Mac)
+
+Production **researcher** runs on Ubuntu `10.0.0.52` and writes:
+
+- `~/.trading_agent/sync/gap_screener_book.json` (soft gap continuation tags)
+- `~/.trading_agent/sync/watchlist_playlist.json` (momentum playlist — **not** auto-trade)
+
+Mac pulls these every **15 minutes** via `com.grok.pull-researcher-sync` and also at desk startup (`pull-researcher-sync.sh`).
+
+| Book | CIO / desk effect |
+|------|-------------------|
+| Gap book | Soft tag `gap_continuation_4d` when local file present |
+| Playlist | Names **merged into screener universe** + soft score tag `watchlist_playlist`; **still must pass CIO / method gates** |
+
+Disable playlist merge: `TRADING_AGENT_PLAYLIST_MERGE=0` in `~/.grok/trading-agent.env`.
+
 ### Live place paths (schwab-mcp `place_order`)
 
 | Package | Auto-submit when LIVE=1? | Behavior |

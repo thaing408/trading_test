@@ -58,6 +58,15 @@ log "bash=$BASH_VERSION host=$(hostname) pid=$$"
 log "Repo: $REPO"
 log "Args($ARGC): $*"
 
+# Pull researcher books (gap + playlist) from production host before desk
+PULL_SCRIPT="$MACOS_DIR/pull-researcher-sync.sh"
+if [ -x "$PULL_SCRIPT" ]; then
+  log "Pulling researcher sync from ${RESEARCHER_HOST:-10.0.0.52}…"
+  bash "$PULL_SCRIPT" || log "WARN: researcher pull failed (desk continues with local books)"
+else
+  log "WARN: missing $PULL_SCRIPT"
+fi
+
 # --- load env ---
 if [ -f "$GROK_ENV" ]; then
   set -a

@@ -158,6 +158,13 @@ def _fixture_screener() -> ScreenerResult:
 
 def _resolve_symbol_list(config: AgentConfig) -> List[str]:
     symbols = resolve_screener_symbols(config.screener.symbols)
+    # Soft merge: researcher watchlist_playlist.json candidates (pulled from server)
+    try:
+        from trading_agent.export.playlist_book import merge_playlist_into_symbols
+
+        symbols = merge_playlist_into_symbols(symbols)
+    except Exception:
+        pass
     cap = int(getattr(config.screener, "max_symbols", 0) or 0)
     if cap > 0:
         symbols = symbols[:cap]

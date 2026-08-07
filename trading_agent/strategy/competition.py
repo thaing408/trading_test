@@ -373,6 +373,17 @@ def _score_gap_sleeve(
     except Exception:
         pass
 
+    # Soft tag if researcher playlist (pulled from 10.0.0.52) listed this name
+    try:
+        from trading_agent.export.playlist_book import apply_playlist_tag
+
+        pl_tags, pl_note = apply_playlist_tag(candidate.symbol, [])
+        if "watchlist_playlist" in pl_tags:
+            score = max(float(score or 0.0), 55.0)
+            notes.append(pl_note or "watchlist_playlist")
+    except Exception:
+        pass
+
     if strategy is None:
         strategy = _base_strategy(technical, options, price)
         if not viable:

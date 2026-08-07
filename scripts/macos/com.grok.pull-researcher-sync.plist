@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.grok.pull-researcher-sync</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>__HOME__/trading_agent/scripts/macos/pull-researcher-sync.sh</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+		<key>RESEARCHER_HOST</key>
+		<string>10.0.0.52</string>
+		<key>RESEARCHER_SSH_USER</key>
+		<string>ubuntu</string>
+	</dict>
+	<!-- Every 15 minutes: gap/playlist books land for desk + CIO soft path -->
+	<key>StartInterval</key>
+	<integer>900</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.trading_agent/logs/pull-researcher-sync.launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.trading_agent/logs/pull-researcher-sync.launchd.err.log</string>
+</dict>
+</plist>

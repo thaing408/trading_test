@@ -69,11 +69,27 @@ fi
 install_plist "com.grok.qt-open-window"
 install_plist "com.grok.auto-trade-consumer"
 
+# Researcher host pull (gap_screener_book + watchlist_playlist → local sync)
+chmod +x "$MACOS_DIR/pull-researcher-sync.sh" 2>/dev/null || true
+if [[ -f "$MACOS_DIR/com.grok.pull-researcher-sync.plist" ]]; then
+  # Path in plist uses __HOME__/trading_agent — rewrite to real repo if needed
+  REPO_ROOT="$(cd "$MACOS_DIR/../.." && pwd)"
+  sed "s|__HOME__/trading_agent|$REPO_ROOT|g; s|__HOME__|$HOME|g" \
+    "$MACOS_DIR/com.grok.pull-researcher-sync.plist" > "$GROK_DIR/launchd/com.grok.pull-researcher-sync.plist"
+  cp "$GROK_DIR/launchd/com.grok.pull-researcher-sync.plist" \
+    "$HOME/Library/LaunchAgents/com.grok.pull-researcher-sync.plist"
+  launchctl bootout "$DOMAIN/com.grok.pull-researcher-sync" 2>/dev/null || true
+  launchctl bootstrap "$DOMAIN" "$HOME/Library/LaunchAgents/com.grok.pull-researcher-sync.plist"
+  launchctl enable "$DOMAIN/com.grok.pull-researcher-sync"
+  echo "✓ com.grok.pull-researcher-sync loaded (every 15m → ~/.trading_agent/sync)"
+fi
+
 echo ""
 echo "Mac auto-launch + auto-trade installed:"
 echo "  com.grok.trading-agent-desk   → Mon–Fri 01:55 PT (full desk + local book export)"
 echo "  com.grok.auto-trade-consumer  → Mon–Fri 06:25 PT (watch books → ready_orders)"
 echo "  com.grok.qt-open-window       → Mon–Fri 06:30 PT (QT 9:30–9:50 ET + consume)"
+echo "  com.grok.pull-researcher-sync → every 15m (gap + playlist books from 10.0.0.52)"
 echo ""
 echo "Live order placement is OFF by default (fail-closed)."
 echo "To enable Schwab MCP live submits on this Mac only:"
