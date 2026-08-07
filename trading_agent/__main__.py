@@ -27,9 +27,77 @@ def _run_odte(args: argparse.Namespace) -> int:
     from trading_agent.odte.playbook import OdtePlaybookConfig, format_odte_brief, run_odte_playbook
     from trading_agent.strategy.style import TradingStyle, format_style_brief, parse_trading_style
 
-    style = parse_trading_style(getattr(args, "style", None))
     mode = (getattr(args, "mode", None) or "0dte").strip().lower()
+    raw_style = (getattr(args, "style", None) or "").strip().lower()
     dte = int(getattr(args, "dte", 0) or 0)
+
+    # Top-2 researcher winners → 30m continue-up → 0DTE CALL (+30% / −25%)
+    # Handle before parse_trading_style (top-winners is not a TradingStyle enum value).
+    if mode in ("top-winners", "top_winners", "winners") or raw_style in (
+        "top-winners",
+        "top_winners",
+        "winners",
+    ):
+        from trading_agent.odte.top_winners import (
+            TopWinnersConfig,
+            apply_bracket_preset,
+            format_top_winners_brief,
+            render_top_winners_backtest,
+            run_bracket_ab_backtest,
+            run_top_winners_backtest,
+            run_top_winners_brief,
+        )
+
+        cfg = TopWinnersConfig(account_size=float(args.account))
+        bracket = getattr(args, "bracket", None) or "legacy30_25"
+        cfg = apply_bracket_preset(cfg, bracket)
+        entry_mode = (getattr(args, "entry_mode", None) or "pullback").strip().lower()
+        if entry_mode in ("pullback", "clock"):
+            cfg.entry_mode = entry_mode
+        if getattr(args, "no_trail", False):
+            cfg.use_trail = False
+        raw_syms = getattr(args, "symbols", None) or ""
+        override = [p.strip().upper() for p in raw_syms.replace(";", ",").split(",") if p.strip()]
+        source = getattr(args, "source", "auto") or "auto"
+        if getattr(args, "ab", False) or getattr(args, "bracket_ab", False):
+            text = run_bracket_ab_backtest(
+                period=args.period,
+                symbols=override or None,
+                data_source=source,
+                base=cfg,
+            )
+            print(text)
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            return 0
+        if getattr(args, "backtest", False):
+            result = run_top_winners_backtest(
+                period=args.period,
+                cfg=cfg,
+                symbols=override or None,
+                data_source=source,
+            )
+            text = render_top_winners_backtest(result)
+            print(text)
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            return 0
+        brief = run_top_winners_brief(
+            cfg=cfg,
+            symbols_override=override or None,
+            data_source=source,
+            live=True,
+        )
+        text = format_top_winners_brief(brief)
+        print(text)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0 if not brief.errors else 1
+
+    style = parse_trading_style(getattr(args, "style", None))
 
     # Explicit breakout style → OR continuation path (HTF)
     if style is TradingStyle.BREAKOUT or mode == "breakout":
@@ -762,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
 
     odte = subparsers.add_parser(
         "odte",
-        help="QQQ/SPY playbooks: mean-reversion (Shen 0DTE/multi-DTE) or breakout (OR continuation)",
+        help="Playbooks: QQQ mean-reversion, breakout, or top-winners (researcher top-2 0DTE CALL)",
     )
     odte.add_argument("--symbol", default="QQQ", help="ETF symbol (QQQ or SPY)")
     odte.add_argument("--account", type=float, default=1000.0, help="Account size for risk template")
@@ -783,14 +851,59 @@ def main(argv: list[str] | None = None) -> int:
             "breakout",
             "bo",
             "continuation",
+            "top-winners",
+            "top_winners",
+            "winners",
         ],
-        help="mean_reversion=RSI/level fade (default); breakout=OR high/low continuation",
+        help="mean_reversion=RSI/level fade; breakout=OR continuation; top-winners=researcher top-2 CALL",
     )
     odte.add_argument(
         "--mode",
         default="0dte",
-        choices=["0dte", "weekly", "2dte", "3dte", "multidte", "multi", "breakout"],
-        help="0dte=1m Shen; weekly/2dte/3dte=HTF multi-DTE fade; breakout=OR continuation",
+        choices=[
+            "0dte",
+            "weekly",
+            "2dte",
+            "3dte",
+            "multidte",
+            "multi",
+            "breakout",
+            "top-winners",
+            "top_winners",
+            "winners",
+        ],
+        help="0dte=1m Shen; weekly/2dte/3dte=HTF multi-DTE; breakout=OR; top-winners=researcher top-2",
+    )
+    odte.add_argument(
+        "--symbols",
+        default="",
+        help="Comma-separated symbols override (top-winners mode / backtest ranking list)",
+    )
+    odte.add_argument(
+        "--bracket",
+        default="bal25_20",
+        help="Top-winners exit bracket: legacy30_25 (default) | bal25_20 | wr20_15",
+    )
+    odte.add_argument(
+        "--entry-mode",
+        default="pullback",
+        choices=["pullback", "clock"],
+        help="Top-winners entry: pullback to VWAP/EMA9 (default) or clock open at 10:00",
+    )
+    odte.add_argument(
+        "--no-trail",
+        action="store_true",
+        help="Top-winners: disable premium trail exit",
+    )
+    odte.add_argument(
+        "--ab",
+        action="store_true",
+        help="Top-winners: run L3 bracket A/B (legacy30_25 vs wr20_15 vs bal25_20)",
+    )
+    odte.add_argument(
+        "--bracket-ab",
+        action="store_true",
+        help="Alias for --ab",
     )
     odte.add_argument(
         "--dte",

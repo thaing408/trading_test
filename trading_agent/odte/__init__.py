@@ -19,6 +19,15 @@ from trading_agent.odte.breakout import (
     format_breakout_brief,
     run_breakout_backtest,
 )
+from trading_agent.odte.top_winners import (
+    TopWinnersConfig,
+    apply_bracket_preset,
+    format_top_winners_brief,
+    passes_drop_fast_filter,
+    run_bracket_ab_backtest,
+    run_top_winners_backtest,
+    run_top_winners_brief,
+)
 
 __all__ = [
     "OdtePlaybookConfig",
@@ -34,4 +43,11 @@ __all__ = [
     "format_888_ti_card",
     "format_breakout_brief",
     "run_breakout_backtest",
+    "TopWinnersConfig",
+    "apply_bracket_preset",
+    "format_top_winners_brief",
+    "passes_drop_fast_filter",
+    "run_bracket_ab_backtest",
+    "run_top_winners_backtest",
+    "run_top_winners_brief",
 ]
