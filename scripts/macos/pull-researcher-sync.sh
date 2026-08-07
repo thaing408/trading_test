@@ -1,37 +1,78 @@
 #!/usr/bin/env bash
-# Pull researcher handoff books from production host (10.0.0.52) onto this Mac.
-# trading_agent only reads local ~/.trading_agent/sync/ — never the remote path.
+# Pull researcher handoff books from production host onto this Mac.
+# Host is resolved under DHCP: hostname / cache file / env — not a fixed IP only.
 set -euo pipefail
 
-HOST="${RESEARCHER_HOST:-10.0.0.52}"
 USER="${RESEARCHER_SSH_USER:-ubuntu}"
 REMOTE_SYNC="${RESEARCHER_REMOTE_SYNC:-.trading_agent/sync}"
 LOCAL_SYNC="${TRADING_AGENT_SYNC_DIR:-$HOME/.trading_agent/sync}"
 LOG_DIR="${HOME}/.trading_agent/logs"
-mkdir -p "$LOCAL_SYNC" "$LOCAL_SYNC/archive" "$LOG_DIR"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+mkdir -p "$LOCAL_SYNC" "$LOCAL_SYNC/archive" "$LOG_DIR" "$HOME/.grok"
 LOG="$LOG_DIR/pull-researcher-sync.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
-# Optional env overlay
 if [ -f "$HOME/.grok/trading-agent.env" ]; then
   set -a
   # shellcheck disable=SC1090
   . "$HOME/.grok/trading-agent.env"
   set +a
-  HOST="${RESEARCHER_HOST:-$HOST}"
   USER="${RESEARCHER_SSH_USER:-$USER}"
 fi
+
+# Resolve host (Python helper handles DHCP: me-ai.local, cache, env, fallback)
+HOST=""
+HOW=""
+if command -v python3 >/dev/null 2>&1; then
+  RESOLVE=$(
+    cd "$REPO" 2>/dev/null || cd "$HOME/trading_agent" 2>/dev/null || true
+    PYTHONPATH="${REPO}${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY' 2>/dev/null || true
+import os, sys
+sys.path.insert(0, os.environ.get("REPO", os.path.expanduser("~/trading_agent")))
+try:
+    from trading_agent.export.researcher_host import resolve_researcher_host
+    h, how = resolve_researcher_host()
+    print(h)
+    print(how)
+except Exception as e:
+    print("")
+    print(str(e))
+PY
+  )
+  # pass REPO into env for the heredoc path
+fi
+
+# Simpler resolve call
+resolve_out=$(
+  PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" REPO="$REPO" python3 -c "
+from trading_agent.export.researcher_host import resolve_researcher_host_safe
+h, how = resolve_researcher_host_safe()
+print(h or '')
+print(how)
+" 2>/dev/null || echo $'\nresolve failed'
+)
+HOST=$(printf '%s\n' "$resolve_out" | sed -n '1p')
+HOW=$(printf '%s\n' "$resolve_out" | sed -n '2p')
+
+if [ -z "$HOST" ]; then
+  log "ERROR: cannot resolve researcher host ($HOW)"
+  log "Set RESEARCHER_HOST, RESEARCHER_HOSTNAME=me-ai.local, or ~/.grok/researcher_host"
+  exit 1
+fi
+log "host=$HOST ($HOW) user=$USER"
 
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 SCP=(scp -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 
 if ! "${SSH[@]}" "${USER}@${HOST}" "echo ok" >/dev/null 2>&1; then
-  log "ERROR: cannot SSH ${USER}@${HOST} (BatchMode). Fix key auth."
+  log "ERROR: SSH ${USER}@${HOST} failed (key auth?)"
   exit 1
 fi
 
-# Files researcher writes for desk / CIO soft inputs
+# Cache successful host (also done in Python; reinforce shell path)
+echo "host=${HOST}" >"$HOME/.grok/researcher_host"
+
 FILES=(
   gap_screener_book.json
   watchlist_playlist.json
@@ -39,7 +80,6 @@ FILES=(
 
 pulled=0
 for f in "${FILES[@]}"; do
-  # Resolve absolute path on remote (HOME-relative REMOTE_SYNC)
   rpath=$("${SSH[@]}" "${USER}@${HOST}" "test -f \"\$HOME/${REMOTE_SYNC}/${f}\" && echo \"\$HOME/${REMOTE_SYNC}/${f}\"" 2>/dev/null || true)
   if [ -z "$rpath" ]; then
     log "skip $f (not on remote)"
@@ -58,10 +98,9 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-# Also pull dated watchlist if present (best-effort)
 if "${SSH[@]}" "${USER}@${HOST}" "ls \$HOME/.trading_agent/watchlist/*.json >/dev/null 2>&1"; then
   mkdir -p "$HOME/.trading_agent/watchlist"
-  rsync -az -e "ssh -o BatchMode=yes -o ConnectTimeout=8" \
+  rsync -az -e "ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new" \
     "${USER}@${HOST}:.trading_agent/watchlist/" \
     "$HOME/.trading_agent/watchlist/" 2>>"$LOG" || true
   log "rsync watchlist/ done"

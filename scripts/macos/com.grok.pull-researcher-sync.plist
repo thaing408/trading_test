@@ -13,7 +13,10 @@
 	<dict>
 		<key>PATH</key>
 		<string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
-		<key>RESEARCHER_HOST</key>
+		<!-- Prefer stable name under DHCP; IP fallback via researcher_host.py -->
+		<key>RESEARCHER_HOSTNAME</key>
+		<string>me-ai.local</string>
+		<key>RESEARCHER_HOST_FALLBACK</key>
 		<string>10.0.0.52</string>
 		<key>RESEARCHER_SSH_USER</key>
 		<string>ubuntu</string>

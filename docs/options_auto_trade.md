@@ -62,21 +62,29 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 - Writes `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` for TOS hand entry when MCP cannot place multi-leg packages
 - Discovers **local** books only: `~/.trading_agent/sync/`, session dir, `~/.grok/state/` (not work paths)
 
-### Researcher host handoff (10.0.0.52 → Mac)
+### Researcher host handoff (production Ubuntu → Mac)
 
-Production **researcher** runs on Ubuntu `10.0.0.52` and writes:
+Production **researcher** runs on the LAN box (hostname **`me-ai`**, mDNS **`me-ai.local`** — IP may change under DHCP).
 
-- `~/.trading_agent/sync/gap_screener_book.json` (soft gap continuation tags)
-- `~/.trading_agent/sync/watchlist_playlist.json` (momentum playlist — **not** auto-trade)
+Mac **pull** resolves host in order:
 
-Mac pulls these every **15 minutes** via `com.grok.pull-researcher-sync` and also at desk startup (`pull-researcher-sync.sh`).
+1. `RESEARCHER_HOST` env  
+2. `~/.grok/researcher_host` (auto-updated on successful pull)  
+3. `RESEARCHER_HOSTNAME` / **`me-ai.local`**  
+4. `RESEARCHER_HOST_FALLBACK` (default `10.0.0.52`, last resort)
+
+Agent: `com.grok.pull-researcher-sync` every **15m** + desk startup.
 
 | Book | CIO / desk effect |
 |------|-------------------|
-| Gap book | Soft tag `gap_continuation_4d` when local file present |
-| Playlist | Names **merged into screener universe** + soft score tag `watchlist_playlist`; **still must pass CIO / method gates** |
+| Gap book | On **CIO board** as decision candidates (continuation); soft pipeline tag |
+| Playlist | On **CIO board** + screener universe; confidence boost if already Phase-1 |
+| Both | Full CIO gates still apply — **not auto-approve** |
 
-Disable playlist merge: `TRADING_AGENT_PLAYLIST_MERGE=0` in `~/.grok/trading-agent.env`.
+Disable:
+
+- `TRADING_AGENT_RESEARCHER_CIO=0` — stop CIO board merge  
+- `TRADING_AGENT_PLAYLIST_MERGE=0` — stop screener universe merge
 
 ### Live place paths (schwab-mcp `place_order`)
 

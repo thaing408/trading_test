@@ -214,6 +214,16 @@ def build_cio_approval_inputs(
         sources, board = _research_board_from_candidates(candidates)
         context.research_data_sources = sources
         context.research_board_lines = board
+        candidates, context, _ = _merge_researcher_cio(candidates, context)
+        sources, board = _research_board_from_candidates(candidates)
+        # keep researcher banner lines if merge prepended them
+        banner = [
+            ln
+            for ln in (context.research_board_lines or [])
+            if "Researcher" in ln or "researcher" in ln
+        ]
+        context.research_data_sources = {**(context.research_data_sources or {}), **sources}
+        context.research_board_lines = banner + [ln for ln in board if ln not in banner]
         return candidates, context
     if fixture_mode:
         candidates, fixture_ctx = load_from_fixture(None)
@@ -236,8 +246,32 @@ def build_cio_approval_inputs(
             research_ohlcv_note=fixture_ctx.research_ohlcv_note
             or context.research_ohlcv_note,
         )
+        candidates, context, _ = _merge_researcher_cio(candidates, context)
         return candidates, context
-    return [], context
+    # Even with empty Phase-1 book, CIO still reviews researcher lists
+    candidates, context, _ = _merge_researcher_cio([], context)
+    if candidates:
+        sources, board = _research_board_from_candidates(candidates)
+        banner = [
+            ln
+            for ln in (context.research_board_lines or [])
+            if "Researcher" in ln or "researcher" in ln
+        ]
+        context.research_data_sources = {**(context.research_data_sources or {}), **sources}
+        context.research_board_lines = banner + board
+    return candidates, context
+
+
+def _merge_researcher_cio(
+    candidates: List[TradeCandidate],
+    context: PhaseContext,
+) -> Tuple[List[TradeCandidate], PhaseContext, dict]:
+    try:
+        from trading_agent.export.researcher_cio import merge_researcher_into_cio_candidates
+
+        return merge_researcher_into_cio_candidates(candidates, context)
+    except Exception:
+        return candidates, context, {"enabled": False, "error": "merge_failed"}
 
 
 def load_from_session_dir(
@@ -290,6 +324,8 @@ def load_from_session_dir(
             "Live orders stay on Schwab — IBKR never places trades here.",
         ),
     )
+    # Re-merge latest local researcher books at CIO load time (post-pull)
+    candidates, context, _ = _merge_researcher_cio(candidates, context)
     return candidates, context
 
 
