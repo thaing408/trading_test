@@ -27,7 +27,11 @@ def test_pretrade_buying_power_block(tmp_path):
     ok, reason = evaluate_pretrade(
         order,
         store,
-        config=PretradeConfig(min_buying_power=1000, max_open_lots=10),
+        config=PretradeConfig(
+            min_buying_power=1000,
+            max_open_lots=10,
+            require_process_gate=False,
+        ),
         buying_power=100,
     )
     assert not ok and reason == "insufficient_buying_power"

@@ -60,7 +60,13 @@ def test_pretrade_blocks_on_max_open(tmp_path):
         defined_risk=True,
     )
     ok, reason = evaluate_pretrade(
-        order, store, config=PretradeConfig(max_open_lots=3, max_open_risk_dollars=10_000)
+        order,
+        store,
+        config=PretradeConfig(
+            max_open_lots=3,
+            max_open_risk_dollars=10_000,
+            require_process_gate=False,
+        ),
     )
     assert not ok and reason == "max_open_lots"
 
@@ -82,7 +88,13 @@ def test_pretrade_daily_loss(tmp_path):
         max_risk_dollars=50,
     )
     ok, reason = evaluate_pretrade(
-        order, store, config=PretradeConfig(max_day_loss_dollars=500, max_open_lots=10)
+        order,
+        store,
+        config=PretradeConfig(
+            max_day_loss_dollars=500,
+            max_open_lots=10,
+            require_process_gate=False,
+        ),
     )
     assert not ok and reason == "daily_loss_halt"
 
@@ -140,3 +152,93 @@ def test_oms_store_processed(tmp_path):
     store.save()
     store2 = OmsStore(root=tmp_path / "oms")
     assert store2.is_processed("abc")
+
+
+def _sample_order(symbol: str = "NVDA") -> ReadyOrder:
+    return ReadyOrder(
+        order_id="pg1",
+        symbol=symbol,
+        action="ENTER",
+        side="long",
+        instrument="options",
+        strategy="call",
+        setup_id="x",
+        entry=1.0,
+        stop=0.5,
+        target=2.0,
+        max_risk_dollars=50,
+        defined_risk=True,
+    )
+
+
+def test_pretrade_process_gate_blocks_unset_bias(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    store = OmsStore(root=tmp_path / "oms")
+    order = _sample_order()
+    detail: dict = {}
+    ok, reason = evaluate_pretrade(
+        order,
+        store,
+        config=PretradeConfig(
+            require_process_gate=True,
+            process_probe_desk=False,
+            max_open_lots=10,
+            max_open_risk_dollars=10_000,
+        ),
+        process_detail=detail,
+    )
+    assert not ok
+    assert reason.startswith("process_bias_unset") or "process_step" in reason
+
+
+def test_pretrade_process_gate_blocks_cash(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    from trading_agent.runbook import process as proc
+
+    day = None
+    proc.set_regime("cash", regime="risk-off", reason="halt", day=day)
+    store = OmsStore(root=tmp_path / "oms")
+    ok, reason = evaluate_pretrade(
+        _sample_order(),
+        store,
+        config=PretradeConfig(
+            require_process_gate=True,
+            process_probe_desk=False,
+            max_open_lots=10,
+            max_open_risk_dollars=10_000,
+        ),
+    )
+    assert not ok
+    assert reason == "process_cash_bias"
+
+
+def test_pretrade_process_gate_allows_when_steps_complete(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    from trading_agent.runbook import process as proc
+
+    proc.set_regime("trade", regime="bull", reason="trend ok")
+    proc.upsert_focus_list(["NVDA", "AMD"])
+    proc.upsert_trade_card(
+        "NVDA",
+        trigger="breakout",
+        stop="2%",
+        size_risk="1R",
+        exit_plan="trail",
+    )
+    store = OmsStore(root=tmp_path / "oms")
+    detail: dict = {}
+    ok, reason = evaluate_pretrade(
+        _sample_order("NVDA"),
+        store,
+        config=PretradeConfig(
+            require_process_gate=True,
+            process_probe_desk=False,
+            process_min_step_score=50.0,
+            max_open_lots=10,
+            max_open_risk_dollars=10_000,
+        ),
+        process_detail=detail,
+    )
+    assert ok, reason
+    assert reason == ""
+    assert detail.get("ok") is True

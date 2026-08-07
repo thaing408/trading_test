@@ -767,6 +767,123 @@ def _run_cio(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_process(args: argparse.Namespace) -> int:
+    """Komar-style 5-step systematic process runbook."""
+    from datetime import date as date_type
+
+    from trading_agent.runbook.process import (
+        append_journal_note,
+        append_violation,
+        ensure_day_state,
+        format_process_report,
+        run_process_status,
+        set_regime,
+        upsert_focus_list,
+        upsert_trade_card,
+    )
+
+    day = None
+    if getattr(args, "date", None):
+        day = date_type.fromisoformat(args.date)
+
+    cmd = (getattr(args, "process_command", None) or "status").strip().lower()
+
+    if cmd in ("status", "report", "check", "checklist"):
+        ensure_day_state(day)
+        payload = run_process_status(day=day, probe=not getattr(args, "no_probe", False))
+        text = format_process_report(payload)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        overall = float(payload.get("overall_score") or 0)
+        # soft exit: 0 always for status (checklist not a hard gate)
+        return 0 if overall >= 0 else 1
+
+    if cmd == "init":
+        path_state = ensure_day_state(day)
+        from trading_agent.runbook.process import day_state_path
+
+        print(f"Initialized process day: {path_state.trading_date}")
+        print(f"State file: {day_state_path(day)}")
+        return 0
+
+    if cmd == "regime":
+        bias = (getattr(args, "bias", None) or "").strip().lower()
+        if bias not in ("trade", "light", "cash"):
+            print("error: --bias must be trade | light | cash", file=sys.stderr)
+            return 2
+        state = set_regime(
+            bias,
+            regime=getattr(args, "regime", "") or "",
+            reason=getattr(args, "reason", "") or "",
+            day=day,
+        )
+        print(f"Regime set: bias={state.bias} regime={state.regime!r}")
+        return 0
+
+    if cmd == "focus":
+        raw = getattr(args, "symbols", None) or getattr(args, "focus_symbols", None) or ""
+        if not raw and getattr(args, "symbols_list", None):
+            raw = args.symbols_list
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        if not syms:
+            print("error: provide symbols, e.g. process focus NVDA,AMD,META", file=sys.stderr)
+            return 2
+        state = upsert_focus_list(syms, day=day)
+        print(f"Focus list ({len(state.focus_list)}): {', '.join(state.focus_list)}")
+        return 0
+
+    if cmd == "card":
+        sym = (getattr(args, "symbol", None) or "").strip().upper()
+        if not sym:
+            print("error: --symbol required", file=sys.stderr)
+            return 2
+        state = upsert_trade_card(
+            sym,
+            trigger=getattr(args, "trigger", "") or "",
+            stop=getattr(args, "stop", "") or "",
+            size_risk=getattr(args, "size", "") or getattr(args, "size_risk", "") or "",
+            exit_plan=getattr(args, "exit", "") or getattr(args, "exit_plan", "") or "",
+            why=getattr(args, "why", "") or "",
+            day=day,
+        )
+        card = next(
+            (c for c in state.trade_cards if str(c.get("symbol")).upper() == sym),
+            {},
+        )
+        print(
+            f"Trade card {sym}: prepared={card.get('prepared')} "
+            f"trigger={card.get('trigger')!r} stop={card.get('stop')!r}"
+        )
+        return 0
+
+    if cmd in ("violation", "violations"):
+        msg = (getattr(args, "message", None) or getattr(args, "text", None) or "").strip()
+        if not msg and getattr(args, "rest", None):
+            msg = " ".join(args.rest).strip()
+        if not msg:
+            print('error: provide message, e.g. process violation "moved stop wider"', file=sys.stderr)
+            return 2
+        state = append_violation(msg, day=day)
+        print(f"Logged violation (n={len(state.violations)}): {msg}")
+        return 0
+
+    if cmd in ("note", "journal"):
+        msg = (getattr(args, "message", None) or getattr(args, "text", None) or "").strip()
+        if not msg and getattr(args, "rest", None):
+            msg = " ".join(args.rest).strip()
+        if not msg:
+            print('error: provide note text', file=sys.stderr)
+            return 2
+        state = append_journal_note(msg, kind=getattr(args, "kind", None) or "review", day=day)
+        print(f"Journal note saved (n={len(state.journal_notes)})")
+        return 0
+
+    print(f"error: unknown process command {cmd!r}", file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_stdio()
     parser = argparse.ArgumentParser(description="Trading Agent — Full Desk (Phases 1–4)")
@@ -1155,6 +1272,49 @@ def main(argv: list[str] | None = None) -> int:
     methods_bt.add_argument("--mom-period", default="1y", help="Momentum/regime daily period")
     methods_bt.add_argument("--output", "-o", metavar="FILE")
 
+    process = subparsers.add_parser(
+        "process",
+        help="Systematic 5-step process runbook (regime → select → prepare → execute → review)",
+    )
+    process_sub = process.add_subparsers(dest="process_command")
+    p_status = process_sub.add_parser("status", help="Score today's 5 steps + desk probes")
+    p_status.add_argument("--date", default=None, help="YYYY-MM-DD (default: today ET)")
+    p_status.add_argument("--no-probe", action="store_true", help="Skip reading sync/OMS artifacts")
+    p_status.add_argument("--output", "-o", metavar="FILE")
+    p_init = process_sub.add_parser("init", help="Create empty day process state file")
+    p_init.add_argument("--date", default=None)
+    p_reg = process_sub.add_parser("regime", help="Step 1: set market bias trade|light|cash")
+    p_reg.add_argument("--bias", required=True, choices=["trade", "light", "cash"])
+    p_reg.add_argument("--regime", default="", help="Short regime label")
+    p_reg.add_argument("--reason", default="", help="Why this bias")
+    p_reg.add_argument("--date", default=None)
+    p_focus = process_sub.add_parser("focus", help="Step 2: set ranked focus list")
+    p_focus.add_argument(
+        "symbols_list",
+        nargs="?",
+        default="",
+        help="Comma-separated symbols (e.g. NVDA,AMD,META)",
+    )
+    p_focus.add_argument("--symbols", default="", help="Alternate to positional list")
+    p_focus.add_argument("--date", default=None)
+    p_card = process_sub.add_parser("card", help="Step 3: upsert a prep trade card")
+    p_card.add_argument("--symbol", required=True)
+    p_card.add_argument("--trigger", default="")
+    p_card.add_argument("--stop", default="")
+    p_card.add_argument("--size", default="", dest="size")
+    p_card.add_argument("--exit", default="", dest="exit")
+    p_card.add_argument("--why", default="")
+    p_card.add_argument("--date", default=None)
+    p_viol = process_sub.add_parser("violation", help="Step 4: log a rule violation")
+    p_viol.add_argument("rest", nargs="*", help="Violation message words")
+    p_viol.add_argument("--message", default="")
+    p_viol.add_argument("--date", default=None)
+    p_note = process_sub.add_parser("note", help="Step 5: append a review journal note")
+    p_note.add_argument("rest", nargs="*", help="Note text words")
+    p_note.add_argument("--message", default="")
+    p_note.add_argument("--kind", default="review")
+    p_note.add_argument("--date", default=None)
+
     parser.add_argument("--fixture", action="store_true", help="(legacy) fixture mode for premarket")
     parser.add_argument("--output", "-o", metavar="FILE", help="(legacy) output file")
 
@@ -1180,6 +1340,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oms(args)
     if args.command == "research":
         return _run_research(args)
+    if args.command == "process":
+        return _run_process(args)
     if args.command == "premarket":
         return _run_premarket(args)
 

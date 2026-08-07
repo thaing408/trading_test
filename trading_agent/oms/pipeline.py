@@ -115,11 +115,13 @@ def run_oms_consume(
             continue
 
         place_path = mx.classify_place_path(order)
+        process_detail: Dict[str, Any] = {}
         ok, reason = evaluate_pretrade(
             order,
             oms,
             config=cfg,
             submitted_this_run=submit_count,
+            process_detail=process_detail,
         )
         if not ok:
             order.status = "skipped"
@@ -127,7 +129,12 @@ def run_oms_consume(
             orders[i] = order
             append_audit(
                 "order_pretrade_block",
-                payload={"order_id": order.order_id, "symbol": order.symbol, "reason": reason},
+                payload={
+                    "order_id": order.order_id,
+                    "symbol": order.symbol,
+                    "reason": reason,
+                    "process_gate": process_detail or None,
+                },
             )
             continue
 
