@@ -495,6 +495,60 @@ def _run_research(args: argparse.Namespace) -> int:
         print(json.dumps(summary, indent=2))
         print(f"log: {manage_log_path(day)}")
         return 0
+    if cmd in ("multi-method", "multi_method", "router", "all-methods"):
+        from trading_agent.strategy.multi_method import (
+            MultiMethodConfig,
+            evaluate_universe,
+            format_multi_method_report,
+        )
+
+        raw = getattr(args, "symbols", None) or ""
+        pos = getattr(args, "symbols_list", None) or ""
+        if pos:
+            raw = f"{raw},{pos}" if raw else pos
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        if not syms:
+            # data-driven focus if empty
+            try:
+                from trading_agent.odte.top_winners import resolve_data_driven_pool
+
+                syms, _src = resolve_data_driven_pool(max_symbols=int(getattr(args, "limit", 15) or 15))
+                syms = syms[: int(getattr(args, "limit", 15) or 15)]
+            except Exception:
+                syms = ["QQQ", "SPY", "NVDA", "AMD", "TSLA"]
+        else:
+            lim = int(getattr(args, "limit", 0) or 0)
+            if lim > 0:
+                syms = syms[:lim]
+        conf = MultiMethodConfig(
+            min_method_score=float(getattr(args, "min_score", None) or 55),
+            min_play_methods=int(getattr(args, "min_methods", None) or 1),
+            bar_period=getattr(args, "period", None) or "10d",
+            bar_interval=getattr(args, "interval", None) or "15m",
+            data_source=getattr(args, "source", None) or "yfinance",
+            soulz_min_confluence=int(getattr(args, "min_confluence", None) or 2),
+        )
+        if getattr(args, "require_two", False):
+            conf.min_play_methods = max(2, conf.min_play_methods)
+        results = evaluate_universe(syms, cfg=conf)
+        card_writes = None
+        # Default ON: write process cards + focus for PLAY names
+        if not bool(getattr(args, "no_write_cards", False)):
+            from trading_agent.strategy.multi_method import write_process_cards_for_plays
+
+            size = getattr(args, "card_size", None) or "0.5R"
+            card_writes = write_process_cards_for_plays(
+                results,
+                update_focus=not bool(getattr(args, "no_focus", False)),
+                default_size=str(size),
+            )
+        text = format_multi_method_report(results, cfg=conf, card_writes=card_writes)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     if cmd in ("soulz", "soulz-pa", "soulz-brief", "soulz-backtest"):
         from trading_agent.scalp.soulz_pa import (
             SoulzPaConfig,
@@ -605,7 +659,7 @@ def _run_research(args: argparse.Namespace) -> int:
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
-        "soulz | soulz-backtest",
+        "soulz | soulz-backtest | multi-method",
         file=sys.stderr,
     )
     return 2
@@ -1342,6 +1396,57 @@ def main(argv: list[str] | None = None) -> int:
     soulz_bt.add_argument("--calls-only", action="store_true")
     soulz_bt.add_argument("--puts-only", action="store_true")
     soulz_bt.add_argument("--output", "-o", metavar="FILE")
+
+    multi_p = research_sub.add_parser(
+        "multi-method",
+        help="Evaluate each ticker through ALL methods (Soulz, top-winners, ORB, breakout)",
+    )
+    multi_p.add_argument(
+        "symbols_list",
+        nargs="?",
+        default="",
+        help="Comma-separated symbols (optional; else data-driven pool)",
+    )
+    multi_p.add_argument("--symbols", default="", help="Alternate symbol list")
+    multi_p.add_argument("--limit", type=int, default=12, help="Max symbols to scan")
+    multi_p.add_argument("--period", default="10d")
+    multi_p.add_argument("--interval", default="15m")
+    multi_p.add_argument("--source", default="yfinance")
+    multi_p.add_argument("--min-score", type=float, default=55.0, help="Min method score to count as play")
+    multi_p.add_argument(
+        "--min-methods",
+        type=int,
+        default=1,
+        help="Min methods that must vote PLAY (1=any chance, 2=confluence)",
+    )
+    multi_p.add_argument(
+        "--require-two",
+        action="store_true",
+        help="Shortcut: require ≥2 methods agreeing to PLAY",
+    )
+    multi_p.add_argument("--min-confluence", type=int, default=2, help="Soulz internal confluence")
+    multi_p.add_argument(
+        "--write-cards",
+        action="store_true",
+        default=True,
+        help="Write process trade cards + focus for PLAY names (default on)",
+    )
+    multi_p.add_argument(
+        "--no-write-cards",
+        action="store_true",
+        help="Do not write process trade cards",
+    )
+    multi_p.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="When writing cards, do not update process focus list",
+    )
+    multi_p.add_argument(
+        "--card-size",
+        default="0.5R",
+        help="Default size_risk on auto trade cards (default 0.5R)",
+    )
+    multi_p.add_argument("--output", "-o", metavar="FILE")
 
     process = subparsers.add_parser(
         "process",
