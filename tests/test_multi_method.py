@@ -42,21 +42,31 @@ def test_all_methods_return_votes():
     cfg = MultiMethodConfig(
         min_method_score=55,
         min_play_methods=1,
+        use_htf_bias=False,
         enabled_methods=(
             "soulz_pa",
             "top_winners",
             "orb_vwap",
             "odte_breakout",
+            "fvg",
+            "range_fade",
+            "sweep",
             "process_methods",
         ),
     )
     result = evaluate_ticker_all_methods("TEST", cfg=cfg, df=df)
     ids = {v.method_id for v in result.votes}
-    assert "soulz_pa" in ids
-    assert "top_winners" in ids
-    assert "orb_vwap" in ids
-    assert "odte_breakout" in ids
-    assert "process_methods" in ids
+    for mid in (
+        "soulz_pa",
+        "top_winners",
+        "orb_vwap",
+        "odte_breakout",
+        "fvg",
+        "range_fade",
+        "sweep",
+        "process_methods",
+    ):
+        assert mid in ids
     assert result.decision in ("PLAY", "SKIP", "CONFLICT", "NO_DATA")
     assert 0 <= result.aggregate_score <= 100
 

@@ -542,7 +542,25 @@ def _run_research(args: argparse.Namespace) -> int:
                 update_focus=not bool(getattr(args, "no_focus", False)),
                 default_size=str(size),
             )
-        text = format_multi_method_report(results, cfg=conf, card_writes=card_writes)
+        book_paths = None
+        book_meta = None
+        # Default ON: export PLAY → auto_trade_book for OMS/Mac consume
+        if not bool(getattr(args, "no_export_book", False)):
+            from trading_agent.export.multi_method_book import export_multi_method_auto_trade
+
+            book, book_paths = export_multi_method_auto_trade(
+                results,
+                merge_desk=not bool(getattr(args, "no_merge_desk", False)),
+            )
+            book_meta = {
+                "entry_count": book.get("entry_count"),
+                "stay_in_cash": book.get("stay_in_cash"),
+                "paths": [str(p) for p in (book_paths or [])],
+                "play_export": (book.get("multi_method") or {}).get("play_count"),
+            }
+        text = format_multi_method_report(
+            results, cfg=conf, card_writes=card_writes, book_export=book_meta
+        )
         print(text)
         if getattr(args, "output", None):
             with open(args.output, "w", encoding="utf-8") as handle:
@@ -1445,6 +1463,22 @@ def main(argv: list[str] | None = None) -> int:
         "--card-size",
         default="0.5R",
         help="Default size_risk on auto trade cards (default 0.5R)",
+    )
+    multi_p.add_argument(
+        "--export-book",
+        action="store_true",
+        default=True,
+        help="Export PLAY rows to auto_trade_book.json for OMS (default on)",
+    )
+    multi_p.add_argument(
+        "--no-export-book",
+        action="store_true",
+        help="Do not write auto_trade_book from multi-method",
+    )
+    multi_p.add_argument(
+        "--no-merge-desk",
+        action="store_true",
+        help="Replace book instead of merging with existing desk entries",
     )
     multi_p.add_argument("--output", "-o", metavar="FILE")
 

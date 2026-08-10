@@ -10,7 +10,12 @@ Every ticker is evaluated by **all** registered methods on a **shared bar histor
 | `top_winners` | Drop-fast + TA/HTF continuation (CALL-style) |
 | `orb_vwap` | Opening-range break + VWAP |
 | `odte_breakout` | OR close-beyond continuation |
+| `fvg` | Fair value gap tag + rejection (`pa.fvg`) |
+| `range_fade` | Pure range-edge fade (`pa.range_fade`) |
+| `sweep` | Liquidity sweep + reclaim (`pa.sweep`) |
 | `process_methods` | Process/risk tags (advisory; **cannot unlock PLAY alone**) |
+
+HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).
 
 ## Decision policy
 
@@ -49,11 +54,11 @@ python -m trading_agent research multi-method SPY,QQQ --min-score 65 --min-metho
 - **Trade card** per PLAY name from best method (trigger / stop / size / exit / why)
 
 ```bash
-# default: write cards + focus
+# default: write cards + focus + auto_trade_book
 python -m trading_agent research multi-method QQQ,NVDA
 
 # scan only
-python -m trading_agent research multi-method QQQ,NVDA --no-write-cards
+python -m trading_agent research multi-method QQQ,NVDA --no-write-cards --no-export-book
 
 # cards but leave focus untouched
 python -m trading_agent research multi-method QQQ,NVDA --no-focus
@@ -66,6 +71,34 @@ Still **manual**: Step 1 regime
 `python -m trading_agent process regime --bias trade --regime "…" --reason "…"`
 
 OMS consume remains blocked until process gate Steps 1–3 pass.
+
+## Auto-trade book export (wired)
+
+**Default on:** PLAY names → ENTER rows in `~/.trading_agent/sync/auto_trade_book.json`  
+(and session/grok state paths via `write_auto_trade_book`).
+
+| Field | Value |
+|-------|--------|
+| `instrument` | **equity** (underlying geometry; no options chain in router) |
+| `source` | `multi_method_router` |
+| `setup_id` | `multi_{best_method}` |
+| `method_tags` | `multi_method`, best method, other play methods |
+| Merge | Existing desk/CIO entries kept; same symbol prefers multi-method row + merged tags |
+
+```bash
+# default export + merge desk book
+python -m trading_agent research multi-method QQQ,NVDA
+
+# multi-method only (overwrite merge behavior for new book content)
+python -m trading_agent research multi-method QQQ,NVDA --no-merge-desk
+
+# no book write
+python -m trading_agent research multi-method QQQ --no-export-book
+```
+
+**Cash suppress:** if process bias is `cash`, export writes **empty entries** + `stay_in_cash=true`.
+
+**Consume path:** same as desk — `oms consume` / Mac consumer reads `auto_trade_book.json`.
 
 ## Next (optional)
 

@@ -1,0 +1,83 @@
+"""Tests for multi-method → auto_trade_book export."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from trading_agent.export.mac_execute import validate_enter
+from trading_agent.export.multi_method_book import (
+    build_multi_method_book,
+    entry_from_multi_eval,
+    export_multi_method_auto_trade,
+)
+from trading_agent.strategy.multi_method import MethodVote, TickerMultiEval
+
+
+def _play(sym: str = "NVDA") -> TickerMultiEval:
+    return TickerMultiEval(
+        symbol=sym,
+        play=True,
+        decision="PLAY",
+        best_method="orb_vwap",
+        best_side="CALL",
+        aggregate_score=70.0,
+        play_methods=["orb_vwap", "odte_breakout"],
+        votes=[
+            MethodVote(
+                method_id="orb_vwap",
+                play=True,
+                side="CALL",
+                score=75,
+                entry=100.0,
+                stop=98.0,
+                target=103.0,
+            )
+        ],
+        reasons=["PLAY via orb_vwap"],
+    )
+
+
+def test_entry_from_multi_eval_valid():
+    row = entry_from_multi_eval(
+        _play(),
+        expires_at="2099-01-01T23:59:00+00:00",
+        trading_date="2026-08-10",
+    )
+    assert row is not None
+    assert row["symbol"] == "NVDA"
+    assert row["instrument"] == "equity"
+    assert row["auto_trade_eligible"] is True
+    assert row["entry"] == 100.0
+    assert row["stop"] == 98.0
+    assert "multi_method" in row["method_tags"]
+    ok, reason = validate_enter(row)
+    assert ok, reason
+
+
+def test_build_book_has_entries():
+    book = build_multi_method_book([_play("AAPL"), _play("MSFT")])
+    assert book["entry_count"] == 2
+    assert book["stay_in_cash"] is False
+    assert book["role"] == "multi-method-router"
+
+
+def test_export_writes_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_SYNC_DIR", str(tmp_path / "sync"))
+    monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    book, paths = export_multi_method_auto_trade([_play()], merge_desk=False)
+    assert paths
+    assert book["entry_count"] == 1
+    payload = json.loads(paths[0].read_text(encoding="utf-8"))
+    assert payload["entries"][0]["symbol"] == "NVDA"
+
+
+def test_cash_bias_suppresses_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_SYNC_DIR", str(tmp_path / "sync"))
+    monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    from trading_agent.runbook.process import set_regime
+
+    set_regime("cash", regime="halt", reason="test")
+    book, paths = export_multi_method_auto_trade([_play()], merge_desk=False)
+    assert book["entry_count"] == 0
+    assert book["stay_in_cash"] is True

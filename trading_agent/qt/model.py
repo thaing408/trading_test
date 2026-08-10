@@ -151,19 +151,10 @@ def detect_fvg(
     closes: Sequence[float],
     i: int,
 ) -> Optional[Tuple[str, float, float]]:
-    """3-candle FVG ending at index i (i is 3rd candle).
+    """3-candle FVG ending at index i — delegates to shared ``pa.fvg``."""
+    from trading_agent.pa.fvg import detect_fvg as _detect
 
-    Bullish FVG: low[i] > high[i-2]
-    Bearish FVG: high[i] < low[i-2]
-    Returns (side, gap_low, gap_high).
-    """
-    if i < 2:
-        return None
-    if float(lows[i]) > float(highs[i - 2]):
-        return ("bullish", float(highs[i - 2]), float(lows[i]))
-    if float(highs[i]) < float(lows[i - 2]):
-        return ("bearish", float(highs[i]), float(lows[i - 2]))
-    return None
+    return _detect(opens, highs, lows, closes, i)
 
 
 def ifvg_confirm(
@@ -177,21 +168,9 @@ def ifvg_confirm(
     end: int,
 ) -> bool:
     """True if an FVG forms then price trades back through it (inverse) in window."""
-    for i in range(max(start, 2), end + 1):
-        fvg = detect_fvg(opens, highs, lows, closes, i)
-        if not fvg:
-            continue
-        fside, glo, ghi = fvg
-        # For long setup we want bullish displacement FVG then reclaim / inverse use
-        if side == "long" and fside == "bullish":
-            for j in range(i + 1, min(end + 1, len(closes))):
-                if float(lows[j]) <= glo:
-                    return True
-        if side == "short" and fside == "bearish":
-            for j in range(i + 1, min(end + 1, len(closes))):
-                if float(highs[j]) >= ghi:
-                    return True
-    return False
+    from trading_agent.pa.fvg import ifvg_confirm as _ifvg
+
+    return _ifvg(opens, highs, lows, closes, side=side, start=start, end=end)
 
 
 def cisd_confirm(

@@ -8,7 +8,12 @@ Methods (paper / research):
   - top_winners  — drop-fast + TA/HTF + structure (0DTE CALL style)
   - orb_vwap     — opening-range break + VWAP
   - odte_breakout — OR high/low continuation (breakout style)
+  - fvg          — fair value gap pullback + rejection
+  - range_fade   — pure range-edge fade
+  - sweep        — liquidity sweep + reclaim (failed breakout)
   - process_methods — baseline process tags (risk/checklist soft score)
+
+HTF bias (daily structure) soft-filters sides when available.
 
 Not live OMS by default — produces ranked play/skip cards for desk prep.
 """
@@ -29,6 +34,9 @@ METHOD_IDS = (
     "top_winners",
     "orb_vwap",
     "odte_breakout",
+    "fvg",
+    "range_fade",
+    "sweep",
     "process_methods",
 )
 
@@ -75,6 +83,8 @@ class MultiMethodConfig:
     bar_interval: str = "15m"
     data_source: str = "yfinance"
     soulz_min_confluence: int = 2
+    use_htf_bias: bool = True
+    htf_strict: bool = False  # if True, block sides against HTF up/down
     # weights for aggregate score (sum normalized)
     weights: Dict[str, float] = field(
         default_factory=lambda: {
@@ -82,6 +92,9 @@ class MultiMethodConfig:
             "top_winners": 1.0,
             "orb_vwap": 1.0,
             "odte_breakout": 0.9,
+            "fvg": 1.0,
+            "range_fade": 0.95,
+            "sweep": 1.0,
             "process_methods": 0.5,
         }
     )
@@ -354,6 +367,143 @@ def eval_odte_breakout(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
         )
 
 
+def _ohlc_lists(df):
+    highs = df["High"].astype(float).tolist()
+    lows = df["Low"].astype(float).tolist()
+    closes = df["Close"].astype(float).tolist()
+    opens = df["Open"].astype(float).tolist() if "Open" in df.columns else closes
+    return opens, highs, lows, closes
+
+
+def eval_fvg(symbol: str, df, cfg: MultiMethodConfig, *, htf_direction: str = "") -> MethodVote:
+    try:
+        opens, highs, lows, closes = _ohlc_lists(df)
+        from trading_agent.pa.fvg import score_fvg_entry
+
+        play, side, score, tags, entry, stop, target = score_fvg_entry(
+            highs,
+            lows,
+            opens,
+            closes,
+            htf_direction=htf_direction,
+            min_size_pct=0.08,
+            require_rejection=True,
+        )
+        return MethodVote(
+            method_id="fvg",
+            play=play and score >= cfg.min_method_score,
+            side=side,
+            score=score,
+            tags=tags,
+            reasons=tags or ["no FVG entry"],
+            entry=entry,
+            stop=stop,
+            target=target,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return MethodVote(
+            method_id="fvg", play=False, side="", score=0.0, error=str(exc), reasons=[str(exc)]
+        )
+
+
+def eval_range_fade(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
+    try:
+        opens, highs, lows, closes = _ohlc_lists(df)
+        from trading_agent.pa.range_fade import evaluate_range_fade
+
+        sig = evaluate_range_fade(highs, lows, opens, closes)
+        if not sig:
+            return MethodVote(
+                method_id="range_fade",
+                play=False,
+                side="",
+                score=20.0,
+                reasons=["no edge rejection in range"],
+            )
+        score = 72.0
+        return MethodVote(
+            method_id="range_fade",
+            play=score >= cfg.min_method_score,
+            side=sig.side,
+            score=score,
+            tags=["range_fade", sig.side.lower()],
+            reasons=list(sig.notes),
+            entry=sig.entry,
+            stop=sig.stop,
+            target=sig.target,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return MethodVote(
+            method_id="range_fade",
+            play=False,
+            side="",
+            score=0.0,
+            error=str(exc),
+            reasons=[str(exc)],
+        )
+
+
+def eval_sweep(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
+    try:
+        opens, highs, lows, closes = _ohlc_lists(df)
+        from trading_agent.pa.levels import compute_key_levels
+        from trading_agent.pa.sweep import detect_sweep_from_series, detect_sweep_reclaim
+
+        sig = detect_sweep_from_series(highs, lows, opens, closes, lookback=20)
+        # also try session OR / PD levels when available
+        if sig is None:
+            levels = compute_key_levels(df)
+            if levels.or_high and levels.or_low:
+                sig = detect_sweep_reclaim(
+                    highs,
+                    lows,
+                    opens,
+                    closes,
+                    level_high=levels.or_high,
+                    level_low=levels.or_low,
+                )
+            if sig is None and levels.pdh and levels.pdl:
+                sig = detect_sweep_reclaim(
+                    highs,
+                    lows,
+                    opens,
+                    closes,
+                    level_high=levels.pdh,
+                    level_low=levels.pdl,
+                )
+        if not sig:
+            return MethodVote(
+                method_id="sweep",
+                play=False,
+                side="",
+                score=18.0,
+                reasons=["no sweep+reclaim"],
+            )
+        score = 74.0
+        entry = float(closes[-1])
+        if sig.side == "CALL":
+            stop = sig.sweep_extreme * 0.998
+            target = entry + (entry - stop) * 1.5
+        else:
+            stop = sig.sweep_extreme * 1.002
+            target = entry - (stop - entry) * 1.5
+        return MethodVote(
+            method_id="sweep",
+            play=score >= cfg.min_method_score,
+            side=sig.side,
+            score=score,
+            tags=["sweep_reclaim", sig.side.lower()],
+            reasons=list(sig.notes),
+            entry=entry,
+            stop=stop,
+            target=target,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return MethodVote(
+            method_id="sweep", play=False, side="", score=0.0, error=str(exc), reasons=[str(exc)]
+        )
+
+
 def eval_process_methods(symbol: str, df, cfg: MultiMethodConfig, votes: List[MethodVote]) -> MethodVote:
     """Soft process/risk checklist using other method votes as context."""
     try:
@@ -420,6 +570,9 @@ EVALUATORS: Dict[str, Callable[..., MethodVote]] = {
     "top_winners": eval_top_winners,
     "orb_vwap": eval_orb_vwap,
     "odte_breakout": eval_odte_breakout,
+    "fvg": eval_fvg,
+    "range_fade": eval_range_fade,
+    "sweep": eval_sweep,
 }
 
 
@@ -453,6 +606,30 @@ def evaluate_ticker_all_methods(
                 asof=asof,
             )
 
+    # HTF bias (daily) for FVG filter + decision notes
+    htf_direction = ""
+    htf_note = ""
+    if cfg.use_htf_bias:
+        try:
+            from trading_agent.pa.htf_bias import bias_allows_side, compute_htf_bias
+            from trading_agent.pa.structure import analyze_structure
+
+            # Prefer structure on provided bars as proxy; daily fetch optional
+            _, highs, lows, closes = _ohlc_lists(df)
+            st = analyze_structure(highs, lows, closes)
+            htf_direction = st.trend if st.trend != "unknown" else "range"
+            htf_note = f"structure_tf={htf_direction}"
+            # Enrich with daily when network ok (soft fail)
+            try:
+                daily = compute_htf_bias(sym, period="6mo", interval="1d", source=cfg.data_source)
+                if daily.direction not in ("", "unknown"):
+                    htf_direction = daily.direction
+                    htf_note = f"htf_daily={daily.direction}({daily.strength:.0f})"
+            except Exception:
+                pass
+        except Exception:
+            htf_direction = ""
+
     votes: List[MethodVote] = []
     for mid in cfg.enabled_methods:
         if mid == "process_methods":
@@ -460,10 +637,32 @@ def evaluate_ticker_all_methods(
         fn = EVALUATORS.get(mid)
         if fn is None:
             continue
-        votes.append(fn(sym, df, cfg))
+        if mid == "fvg":
+            votes.append(eval_fvg(sym, df, cfg, htf_direction=htf_direction))
+        else:
+            votes.append(fn(sym, df, cfg))
 
     if "process_methods" in cfg.enabled_methods:
         votes.append(eval_process_methods(sym, df, cfg, votes))
+
+    # Soft HTF filter: demote play votes that fight HTF when strict or always tag
+    if htf_direction in ("up", "down"):
+        from trading_agent.pa.htf_bias import HtfBias, bias_allows_side
+
+        bias = HtfBias(direction=htf_direction, strength=60.0, source="router")
+        for v in votes:
+            if not v.play or v.side not in ("CALL", "PUT"):
+                continue
+            if not bias_allows_side(bias, v.side, strict=cfg.htf_strict):
+                if cfg.htf_strict:
+                    v.play = False
+                    v.reasons.append(f"blocked by HTF {htf_direction}")
+                    v.score = min(v.score, 50.0)
+                else:
+                    v.score = max(0.0, v.score - 12.0)
+                    v.reasons.append(f"soft HTF conflict ({htf_direction})")
+                    if v.score < cfg.min_method_score:
+                        v.play = False
 
     # Aggregate
     wmap = cfg.weights or {}
@@ -497,7 +696,8 @@ def evaluate_ticker_all_methods(
                 f"no method cleared play (min_score={cfg.min_method_score}, "
                 f"min_methods={cfg.min_play_methods})"
             ]
-            + [f"{v.method_id}={v.score:.0f} play={v.play}" for v in votes],
+            + [f"{v.method_id}={v.score:.0f} play={v.play}" for v in votes]
+            + ([htf_note] if htf_note else []),
             asof=asof,
         )
 
@@ -538,6 +738,12 @@ def evaluate_ticker_all_methods(
         )
 
     best = max(play_votes, key=lambda v: v.score)
+    reasons = [
+        f"PLAY via {', '.join(v.method_id for v in play_votes)}",
+        f"best={best.method_id} side={best.side} score={best.score:.0f}",
+    ]
+    if htf_note:
+        reasons.append(htf_note)
     return TickerMultiEval(
         symbol=sym,
         play=True,
@@ -547,10 +753,7 @@ def evaluate_ticker_all_methods(
         aggregate_score=aggregate,
         play_methods=[v.method_id for v in play_votes],
         votes=votes,
-        reasons=[
-            f"PLAY via {', '.join(v.method_id for v in play_votes)}",
-            f"best={best.method_id} side={best.side} score={best.score:.0f}",
-        ],
+        reasons=reasons,
         asof=asof,
     )
 
@@ -712,6 +915,7 @@ def format_multi_method_report(
     *,
     cfg: MultiMethodConfig | None = None,
     card_writes: Sequence[ProcessCardWrite] | None = None,
+    book_export: Dict[str, Any] | None = None,
 ) -> str:
     cfg = cfg or MultiMethodConfig()
     plays = [r for r in results if r.play]
@@ -768,6 +972,24 @@ def format_multi_method_report(
         lines.append(
             "_Focus list updated with PLAY symbols. Regime (Step 1) is still manual: "
             "`process regime --bias trade|light|cash`._"
+        )
+        lines.append("")
+
+    if book_export is not None:
+        lines.append("## Auto-trade book export")
+        lines.append(
+            f"- **Entries written:** {book_export.get('entry_count', 0)} "
+            f"(multi-method plays: {book_export.get('play_export', '?')})"
+        )
+        lines.append(f"- **stay_in_cash:** {book_export.get('stay_in_cash')}")
+        for p in book_export.get("paths") or []:
+            lines.append(f"- `{p}`")
+        if not book_export.get("paths"):
+            lines.append("_no paths written_")
+        lines.append("")
+        lines.append(
+            "_OMS consume still needs process gate Steps 1–3 + live flags. "
+            "Rows are **equity** geometry (not options chain)._"
         )
         lines.append("")
 
