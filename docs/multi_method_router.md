@@ -100,6 +100,25 @@ python -m trading_agent research multi-method QQQ --no-export-book
 
 **Consume path:** same as desk — `oms consume` / Mac consumer reads `auto_trade_book.json`.
 
+## Historical router backtest
+
+Walk each RTH day, evaluate all methods **as-of decision time** (default 15:00 ET, no lookahead), take the **best PLAY** (default 1/day), simulate synthetic premium exit.
+
+```bash
+# Default universe (mega-caps) · 30d · 15m · 1 trade/day
+python -m trading_agent research multi-method-backtest --period 30d
+
+# Custom list
+python -m trading_agent research multi-method-backtest QQQ,SPY,NVDA,AMD,TSLA --period 30d
+
+# Stricter: need 2 methods + up to 2 trades/day
+python -m trading_agent research multi-method-backtest QQQ,SPY,NVDA --require-two --max-per-day 2
+```
+
+Report includes win rate, P/L, **% of days with ≥1 PLAY**, and breakdown by best-method selected.
+
+Code: `trading_agent/strategy/multi_method_backtest.py`
+
 ## Next (optional)
 
-- OMS export only when PLAY + process gate Steps 1–3  
+- OMS export only when PLAY + process gate Steps 1–3 (live already exports book; gate still applies)  

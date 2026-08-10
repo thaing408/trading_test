@@ -495,6 +495,54 @@ def _run_research(args: argparse.Namespace) -> int:
         print(json.dumps(summary, indent=2))
         print(f"log: {manage_log_path(day)}")
         return 0
+    if cmd in ("multi-method-backtest", "multi_method_backtest", "router-backtest"):
+        from trading_agent.strategy.multi_method import MultiMethodConfig
+        from trading_agent.strategy.multi_method_backtest import (
+            RouterBacktestConfig,
+            render_multi_method_backtest,
+            run_multi_method_backtest,
+        )
+
+        raw = getattr(args, "symbols", None) or ""
+        pos = getattr(args, "symbols_list", None) or ""
+        if pos:
+            raw = f"{raw},{pos}" if raw else pos
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        if not syms:
+            syms = ["QQQ", "SPY", "NVDA", "AMD", "TSLA", "META", "AAPL", "MSFT", "AMZN", "GOOGL"]
+        lim = int(getattr(args, "limit", 0) or 0)
+        if lim > 0:
+            syms = syms[:lim]
+        require_two = bool(getattr(args, "require_two", False))
+        rcfg = MultiMethodConfig(
+            min_method_score=float(getattr(args, "min_score", None) or 55),
+            min_play_methods=2 if require_two else int(getattr(args, "min_methods", None) or 1),
+            data_source=getattr(args, "source", None) or "yfinance",
+            bar_interval=getattr(args, "interval", None) or "15m",
+            bar_period=getattr(args, "period", None) or "30d",
+            use_htf_bias=False,
+        )
+        bt = RouterBacktestConfig(
+            max_trades_per_day=int(getattr(args, "max_per_day", None) or 1),
+            min_method_score=rcfg.min_method_score,
+            min_play_methods=rcfg.min_play_methods,
+            require_two=require_two,
+        )
+        result = run_multi_method_backtest(
+            syms,
+            period=getattr(args, "period", None) or "30d",
+            interval=getattr(args, "interval", None) or "15m",
+            data_source=getattr(args, "source", None) or "yfinance",
+            router_cfg=rcfg,
+            bt_cfg=bt,
+        )
+        text = render_multi_method_backtest(result)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     if cmd in ("multi-method", "multi_method", "router", "all-methods"):
         from trading_agent.strategy.multi_method import (
             MultiMethodConfig,
@@ -677,7 +725,7 @@ def _run_research(args: argparse.Namespace) -> int:
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
-        "soulz | soulz-backtest | multi-method",
+        "soulz | soulz-backtest | multi-method | multi-method-backtest",
         file=sys.stderr,
     )
     return 2
@@ -1481,6 +1529,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Replace book instead of merging with existing desk entries",
     )
     multi_p.add_argument("--output", "-o", metavar="FILE")
+
+    multi_bt = research_sub.add_parser(
+        "multi-method-backtest",
+        help="Historical multi-method router BT (best PLAY per day across universe)",
+    )
+    multi_bt.add_argument("symbols_list", nargs="?", default="", help="Comma symbols (optional)")
+    multi_bt.add_argument("--symbols", default="")
+    multi_bt.add_argument("--limit", type=int, default=0, help="Max symbols from list")
+    multi_bt.add_argument("--period", default="30d")
+    multi_bt.add_argument("--interval", default="15m")
+    multi_bt.add_argument("--source", default="yfinance")
+    multi_bt.add_argument("--min-score", type=float, default=55.0)
+    multi_bt.add_argument("--min-methods", type=int, default=1)
+    multi_bt.add_argument("--require-two", action="store_true")
+    multi_bt.add_argument(
+        "--max-per-day",
+        type=int,
+        default=1,
+        help="Max trades per day (default 1 = best PLAY only)",
+    )
+    multi_bt.add_argument("--output", "-o", metavar="FILE")
 
     process = subparsers.add_parser(
         "process",
