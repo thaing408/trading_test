@@ -84,6 +84,53 @@ def test_process_methods_cannot_unlock_alone():
     assert result.decision == "SKIP"
 
 
+def test_passes_export_quality_gate():
+    from trading_agent.strategy.multi_method import (
+        MethodVote,
+        MultiMethodConfig,
+        TickerMultiEval,
+        passes_export_quality,
+    )
+
+    strong = TickerMultiEval(
+        symbol="X",
+        play=True,
+        decision="PLAY",
+        best_method="orb_vwap",
+        best_side="CALL",
+        aggregate_score=45.0,
+        play_methods=["orb_vwap", "fvg"],
+        votes=[
+            MethodVote("orb_vwap", True, "CALL", 75),
+            MethodVote("fvg", True, "CALL", 70),
+            MethodVote("soulz_pa", False, "", 20),
+        ],
+        play_quality_score=72.5,
+        best_play_score=75,
+    )
+    ok, why = passes_export_quality(strong)
+    assert ok, why
+
+    weak = TickerMultiEval(
+        symbol="Y",
+        play=True,
+        decision="PLAY",
+        best_method="orb_vwap",
+        best_side="CALL",
+        aggregate_score=40.0,
+        play_methods=["orb_vwap", "odte_breakout"],
+        votes=[
+            MethodVote("orb_vwap", True, "CALL", 58),
+            MethodVote("odte_breakout", True, "CALL", 56),
+        ],
+        play_quality_score=57.0,
+        best_play_score=58,
+    )
+    ok2, why2 = passes_export_quality(weak)
+    assert not ok2
+    assert "weak" in why2 or "58" in why2
+
+
 def test_format_report():
     df = _synthetic_df()
     r = evaluate_ticker_all_methods("TEST", cfg=MultiMethodConfig(), df=df)

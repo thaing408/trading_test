@@ -14,27 +14,46 @@ from trading_agent.export.multi_method_book import (
 from trading_agent.strategy.multi_method import MethodVote, TickerMultiEval
 
 
-def _play(sym: str = "NVDA") -> TickerMultiEval:
+def _play(sym: str = "NVDA", *, strong: bool = True) -> TickerMultiEval:
+    s1, s2 = (75.0, 72.0) if strong else (58.0, 56.0)
     return TickerMultiEval(
         symbol=sym,
         play=True,
         decision="PLAY",
         best_method="orb_vwap",
         best_side="CALL",
-        aggregate_score=70.0,
+        aggregate_score=48.0,
         play_methods=["orb_vwap", "odte_breakout"],
         votes=[
             MethodVote(
                 method_id="orb_vwap",
                 play=True,
                 side="CALL",
-                score=75,
+                score=s1,
                 entry=100.0,
                 stop=98.0,
                 target=103.0,
-            )
+            ),
+            MethodVote(
+                method_id="odte_breakout",
+                play=True,
+                side="CALL",
+                score=s2,
+                entry=100.0,
+                stop=98.5,
+                target=102.0,
+            ),
+            MethodVote(
+                method_id="soulz_pa",
+                play=False,
+                side="",
+                score=20.0,
+            ),
         ],
         reasons=["PLAY via orb_vwap"],
+        play_quality_score=(s1 + s2) / 2,
+        best_play_score=s1,
+        export_eligible=strong and s1 >= 65,
     )
 
 
@@ -55,11 +74,21 @@ def test_entry_from_multi_eval_valid():
     assert ok, reason
 
 
+def test_weak_play_blocked_from_export():
+    row = entry_from_multi_eval(
+        _play(strong=False),
+        expires_at="2099-01-01T23:59:00+00:00",
+        trading_date="2026-08-10",
+    )
+    assert row is None
+
+
 def test_build_book_has_entries():
-    book = build_multi_method_book([_play("AAPL"), _play("MSFT")])
+    book = build_multi_method_book([_play("AAPL"), _play("MSFT"), _play("WEAK", strong=False)])
     assert book["entry_count"] == 2
     assert book["stay_in_cash"] is False
     assert book["role"] == "multi-method-router"
+    assert any("export_quality" in x or "WEAK" in x for x in book.get("rejected_incomplete") or [])
 
 
 def test_export_writes_files(tmp_path, monkeypatch):

@@ -516,17 +516,21 @@ def _run_research(args: argparse.Namespace) -> int:
         require_two = bool(getattr(args, "require_two", False))
         rcfg = MultiMethodConfig(
             min_method_score=float(getattr(args, "min_score", None) or 55),
-            min_play_methods=2 if require_two else int(getattr(args, "min_methods", None) or 1),
+            min_play_methods=2
+            if require_two
+            else int(getattr(args, "min_methods", None) or 2),
             data_source=getattr(args, "source", None) or "yfinance",
             bar_interval=getattr(args, "interval", None) or "15m",
             bar_period=getattr(args, "period", None) or "30d",
             use_htf_bias=False,
         )
+        if getattr(args, "allow_single", False):
+            rcfg.min_play_methods = 1
         bt = RouterBacktestConfig(
             max_trades_per_day=int(getattr(args, "max_per_day", None) or 1),
             min_method_score=rcfg.min_method_score,
             min_play_methods=rcfg.min_play_methods,
-            require_two=require_two,
+            require_two=rcfg.min_play_methods >= 2,
         )
         result = run_multi_method_backtest(
             syms,
@@ -570,14 +574,20 @@ def _run_research(args: argparse.Namespace) -> int:
                 syms = syms[:lim]
         conf = MultiMethodConfig(
             min_method_score=float(getattr(args, "min_score", None) or 55),
-            min_play_methods=int(getattr(args, "min_methods", None) or 1),
+            # default require-two (2); --min-methods 1 relaxes
+            min_play_methods=int(getattr(args, "min_methods", None) or 2),
             bar_period=getattr(args, "period", None) or "10d",
             bar_interval=getattr(args, "interval", None) or "15m",
             data_source=getattr(args, "source", None) or "yfinance",
             soulz_min_confluence=int(getattr(args, "min_confluence", None) or 2),
+            export_min_best_score=float(getattr(args, "export_min_best", None) or 65),
+            export_min_play_avg_score=float(getattr(args, "export_min_avg", None) or 65),
+            export_min_play_methods=int(getattr(args, "export_min_methods", None) or 2),
         )
         if getattr(args, "require_two", False):
             conf.min_play_methods = max(2, conf.min_play_methods)
+        if getattr(args, "allow_single", False):
+            conf.min_play_methods = 1
         results = evaluate_universe(syms, cfg=conf)
         card_writes = None
         # Default ON: write process cards + focus for PLAY names
@@ -1482,13 +1492,36 @@ def main(argv: list[str] | None = None) -> int:
     multi_p.add_argument(
         "--min-methods",
         type=int,
-        default=1,
-        help="Min methods that must vote PLAY (1=any chance, 2=confluence)",
+        default=2,
+        help="Min methods that must vote PLAY (default 2=confluence)",
     )
     multi_p.add_argument(
         "--require-two",
         action="store_true",
-        help="Shortcut: require ≥2 methods agreeing to PLAY",
+        help="Force ≥2 methods (default already 2)",
+    )
+    multi_p.add_argument(
+        "--allow-single",
+        action="store_true",
+        help="Relax PLAY to a single method (min_play_methods=1)",
+    )
+    multi_p.add_argument(
+        "--export-min-best",
+        type=float,
+        default=65.0,
+        help="Export if best play-method score ≥ this (or play-avg)",
+    )
+    multi_p.add_argument(
+        "--export-min-avg",
+        type=float,
+        default=65.0,
+        help="Export if mean play-method score ≥ this (or best)",
+    )
+    multi_p.add_argument(
+        "--export-min-methods",
+        type=int,
+        default=2,
+        help="Min play methods required to export to auto_trade_book",
     )
     multi_p.add_argument("--min-confluence", type=int, default=2, help="Soulz internal confluence")
     multi_p.add_argument(
@@ -1541,8 +1574,13 @@ def main(argv: list[str] | None = None) -> int:
     multi_bt.add_argument("--interval", default="15m")
     multi_bt.add_argument("--source", default="yfinance")
     multi_bt.add_argument("--min-score", type=float, default=55.0)
-    multi_bt.add_argument("--min-methods", type=int, default=1)
+    multi_bt.add_argument("--min-methods", type=int, default=2)
     multi_bt.add_argument("--require-two", action="store_true")
+    multi_bt.add_argument(
+        "--allow-single",
+        action="store_true",
+        help="Allow single-method PLAY in historical BT",
+    )
     multi_bt.add_argument(
         "--max-per-day",
         type=int,

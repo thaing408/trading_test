@@ -8,6 +8,7 @@ from .multi_method import (
     evaluate_ticker_all_methods,
     evaluate_universe,
     format_multi_method_report,
+    passes_export_quality,
     trade_card_fields_from_eval,
     write_process_cards_for_plays,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "evaluate_ticker_all_methods",
     "evaluate_universe",
     "format_multi_method_report",
+    "passes_export_quality",
     "trade_card_fields_from_eval",
     "write_process_cards_for_plays",
 ]

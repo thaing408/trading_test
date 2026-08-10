@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from trading_agent.export.auto_trade_book import default_sync_dir, write_auto_trade_book
-from trading_agent.strategy.multi_method import TickerMultiEval
+from trading_agent.strategy.multi_method import (
+    MultiMethodConfig,
+    TickerMultiEval,
+    passes_export_quality,
+)
 
 
 def _default_risk_dollars(entry: float, stop: float) -> float:
@@ -36,10 +40,19 @@ def entry_from_multi_eval(
     expires_at: str,
     trading_date: str,
     default_risk_pct: float = 1.0,
+    cfg: MultiMethodConfig | None = None,
+    require_export_quality: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """Build one ENTER row from a PLAY multi-eval. None if incomplete."""
+    """Build one ENTER row from a PLAY multi-eval. None if incomplete or quality fail."""
     if not result.play or result.decision != "PLAY":
         return None
+    if require_export_quality:
+        if getattr(result, "export_eligible", False) is True:
+            pass
+        else:
+            ok, _why = passes_export_quality(result, cfg=cfg or MultiMethodConfig())
+            if not ok:
+                return None
 
     best = None
     for v in result.votes:
@@ -123,7 +136,9 @@ def entry_from_multi_eval(
         "probability_of_success": 0.48,
         "technical_score": float(best.score),
         "fundamental_score": 0.0,
-        "quality_score": float(result.aggregate_score),
+        "quality_score": float(
+            getattr(result, "play_quality_score", 0) or result.aggregate_score
+        ),
         "checklist_passed": True,
         "edge_complete": True,
         "auto_trade_eligible": True,
@@ -133,15 +148,24 @@ def entry_from_multi_eval(
         "expires_at": expires_at,
         "notes": notes,
         "method_tags": method_tags,
-        "method_notes": f"source=multi_method_router; play_methods={methods}"[:240],
+        "method_notes": (
+            f"source=multi_method_router; play_methods={methods}; "
+            f"playQ={getattr(result, 'play_quality_score', 0):.0f}/"
+            f"{getattr(result, 'best_play_score', 0):.0f}"
+        )[:240],
         "stop_basis": "structure",
         "target_basis": "measured_move",
         "geometry_source": f"multi_method:{result.best_method}",
         "structure_notes": thesis[:240],
         "source": "multi_method_router",
         "trading_date": trading_date,
-        "priority_boost": 5.0 + len(methods) * 2.0,
+        "priority_boost": 5.0
+        + len(methods) * 2.0
+        + max(0.0, getattr(result, "best_play_score", 0) - 55.0) * 0.2,
         "quantity": 1,
+        "export_eligible": True,
+        "play_quality_score": float(getattr(result, "play_quality_score", 0) or 0),
+        "best_play_score": float(getattr(result, "best_play_score", 0) or 0),
     }
 
 
@@ -161,6 +185,7 @@ def build_multi_method_book(
 
     entries: List[Dict[str, Any]] = []
     rejected: List[str] = []
+    mm_cfg = MultiMethodConfig()
     for r in results:
         if r.decision == "CONFLICT":
             rejected.append(f"{r.symbol}:side_conflict")
@@ -171,9 +196,15 @@ def build_multi_method_book(
         if not r.play:
             rejected.append(f"{r.symbol}:skip")
             continue
-        row = entry_from_multi_eval(r, expires_at=expires, trading_date=trading_date)
+        ok_x, why_x = passes_export_quality(r, cfg=mm_cfg)
+        if not ok_x and not getattr(r, "export_eligible", False):
+            rejected.append(f"{r.symbol}:export_quality:{why_x}")
+            continue
+        row = entry_from_multi_eval(
+            r, expires_at=expires, trading_date=trading_date, cfg=mm_cfg
+        )
         if row is None:
-            rejected.append(f"{r.symbol}:incomplete_risk_package")
+            rejected.append(f"{r.symbol}:incomplete_or_quality")
             continue
         entries.append(row)
 

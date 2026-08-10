@@ -21,9 +21,15 @@ HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).
 
 1. Fetch bars once per ticker.  
 2. Run every enabled method → `MethodVote(play, side, score, tags)`.  
-3. **PLAY** if ≥ `min_play_methods` methods vote play with `score ≥ min_method_score` (default **any one** method can give a chance).  
+3. **PLAY** if ≥ `min_play_methods` methods vote play with `score ≥ min_method_score`  
+   (**default 2** = require-two confluence). Use `--allow-single` to relax.  
 4. **CONFLICT** if strong CALL and PUT votes disagree.  
-5. Best method = highest score among play votes (for prep / card suggestion).
+5. Best method = highest score among play votes (for prep / card suggestion).  
+6. **EXPORT** (auto_trade_book) only if PLAY **and**:
+   - `len(play_methods) ≥ 2` (configurable), **and**
+   - `best_play_score ≥ 65` **or** `play_quality_score` (avg of play methods) **≥ 65**  
+
+Note: **`aggregate_score`** averages *all* methods (including fails) and is **not** used for the export gate.
 
 ## CLI
 

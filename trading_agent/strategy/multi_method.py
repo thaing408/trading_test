@@ -62,20 +62,24 @@ class TickerMultiEval:
     decision: str  # PLAY | SKIP | CONFLICT | NO_DATA
     best_method: str
     best_side: str
-    aggregate_score: float
+    aggregate_score: float  # weighted avg of ALL method votes (incl. fails)
     play_methods: List[str] = field(default_factory=list)
     votes: List[MethodVote] = field(default_factory=list)
     reasons: List[str] = field(default_factory=list)
     asof: str = ""
+    # Quality among methods that actually voted PLAY (export / ranking)
+    play_quality_score: float = 0.0  # mean score of play votes
+    best_play_score: float = 0.0  # max score among play votes
+    export_eligible: bool = False  # passes auto-trade quality gate
 
 
 @dataclass
 class MultiMethodConfig:
-    """Router policy: any method can unlock a play, or require confluence."""
+    """Router policy: multi-method agreement preferred for PLAY and export."""
 
     min_method_score: float = 55.0
-    # 1 = any single method can grant a chance; 2+ = multi-method agreement
-    min_play_methods: int = 1
+    # Default 2 = require-two (confluence); 1 = any single method
+    min_play_methods: int = 2
     require_side_agreement: bool = True  # conflict if CALL and PUT both strong
     conflict_score_floor: float = 55.0  # only count methods above this for conflict
     enabled_methods: Tuple[str, ...] = METHOD_IDS
@@ -85,6 +89,11 @@ class MultiMethodConfig:
     soulz_min_confluence: int = 2
     use_htf_bias: bool = True
     htf_strict: bool = False  # if True, block sides against HTF up/down
+    # Auto-trade export quality (does not change PLAY decision by itself)
+    export_min_play_methods: int = 2
+    export_min_best_score: float = 65.0  # best play-method score
+    export_min_play_avg_score: float = 65.0  # mean of play-method scores
+    # Pass export if (methods>=N) and (best>=B or avg>=A)
     # weights for aggregate score (sum normalized)
     weights: Dict[str, float] = field(
         default_factory=lambda: {
@@ -97,6 +106,60 @@ class MultiMethodConfig:
             "sweep": 1.0,
             "process_methods": 0.5,
         }
+    )
+
+
+def play_votes_of(result: TickerMultiEval) -> List[MethodVote]:
+    return [
+        v
+        for v in result.votes
+        if v.play and v.method_id != "process_methods" and v.side in ("CALL", "PUT", "")
+    ]
+
+
+def compute_play_quality(result: TickerMultiEval) -> Tuple[float, float, List[str]]:
+    """Return (best_play_score, play_avg_score, play_method_ids)."""
+    votes = [
+        v
+        for v in result.votes
+        if v.play and v.method_id != "process_methods"
+    ]
+    if not votes:
+        return 0.0, 0.0, []
+    scores = [float(v.score) for v in votes]
+    ids = [v.method_id for v in votes]
+    return max(scores), float(sum(scores) / len(scores)), ids
+
+
+def passes_export_quality(
+    result: TickerMultiEval,
+    *,
+    cfg: MultiMethodConfig | None = None,
+) -> Tuple[bool, str]:
+    """Auto-trade export gate: confluence + strength among *play* methods.
+
+    Requires:
+      - decision PLAY
+      - len(play_methods) >= export_min_play_methods (default 2)
+      - best_play_score >= export_min_best_score **or**
+        play_quality_score (avg) >= export_min_play_avg_score (default 65)
+    """
+    cfg = cfg or MultiMethodConfig()
+    if not result.play or result.decision != "PLAY":
+        return False, "not_play"
+    best_sc, avg_sc, ids = compute_play_quality(result)
+    n = len(ids) if ids else len(result.play_methods)
+    need_n = int(cfg.export_min_play_methods)
+    if n < need_n:
+        return False, f"play_methods {n}<{need_n}"
+    min_best = float(cfg.export_min_best_score)
+    min_avg = float(cfg.export_min_play_avg_score)
+    if best_sc >= min_best or avg_sc >= min_avg:
+        return True, f"ok best={best_sc:.0f} avg={avg_sc:.0f} n={n}"
+    return (
+        False,
+        f"weak play scores best={best_sc:.0f}<{min_best:.0f} and "
+        f"avg={avg_sc:.0f}<{min_avg:.0f}",
     )
 
 
@@ -679,6 +742,13 @@ def evaluate_ticker_all_methods(
         for v in votes
         if v.play and v.score >= cfg.min_method_score and v.method_id != "process_methods"
     ]
+
+    def _quality(pv: List[MethodVote]) -> Tuple[float, float]:
+        if not pv:
+            return 0.0, 0.0
+        sc = [float(v.score) for v in pv]
+        return max(sc), float(sum(sc) / len(sc))
+
     # process_methods alone never unlocks
     if not play_votes:
         # still list best method by score
@@ -699,12 +769,16 @@ def evaluate_ticker_all_methods(
             + [f"{v.method_id}={v.score:.0f} play={v.play}" for v in votes]
             + ([htf_note] if htf_note else []),
             asof=asof,
+            play_quality_score=0.0,
+            best_play_score=0.0,
+            export_eligible=False,
         )
 
     # Side conflict among strong plays
     strong = [v for v in play_votes if v.score >= cfg.conflict_score_floor and v.side in ("CALL", "PUT")]
     sides = {v.side for v in strong}
     if cfg.require_side_agreement and len(sides) > 1:
+        bsc, asc = _quality(play_votes)
         return TickerMultiEval(
             symbol=sym,
             play=False,
@@ -719,9 +793,13 @@ def evaluate_ticker_all_methods(
                 *[f"{v.method_id}→{v.side} ({v.score:.0f})" for v in strong],
             ],
             asof=asof,
+            play_quality_score=round(asc, 1),
+            best_play_score=round(bsc, 1),
+            export_eligible=False,
         )
 
     if len(play_votes) < int(cfg.min_play_methods):
+        bsc, asc = _quality(play_votes)
         return TickerMultiEval(
             symbol=sym,
             play=False,
@@ -735,16 +813,21 @@ def evaluate_ticker_all_methods(
                 f"only {len(play_votes)} method(s) play; need ≥{cfg.min_play_methods}"
             ],
             asof=asof,
+            play_quality_score=round(asc, 1),
+            best_play_score=round(bsc, 1),
+            export_eligible=False,
         )
 
     best = max(play_votes, key=lambda v: v.score)
+    bsc, asc = _quality(play_votes)
     reasons = [
         f"PLAY via {', '.join(v.method_id for v in play_votes)}",
         f"best={best.method_id} side={best.side} score={best.score:.0f}",
+        f"play_quality best={bsc:.0f} avg={asc:.0f} (n={len(play_votes)})",
     ]
     if htf_note:
         reasons.append(htf_note)
-    return TickerMultiEval(
+    result = TickerMultiEval(
         symbol=sym,
         play=True,
         decision="PLAY",
@@ -755,7 +838,18 @@ def evaluate_ticker_all_methods(
         votes=votes,
         reasons=reasons,
         asof=asof,
+        play_quality_score=round(asc, 1),
+        best_play_score=round(bsc, 1),
+        export_eligible=False,
     )
+    ok_x, why_x = passes_export_quality(result, cfg=cfg)
+    result.export_eligible = ok_x
+    if ok_x:
+        reasons.append(f"export_eligible: {why_x}")
+    else:
+        reasons.append(f"export_blocked: {why_x}")
+    result.reasons = reasons
+    return result
 
 
 def evaluate_universe(
@@ -865,7 +959,14 @@ def write_process_cards_for_plays(
     )
 
     ensure_day_state(day)
-    plays = [r for r in results if r.play and r.decision == "PLAY"]
+    # Prefer export-eligible; fall back to all PLAY if none pass quality
+    plays = [
+        r
+        for r in results
+        if r.play and r.decision == "PLAY" and getattr(r, "export_eligible", True)
+    ]
+    if not plays:
+        plays = [r for r in results if r.play and r.decision == "PLAY"]
     writes: List[ProcessCardWrite] = []
 
     if update_focus and plays:
@@ -919,29 +1020,38 @@ def format_multi_method_report(
 ) -> str:
     cfg = cfg or MultiMethodConfig()
     plays = [r for r in results if r.play]
+    exportable = [r for r in results if getattr(r, "export_eligible", False)]
     lines = [
         "# Multi-Method Ticker Router",
         "",
         f"- **Symbols:** {len(results)} · **PLAY:** {len(plays)} · "
+        f"**export-eligible:** {len(exportable)} · "
         f"**min_method_score:** {cfg.min_method_score} · "
         f"**min_play_methods:** {cfg.min_play_methods}",
+        f"- **Export gate:** ≥{cfg.export_min_play_methods} methods and "
+        f"(best≥{cfg.export_min_best_score:.0f} or play-avg≥{cfg.export_min_play_avg_score:.0f})",
         f"- **Methods:** {', '.join(cfg.enabled_methods)}",
         "",
         "## Decisions",
         "",
     ]
     for r in results:
-        icon = {"PLAY": "✅", "SKIP": "⬜", "CONFLICT": "⚡", "NO_DATA": "⛔"}.get(r.decision, "·")
+        icon = {"PLAY": "✅", "SKIP": "⬜", "CONFLICT": "⚡", "NO_DATA": "⛔"}.get(
+            r.decision, "·"
+        )
+        exp = " · **EXPORT**" if getattr(r, "export_eligible", False) else ""
         lines.append(
             f"### {icon} **{r.symbol}** — {r.decision} "
-            f"(agg {r.aggregate_score:.0f}/100)"
+            f"(agg {r.aggregate_score:.0f}/100 · playQ "
+            f"{getattr(r, 'play_quality_score', 0):.0f}/{getattr(r, 'best_play_score', 0):.0f})"
+            f"{exp}"
         )
         if r.play:
             lines.append(
                 f"- Best: **{r.best_method}** → **{r.best_side}** · "
                 f"methods: {', '.join(r.play_methods)}"
             )
-        for reason in r.reasons[:4]:
+        for reason in r.reasons[:5]:
             lines.append(f"- {reason}")
         lines.append("")
         lines.append("| Method | Play | Side | Score | Tags / notes |")
@@ -979,7 +1089,7 @@ def format_multi_method_report(
         lines.append("## Auto-trade book export")
         lines.append(
             f"- **Entries written:** {book_export.get('entry_count', 0)} "
-            f"(multi-method plays: {book_export.get('play_export', '?')})"
+            f"(export-eligible plays: {book_export.get('play_export', '?')})"
         )
         lines.append(f"- **stay_in_cash:** {book_export.get('stay_in_cash')}")
         for p in book_export.get("paths") or []:
@@ -988,8 +1098,9 @@ def format_multi_method_report(
             lines.append("_no paths written_")
         lines.append("")
         lines.append(
-            "_OMS consume still needs process gate Steps 1–3 + live flags. "
-            "Rows are **equity** geometry (not options chain)._"
+            "_Only export-eligible PLAY rows are written (confluence + play-quality). "
+            "OMS still needs process gate Steps 1–3 + live flags. "
+            "Rows are **equity** geometry._"
         )
         lines.append("")
 
@@ -1002,12 +1113,18 @@ def format_multi_method_report(
         f"score ≥ {cfg.min_method_score}."
     )
     lines.append(
+        f"- **EXPORT** if PLAY and ≥{cfg.export_min_play_methods} methods and "
+        f"(best play score ≥{cfg.export_min_best_score:.0f} or "
+        f"play-avg ≥{cfg.export_min_play_avg_score:.0f}). "
+        "Uses play-method scores only (not full aggregate)."
+    )
+    lines.append(
         "- **CONFLICT** if strong CALL and PUT votes disagree "
         f"(floor score {cfg.conflict_score_floor})."
     )
     lines.append("- `process_methods` is advisory and cannot unlock PLAY alone.")
     lines.append(
-        "- Optional: auto trade cards + focus list for PLAY names (`--write-cards`)."
+        "- Default: process cards + auto_trade_book for **export-eligible** names."
     )
     lines.append("")
     lines.append("_Paper router — OMS still needs process gate Steps 1–3._")
