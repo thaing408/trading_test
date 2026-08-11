@@ -51,6 +51,7 @@ def test_all_methods_return_votes():
             "fvg",
             "range_fade",
             "sweep",
+            "chart_patterns",
             "process_methods",
         ),
     )
@@ -64,6 +65,7 @@ def test_all_methods_return_votes():
         "fvg",
         "range_fade",
         "sweep",
+        "chart_patterns",
         "process_methods",
     ):
         assert mid in ids

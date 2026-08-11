@@ -1,5 +1,10 @@
-"""Price-action engines: structure, levels, FVG, sweeps, HTF bias, signals."""
+"""Price-action engines: structure, levels, FVG, sweeps, chart patterns, HTF bias."""
 
+from trading_agent.pa.chart_patterns import (
+    ChartPattern,
+    detect_all_chart_patterns,
+    score_chart_pattern_entry,
+)
 from trading_agent.pa.fvg import (
     FairValueGap,
     detect_fvg,
@@ -21,6 +26,7 @@ from trading_agent.pa.structure import (
 from trading_agent.pa.sweep import SweepSignal, detect_sweep_reclaim
 
 __all__ = [
+    "ChartPattern",
     "FairValueGap",
     "HtfBias",
     "KeyLevels",
@@ -31,6 +37,7 @@ __all__ = [
     "analyze_structure",
     "compute_htf_bias",
     "compute_key_levels",
+    "detect_all_chart_patterns",
     "detect_fvg",
     "detect_fvg_at",
     "detect_sweep_reclaim",
@@ -40,6 +47,7 @@ __all__ = [
     "ifvg_confirm",
     "pivot_highs_lows",
     "rejection_at_level",
+    "score_chart_pattern_entry",
     "score_fvg_entry",
     "whole_dollar_levels",
 ]

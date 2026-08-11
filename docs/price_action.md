@@ -4,9 +4,10 @@ Living notes on **price action (PA)** for the desk, with **code** under `trading
 
 **Related:**
 
-- PA package: `trading_agent/pa/` (structure, levels, FVG, sweep, range fade, HTF bias, journal)
+- PA package: `trading_agent/pa/` (structure, levels, FVG, sweep, range fade, chart patterns, HTF bias, journal)
+- Classical chart patterns: `trading_agent/pa/chart_patterns.py` (H&S, double top/bottom, triangles, flags)
 - Soulz-style PA: `docs/soulz_pa_scalp.md`, `trading_agent/scalp/soulz_pa.py` (BRR + range + fib)
-- Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `range_fade`, `sweep`)
+- Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `range_fade`, `sweep`, `chart_patterns`)
 - Systematic process: `docs/systematic_process.md`
 
 ---

@@ -385,7 +385,11 @@ def compute_technical_analysis(
         opens=list(opens) if opens else None,
     )
     candle_names = [s.name for s in pattern_report.signals if s.family == "candlestick"]
-    pa_names = [s.name for s in pattern_report.signals if s.family == "institutional_pa"]
+    pa_names = [
+        s.name
+        for s in pattern_report.signals
+        if s.family in ("institutional_pa", "chart_pattern")
+    ]
     pattern_notes = [s.note for s in pattern_report.signals if s.note]
     pattern_adj = pattern_score_adjustment(pattern_report)
 

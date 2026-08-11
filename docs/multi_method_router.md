@@ -13,6 +13,7 @@ Every ticker is evaluated by **all** registered methods on a **shared bar histor
 | `fvg` | Fair value gap tag + rejection (`pa.fvg`) |
 | `range_fade` | Pure range-edge fade (`pa.range_fade`) |
 | `sweep` | Liquidity sweep + reclaim (`pa.sweep`) |
+| `chart_patterns` | Classical H&S / double top-bottom / triangle / flag (`pa.chart_patterns`) |
 | `process_methods` | Process/risk tags (advisory; **cannot unlock PLAY alone**) |
 
 HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).

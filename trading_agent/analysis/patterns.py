@@ -18,7 +18,7 @@ class PatternSignal:
     """Named pattern with decision-facing metadata."""
 
     name: str
-    family: str  # candlestick | institutional_pa
+    family: str  # candlestick | institutional_pa | chart_pattern
     bias: str  # bullish | bearish | neutral
     confidence: float  # 0-100
     note: str = ""
@@ -448,6 +448,34 @@ def detect_institutional_pa(
     return list(best.values())
 
 
+def detect_classical_chart_patterns(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+) -> List[PatternSignal]:
+    """Bridge classical geometry detectors into PatternSignal for TA books."""
+    try:
+        from trading_agent.pa.chart_patterns import detect_all_chart_patterns
+    except Exception:
+        return []
+    out: List[PatternSignal] = []
+    for p in detect_all_chart_patterns(highs, lows, closes):
+        # Prefer confirmed; still surface approaching so Bulkowski gates can see them
+        conf = float(p.confidence)
+        if p.status != "confirmed":
+            conf = max(40.0, conf - 12.0)
+        out.append(
+            PatternSignal(
+                name=p.name,
+                family="chart_pattern",
+                bias=p.bias,
+                confidence=conf,
+                note="; ".join(p.notes) if p.notes else p.status,
+            )
+        )
+    return out
+
+
 def detect_all_patterns(
     closes: Sequence[float],
     highs: Sequence[float],
@@ -461,7 +489,8 @@ def detect_all_patterns(
     o = _opens_from_closes(opens, closes)
     candles = detect_candlestick_patterns(o, highs, lows, closes)
     pa = detect_institutional_pa(highs, lows, closes)
-    return PatternReport(signals=candles + pa)
+    classical = detect_classical_chart_patterns(highs, lows, closes)
+    return PatternReport(signals=candles + pa + classical)
 
 
 def pattern_score_adjustment(report: PatternReport) -> float:

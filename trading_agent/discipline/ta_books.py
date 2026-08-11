@@ -90,12 +90,16 @@ _STRONG_BEAR_PA = (
     "failed_breakout",
     "head_and_shoulders",
     "double_top",
+    "descending_triangle",
+    "bear_flag",
     "rs_flip_resistance",
     "evening_star",
 )
 _STRONG_BULL_PA = (
     "double_bottom",
-    "inverse_head",
+    "inverse_head",  # matches inverse_head_and_shoulders
+    "ascending_triangle",
+    "bull_flag",
     "rs_flip_support",
     "morning_star",
     "failed_breakdown",
