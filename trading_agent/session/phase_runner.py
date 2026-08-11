@@ -28,14 +28,26 @@ def resolve_first_phase(
     current: datetime,
     schedule: DeskSchedule,
 ) -> DeskPhaseKind:
-    """Pick the first desk phase to run for this session."""
+    """Pick the first desk phase to run for this session.
+
+    Late starts (after a phase's scheduled time) jump forward via
+    ``resolve_start_phase`` so a night kickstart does not re-blast MI→CIO→…
+    to Discord. Prep-only windows that end at preopen still start at
+    intelligence when the day has not yet reached open.
+    """
     if config.from_phase is not None:
         return config.from_phase
     if config.fixture_mode or config.dry_run or not config.wait_for_schedule:
         return DeskPhaseKind.INTELLIGENCE
-    if config.until_phase is not None:
-        # Prep-only scope (e.g. preopen): always run phases 1-4 even on late catch-up.
-        return DeskPhaseKind.INTELLIGENCE
+
+    # Full-day or mid/late day: honor clock (skip completed phases).
+    # Prep-only (until=preopen) before open: still run intelligence→preopen.
+    if config.until_phase == DeskPhaseKind.PREOPEN:
+        if current.astimezone(schedule.timezone) < schedule.market_open:
+            return DeskPhaseKind.INTELLIGENCE
+        # Already past open — no prep replay
+        return resolve_start_phase(current, schedule, None)
+
     return resolve_start_phase(current, schedule, None)
 
 

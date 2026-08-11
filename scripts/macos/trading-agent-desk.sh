@@ -44,6 +44,23 @@ if [ "$dow" -ge 6 ]; then
   fi
 fi
 
+# --- after-hours guard (PT): do not start full-day replay after CIO review time ---
+# Normal launchd is 01:55 PT. Manual kickstarts after ~13:30 PT used to re-post the whole day.
+if [ "${TRADING_AGENT_FORCE_DESK:-0}" != "1" ]; then
+  if [ "$ARGC" -eq 0 ] || ! cli_has "--fixture" "$@"; then
+    hour_min=$(TZ=America/Los_Angeles date '+%H%M')
+    # Desk day ends at CIO review 13:30 PT; block 13:35–23:59 and before 01:00 rare edge
+    if [ "$hour_min" -ge 1335 ] || [ "$hour_min" -lt 0150 ]; then
+      # Allow early morning launchd (01:55) — only block late evening / post-close
+      if [ "$hour_min" -ge 1335 ]; then
+        # log before redirect may not exist yet — print and exit
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] After-hours ($(TZ=America/Los_Angeles date '+%H:%M %Z')) — desk not started (no full-day Discord replay). Set TRADING_AGENT_FORCE_DESK=1 to override."
+        exit 0
+      fi
+    fi
+  fi
+fi
+
 DATE_ARG=$(date '+%Y-%m-%d')
 STARTUP_LOG="$LOG_DIR/desk_startup_${DATE_ARG}.log"
 SESSION_LOG="$LOG_DIR/desk_${DATE_ARG}.log"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import traceback
@@ -167,6 +168,30 @@ def run_session(
     posts: list[dict] = []
     phase_messages: dict[str, str] = {}
     wait = config.wait_for_schedule and not config.fixture_mode and not config.dry_run
+
+    # After the last phase time for this trading_date, do not replay the day.
+    # (Night kickstarts used to blast every Discord post in minutes.)
+    last_phase_at = schedule.phases[-1].scheduled_at  # CIO review
+    force_after_hours = os.getenv("TRADING_AGENT_FORCE_DESK", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if wait and not force_after_hours and current > last_phase_at:
+        _log(
+            log,
+            f"[skip] Session day {trading_date} already finished "
+            f"(last phase {last_phase_at.strftime('%H:%M %Z')}; now {current.strftime('%H:%M %Z')}). "
+            "Not replaying phases/Discord. Set TRADING_AGENT_FORCE_DESK=1 to override.",
+        )
+        return SessionResult(
+            trading_date=trading_date.isoformat(),
+            schedule_log=schedule_log,
+            phase_messages={"after_hours": "_skipped — day complete, no replay_"},
+            plan_context_path=str(session_dir / "daily_plan_context.json"),
+            discord_posts=posts,
+        )
 
     start_kind, phases_to_run = resolve_phase_window(config, current, schedule)
     if config.until_phase is not None:

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Pull researcher handoff books from production host onto this Mac.
 # Host is resolved under DHCP: hostname / cache file / env — not a fixed IP only.
+#
+# Only runs inside the trading window (default: weekdays 5:35–12:55 America/Los_Angeles).
+# Override: TRADING_AGENT_PULL_ANYTIME=1
 set -euo pipefail
 
 USER="${RESEARCHER_SSH_USER:-ubuntu}"
@@ -19,6 +22,49 @@ if [ -f "$HOME/.grok/trading-agent.env" ]; then
   . "$HOME/.grok/trading-agent.env"
   set +a
   USER="${RESEARCHER_SSH_USER:-$USER}"
+fi
+
+# --- Trading window only (no overnight / weekend pulls) ---
+if [ "${TRADING_AGENT_PULL_ANYTIME:-0}" != "1" ]; then
+  OPEN_REASON=$(
+    PYTHONPATH="${REPO}${PYTHONPATH:+:$PYTHONPATH}" \
+      "${TRADING_AGENT_PYTHON:-python3}" - <<'PY' 2>/dev/null || true
+from datetime import datetime
+from zoneinfo import ZoneInfo
+try:
+    from trading_agent.session.schedule import is_market_open_day  # type: ignore
+except Exception:
+    is_market_open_day = None
+try:
+    # Prefer scalp bot window (5:35–12:55 PT weekdays, holidays excluded)
+    from schwab_mcp.qqq_strategy import is_trading_window  # type: ignore
+    open_, reason = is_trading_window()
+    print("1" if open_ else "0")
+    print(reason)
+except Exception:
+    # Fallback without schwab_mcp: Mon–Fri 05:35–12:55 PT
+    PT = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(PT)
+    if now.weekday() >= 5:
+        print("0")
+        print("weekend — skip pull")
+    else:
+        t = now.time()
+        from datetime import time as dtime
+        if dtime(5, 35) <= t <= dtime(12, 55):
+            print("1")
+            print("trading window open (fallback PT 5:35–12:55)")
+        else:
+            print("0")
+            print(f"outside trading window ({now.strftime('%H:%M %Z')})")
+PY
+  )
+  OPEN=$(printf '%s\n' "$OPEN_REASON" | sed -n '1p')
+  REASON=$(printf '%s\n' "$OPEN_REASON" | sed -n '2p')
+  if [ "$OPEN" != "1" ]; then
+    log "skip pull — ${REASON:-outside trading window}"
+    exit 0
+  fi
 fi
 
 # Resolve host (Python helper handles DHCP: me-ai.local, cache, env, fallback)
