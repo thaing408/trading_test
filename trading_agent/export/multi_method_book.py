@@ -1,6 +1,7 @@
 """Export multi-method PLAY results into auto_trade_book for OMS/Mac consume.
 
-Paper router → ENTER rows (underlying geometry). Does not place orders.
+Paper/test: **options debit** rows (single-leg CALL/PUT), not share lots.
+Underlying entry/stop/target are structure levels used to pick strike & risk.
 OMS still applies process gate + kill switch + live flags.
 """
 
@@ -9,9 +10,10 @@ from __future__ import annotations
 import json
 import os
 import socket
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from trading_agent.export.auto_trade_book import default_sync_dir, write_auto_trade_book
 from trading_agent.strategy.multi_method import (
@@ -20,18 +22,56 @@ from trading_agent.strategy.multi_method import (
     passes_export_quality,
 )
 
+ET = ZoneInfo("America/New_York")
+
 
 def _default_risk_dollars(entry: float, stop: float) -> float:
-    """Risk $ for 1 share * 100 share lot, or options-style package floor."""
+    """Risk $ floor for 1 debit option contract package."""
     try:
         risk_pts = abs(float(entry) - float(stop))
     except (TypeError, ValueError):
         risk_pts = 0.0
     if risk_pts <= 0:
-        return 100.0
-    # 100-share equity lot risk; cap/floor for book integrity
-    raw = risk_pts * 100.0
-    return float(max(25.0, min(raw, 2500.0)))
+        return 150.0
+    # Rough: structure risk × 100 as package cap; options size still 1 contract
+    raw = risk_pts * 100.0 * 0.15  # not full stock notional
+    return float(max(50.0, min(raw, 500.0)))
+
+
+def _nearest_option_expiration(from_day: date | None = None, *, max_dte: int = 5) -> date:
+    """Prefer 0DTE when session is open day; else next Fri within max_dte, else next Fri."""
+    day = from_day or datetime.now(ET).date()
+    # 0DTE / same-day if weekday
+    if day.weekday() < 5:
+        return day
+    # weekend → next Monday (or Friday if max_dte allows)
+    d = day
+    for _ in range(10):
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            return d
+    return day + timedelta(days=1)
+
+
+def _option_strike(spot: float, side: str, *, otm: float = 1.0) -> float:
+    """1-point (or 1%) OTM strike for CALL/PUT; round to sensible increment."""
+    px = max(float(spot), 0.01)
+    side_u = (side or "CALL").upper()
+    # Increment: $1 under $200, $5 for mega-priced names
+    inc = 5.0 if px >= 500 else (1.0 if px >= 50 else 0.5)
+    otm_pts = max(otm, inc) if px < 200 else max(otm, px * 0.005)
+
+    def _round_down(x: float) -> float:
+        return inc * int(x / inc)
+
+    def _round_up(x: float) -> float:
+        return inc * int((x + inc - 1e-9) / inc)
+
+    if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
+        # long put slightly OTM
+        return float(_round_down(px - otm_pts))
+    # long call slightly OTM
+    return float(_round_up(px + otm_pts))
 
 
 def entry_from_multi_eval(
@@ -87,17 +127,19 @@ def entry_from_multi_eval(
     side_raw = (result.best_side or best.side or "CALL").upper()
     if side_raw in ("CALL", "LONG", "BULL", "BULLISH"):
         direction = "Bullish"
-        strategy = f"Multi-method long ({result.best_method})"
+        contract_side = "CALL"
+        strategy = f"Multi-method long call ({result.best_method})"
     elif side_raw in ("PUT", "SHORT", "BEAR", "BEARISH"):
         direction = "Bearish"
-        strategy = f"Multi-method short ({result.best_method})"
+        contract_side = "PUT"
+        strategy = f"Multi-method long put ({result.best_method})"
     else:
-        direction = "Neutral"
-        strategy = f"Multi-method ({result.best_method})"
+        # Neutral → skip options auto (need CALL/PUT)
+        return None
 
     risk = _default_risk_dollars(entry, stop)
     methods = list(result.play_methods or [result.best_method])
-    tags = ["multi_method", result.best_method] + [
+    tags = ["multi_method", result.best_method, "options_debit", contract_side.lower()] + [
         m for m in methods if m != result.best_method
     ]
     # dedupe preserve order
@@ -108,29 +150,36 @@ def entry_from_multi_eval(
             seen.add(t)
             method_tags.append(t)
 
+    # Options package: single-leg debit around structure entry
+    strike = _option_strike(entry, contract_side)
+    exp_day = _nearest_option_expiration()
+    exp_iso = exp_day.isoformat()
+    dte = max(0, (exp_day - datetime.now(ET).date()).days)
+
     thesis = (
         f"multi-method PLAY agg={result.aggregate_score:.0f}; "
-        f"best={result.best_method} {side_raw}; methods={','.join(methods)}"
+        f"best={result.best_method} {contract_side}; methods={','.join(methods)}; "
+        f"debit 1x {exp_iso} {strike}{contract_side[0]}"
     )
     notes = "; ".join(result.reasons[:3])[:240]
 
     return {
         "symbol": result.symbol,
         "action": "ENTER",
-        "side": direction,
-        "instrument": "equity",  # underlying geometry; no options chain in router
+        "side": direction,  # Bullish→CALL / Bearish→PUT via infer_call_put
+        "instrument": "options",  # ALWAYS options — never share lots
         "strategy": strategy,
         "setup_id": f"multi_{result.best_method}",
         "setup_name": f"Multi-method: {result.best_method}",
         "setup_grade": "B" if result.aggregate_score >= 55 else "C",
         "grade_score": float(result.aggregate_score),
-        "entry": round(entry, 4),
+        "entry": round(entry, 4),  # underlying structure entry
         "stop": round(stop, 4),
         "target": round(target, 4),
-        "strike_prices": [],
-        "expiration": "",
+        "strike_prices": [strike],
+        "expiration": exp_iso,
         "max_risk_dollars": round(risk, 2),
-        "max_reward_dollars": round(abs(target - entry) * 100.0, 2),
+        "max_reward_dollars": round(risk * 1.5, 2),
         "max_risk_pct": default_risk_pct,
         "confidence": min(95.0, 50.0 + result.aggregate_score * 0.4),
         "probability_of_success": 0.48,
@@ -143,15 +192,18 @@ def entry_from_multi_eval(
         "edge_complete": True,
         "auto_trade_eligible": True,
         "defined_risk": True,
+        "options_strategy_class": f"long_{contract_side.lower()}",
+        "dte": dte,
         "mtf_note": "",
         "thesis": thesis[:400],
         "expires_at": expires_at,
         "notes": notes,
         "method_tags": method_tags,
         "method_notes": (
-            f"source=multi_method_router; play_methods={methods}; "
+            f"source=multi_method_router; options_debit; play_methods={methods}; "
             f"playQ={getattr(result, 'play_quality_score', 0):.0f}/"
-            f"{getattr(result, 'best_play_score', 0):.0f}"
+            f"{getattr(result, 'best_play_score', 0):.0f}; "
+            f"strike={strike} exp={exp_iso}"
         )[:240],
         "stop_basis": "structure",
         "target_basis": "measured_move",
@@ -162,7 +214,7 @@ def entry_from_multi_eval(
         "priority_boost": 5.0
         + len(methods) * 2.0
         + max(0.0, getattr(result, "best_play_score", 0) - 55.0) * 0.2,
-        "quantity": 1,
+        "quantity": 1,  # 1 contract
         "export_eligible": True,
         "play_quality_score": float(getattr(result, "play_quality_score", 0) or 0),
         "best_play_score": float(getattr(result, "best_play_score", 0) or 0),

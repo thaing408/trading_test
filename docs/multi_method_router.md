@@ -85,7 +85,7 @@ OMS consume remains blocked until process gate Steps 1–3 pass.
 
 | Field | Value |
 |-------|--------|
-| `instrument` | **equity** (underlying geometry; no options chain in router) |
+| `instrument` | **options** (single-leg debit CALL/PUT; not shares) |
 | `source` | `multi_method_router` |
 | `setup_id` | `multi_{best_method}` |
 | `method_tags` | `multi_method`, best method, other play methods |

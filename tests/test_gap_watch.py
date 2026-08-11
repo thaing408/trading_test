@@ -85,3 +85,73 @@ def test_check_and_process_no_file(tmp_path: Path, monkeypatch):
     res = check_and_process_gap_book(AgentConfig(fixture_mode=True, use_live_data=False))
     assert res.triggered is False
     assert res.snapshot.file_exists is False
+    assert "missing" in (res.discord_message or "").lower()
+
+
+def test_discord_format_includes_real_filename():
+    from trading_agent.export.gap_watch import (
+        GapAutoTradePrepResult,
+        GapWatchSnapshot,
+        format_gap_watch_discord,
+    )
+
+    snap = GapWatchSnapshot(
+        file_path="/Users/thai/.trading_agent/sync/gap_screener_book.json",
+        file_exists=True,
+        changed=True,
+        continuation=["AAPL", "MSFT", "NVDA"],
+        new_continuation=["NVDA"],
+    )
+    msg = format_gap_watch_discord(
+        GapAutoTradePrepResult(triggered=False, snapshot=snap)
+    )
+    assert "gap_screener_book.json" in msg
+    assert "missing" not in msg
+    assert "Continuation: **3**" in msg
+
+
+def test_prepare_preserves_file_path_on_discord(tmp_path: Path, monkeypatch):
+    """Regression: prep must not wipe file_path → Discord 'File: missing'."""
+    from trading_agent.export.gap_watch import (
+        GapWatchSnapshot,
+        format_gap_watch_discord,
+        prepare_auto_trade_for_symbols,
+    )
+    from trading_agent.config import AgentConfig
+
+    book_path = tmp_path / "gap_screener_book.json"
+    book_path.write_text("{}", encoding="utf-8")
+    snap = GapWatchSnapshot(
+        file_path=str(book_path),
+        file_exists=True,
+        changed=True,
+        continuation=["AAA", "BBB"],
+        new_continuation=["AAA", "BBB"],
+    )
+
+    def fake_pipeline(cfg):
+        class P:
+            ranked_opportunities = []
+            stay_in_cash = True
+            watchlist = []
+
+        return P()
+
+    monkeypatch.setattr("trading_agent.pipeline.run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        "trading_agent.export.auto_trade_book.export_plan_for_execution",
+        lambda plan, session_dir=None: {
+            "entries": [],
+            "stay_in_cash": True,
+            "_written_paths": [str(tmp_path / "auto_trade_book.json")],
+        },
+    )
+    res = prepare_auto_trade_for_symbols(
+        ["AAA", "BBB"],
+        AgentConfig(fixture_mode=True, use_live_data=False),
+        snapshot=snap,
+    )
+    assert res.snapshot.file_path == str(book_path)
+    msg = format_gap_watch_discord(res)
+    assert "gap_screener_book.json" in msg
+    assert "`missing`" not in msg

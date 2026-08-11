@@ -83,6 +83,12 @@ def live_enabled(*, cli_live: bool = False) -> bool:
     )
 
 
+def options_only() -> bool:
+    """When True (default), block auto share lots — options debit only."""
+    raw = os.getenv("TRADING_AGENT_OPTIONS_ONLY", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def book_candidates(
     *,
     trading_day: Optional[date] = None,
@@ -487,9 +493,13 @@ def classify_place_path(order: ReadyOrder) -> str:
     """
     Return place path key:
       single_leg_debit | equity_buy | multi_leg_ready | credit_ready | unsupported
+
+    When TRADING_AGENT_OPTIONS_ONLY=1 (default), equity/share paths are blocked.
     """
     instrument = (order.instrument or "options").lower()
     if instrument in ("underlying", "equity", "etf", "stock", "shares"):
+        if options_only():
+            return "unsupported"  # shares disabled — options debit only
         side = (order.side or "").lower()
         if side in ("short", "sell", "bear") and "long" not in side:
             return "unsupported"  # no short equity auto
@@ -592,7 +602,7 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
 
     Live paths supported on this Mac's schwab-mcp-server:
       - single-leg **debit** options → ``place_order`` BUY_TO_OPEN (OCC)
-      - simple **equity buy** → ``place_order`` BUY
+      - simple **equity buy** → ``place_order`` BUY (disabled when TRADING_AGENT_OPTIONS_ONLY=1)
 
     Multi-leg packages (iron condor, spreads, etc.) and credit shorts stay
     ``ready`` for human TOS — no multi-leg builder on MCP yet.
@@ -618,6 +628,15 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
         return submit_single_leg_debit(order, live=True)
 
     if path == "equity_buy":
+        if options_only():
+            order.status = "skipped"
+            order.skip_reason = "options_only — equity/share buys disabled"
+            order.broker_response = {
+                "mode": "skipped",
+                "place_path": path,
+                "message": "TRADING_AGENT_OPTIONS_ONLY=1 blocks share lots",
+            }
+            return order
         return submit_equity_buy(order, live=True)
 
     if path == "multi_leg_ready":
@@ -641,6 +660,17 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
                 "Credit/short-premium not auto-submitted (debit BUY_TO_OPEN only); "
                 "use TOS from ready_orders.json"
             ),
+        }
+        return order
+
+    # unsupported (e.g. equity when OPTIONS_ONLY) or unknown path
+    if path == "unsupported" and options_only():
+        order.status = "skipped"
+        order.skip_reason = order.skip_reason or "options_only / incomplete options package"
+        order.broker_response = {
+            "mode": "skipped",
+            "place_path": path,
+            "message": "TRADING_AGENT_OPTIONS_ONLY=1 — need options debit (strike + exp + CALL/PUT)",
         }
         return order
 

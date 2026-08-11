@@ -159,11 +159,22 @@ def inspect_gap_book_changes(state: Dict[str, Any] | None = None) -> GapWatchSna
 
 def format_gap_watch_discord(result: GapAutoTradePrepResult) -> str:
     snap = result.snapshot
+    if snap.file_path:
+        file_label = Path(snap.file_path).name
+    elif snap.file_exists:
+        file_label = "gap_screener_book.json"
+    else:
+        file_label = "missing"
     lines = [
         "**Gap book watch → auto-trade prep**",
-        f"File: `{Path(snap.file_path).name if snap.file_path else 'missing'}`",
+        f"File: `{file_label}`"
+        + (f" ({snap.file_path})" if snap.file_path and file_label == "missing" else ""),
         f"Changed: **{snap.changed}** | Continuation: **{len(snap.continuation)}**",
     ]
+    if not snap.file_exists and not snap.file_path:
+        lines.append(
+            "_No gap book on disk — pull researcher sync or wait for /gapscan._"
+        )
     if snap.new_continuation:
         lines.append(f"**New continuation tickers:** {', '.join(snap.new_continuation)}")
     if snap.dropped_continuation:
@@ -211,14 +222,41 @@ def prepare_auto_trade_for_symbols(
     agent_config: AgentConfig,
     *,
     session_dir: Path | None = None,
+    snapshot: GapWatchSnapshot | None = None,
 ) -> GapAutoTradePrepResult:
-    """Run research pipeline focused on symbols and export auto_trade_book."""
+    """Run research pipeline focused on symbols and export auto_trade_book.
+
+    Pass ``snapshot`` from ``inspect_gap_book_changes`` so Discord/status keep
+    the real gap book path (otherwise File shows as ``missing``).
+    """
     from copy import deepcopy
 
     from trading_agent.export.auto_trade_book import export_plan_for_execution
     from trading_agent.pipeline import run_pipeline
 
-    snap = GapWatchSnapshot(new_continuation=list(symbols), continuation=list(symbols))
+    if snapshot is not None:
+        snap = GapWatchSnapshot(
+            file_path=snapshot.file_path,
+            file_exists=snapshot.file_exists,
+            changed=snapshot.changed,
+            mtime=snapshot.mtime,
+            content_hash=snapshot.content_hash,
+            continuation=list(snapshot.continuation or symbols),
+            new_continuation=list(symbols),
+            dropped_continuation=list(snapshot.dropped_continuation or []),
+            all_candidates=list(snapshot.all_candidates or []),
+            as_of=snapshot.as_of,
+            message=snapshot.message,
+        )
+    else:
+        # Standalone call: resolve file if present so status is honest
+        path = resolve_gap_book_file()
+        snap = GapWatchSnapshot(
+            file_path=str(path) if path else "",
+            file_exists=bool(path),
+            new_continuation=list(symbols),
+            continuation=list(symbols),
+        )
     if not symbols:
         return GapAutoTradePrepResult(triggered=False, snapshot=snap)
 
@@ -306,10 +344,18 @@ def check_and_process_gap_book(
     snap = inspect_gap_book_changes(state)
 
     if not snap.file_exists:
+        # Honest one-liner for Discord — researcher pull has not landed yet
+        miss = (
+            "**Gap book watch → auto-trade prep**\n"
+            "File: `missing` — no `gap_screener_book.json` under "
+            f"`{default_sync_dir()}` (or `~/.researcher/`).\n"
+            "_Waiting for researcher pull /gapscan handoff._\n"
+            f"_{snap.message}_"
+        )
         return GapAutoTradePrepResult(
             triggered=False,
             snapshot=snap,
-            discord_message=snap.message,
+            discord_message=miss,
         )
 
     should_run = force or snap.changed or bool(snap.new_continuation)
@@ -351,13 +397,15 @@ def check_and_process_gap_book(
         targets,
         agent_config,
         session_dir=session_dir,
+        snapshot=snap,
     )
+    # Keep inspect() metadata; only refresh which continuation names we prepped
     result.snapshot = snap
     result.snapshot.new_continuation = [
         s for s in targets if s in set(snap.new_continuation) or s in set(snap.continuation)
     ]
-    if not result.discord_message:
-        result.discord_message = format_gap_watch_discord(result)
+    # Always rebuild Discord from the real file snapshot (prep used to omit file_path)
+    result.discord_message = format_gap_watch_discord(result)
 
     # Mark processed (even if stay in cash — we tried)
     processed = {str(s).upper() for s in (state.get("processed_continuation") or [])}
