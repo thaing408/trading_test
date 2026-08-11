@@ -13,8 +13,38 @@ Every ticker is evaluated by **all** registered methods on a **shared bar histor
 | `fvg` | Fair value gap tag + rejection (`pa.fvg`) |
 | `range_fade` | Pure range-edge fade (`pa.range_fade`) |
 | `sweep` | Liquidity sweep + reclaim (`pa.sweep`) |
-| `chart_patterns` | Classical H&S / double top-bottom / triangle / flag (`pa.chart_patterns`) |
+| `chart_patterns` | Classical H&S / double top-bottom / triangle / flag on **shared** bars (`pa.chart_patterns`) |
+| `swing_daily` | Multi-day swing: **own 1d bars**, pattern + structure + EMA/RS (`strategy/swing_scan.py`) |
 | `process_methods` | Process/risk tags (advisory; **cannot unlock PLAY alone**) |
+
+### Daily swing scanner (standalone)
+
+Use **daily** bars for multi-day holds (not the default 15m multi-method scan):
+
+```bash
+# Screener/default universe (top N)
+python -m trading_agent research swing-scan --limit 25
+
+# Explicit list
+python -m trading_agent research swing-scan NVDA,AMD,AAPL,MSFT,META
+
+# Only confirmed classical daily patterns
+python -m trading_agent research swing-scan --require-pattern --limit 30
+
+# Scan only (no process cards)
+python -m trading_agent research swing-scan QQQ,SPY --no-write-cards
+
+# Discord: posts by default when webhook/bot is configured
+python -m trading_agent research swing-scan --limit 20
+python -m trading_agent research swing-scan NVDA,AMD --no-discord   # local only
+```
+
+Defaults: `1y` / `1d`, min score 58, structure-only setups allowed, RS vs SPY on.
+
+**Discord:** compact PLAY table + reasons (username `Swing Scan`). Uses  
+`DISCORD_WEBHOOK_URL` or `DISCORD_TOKEN` + channel  
+(`DISCORD_SWING_CHANNEL_ID` → `DISCORD_ALERTS_CHANNEL_ID` → `DISCORD_RESEARCH_CHANNEL_ID` → desk/default).  
+Skip with `--no-discord`.
 
 HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).
 

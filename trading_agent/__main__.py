@@ -625,6 +625,69 @@ def _run_research(args: argparse.Namespace) -> int:
                 handle.write(text)
         return 0
 
+    if cmd in ("swing-scan", "swing_scan", "swing", "daily-swing"):
+        from trading_agent.strategy.swing_scan import (
+            SwingScanConfig,
+            format_swing_scan_report,
+            post_swing_scan_to_discord,
+            scan_swing_universe,
+            write_swing_process_cards,
+        )
+
+        raw = getattr(args, "symbols", None) or ""
+        pos = getattr(args, "symbols_list", None) or ""
+        if pos:
+            raw = f"{raw},{pos}" if raw else pos
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        lim = int(getattr(args, "limit", 25) or 25)
+        sc = SwingScanConfig(
+            bar_period=getattr(args, "period", None) or "1y",
+            bar_interval=getattr(args, "interval", None) or "1d",
+            data_source=getattr(args, "source", None) or "yfinance",
+            min_score=float(getattr(args, "min_score", None) or 58),
+            require_confirmed_pattern=bool(getattr(args, "require_pattern", False)),
+            allow_structure_only=not bool(getattr(args, "require_pattern", False)),
+            use_rs=not bool(getattr(args, "no_rs", False)),
+            max_symbols=lim if lim > 0 else 40,
+            min_atr_pct=float(getattr(args, "min_atr", None) or 1.2),
+            max_atr_pct=float(getattr(args, "max_atr", None) or 8.0),
+        )
+        if bool(getattr(args, "require_pattern", False)):
+            sc.require_confirmed_pattern = True
+            sc.allow_structure_only = False
+        results = scan_swing_universe(syms or None, cfg=sc)
+        card_note = ""
+        if not bool(getattr(args, "no_write_cards", False)):
+            writes = write_swing_process_cards(
+                results,
+                update_focus=not bool(getattr(args, "no_focus", False)),
+                default_size=str(getattr(args, "card_size", None) or "1R"),
+            )
+            n_ok = sum(1 for w in writes if w.get("written"))
+            card_note = f"\n\n_Process cards written: {n_ok}_"
+        text = format_swing_scan_report(results, cfg=sc) + card_note
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        # Discord: default ON (desk-style); --no-discord to skip
+        want_discord = not bool(getattr(args, "no_discord", False))
+        if bool(getattr(args, "discord", False)):
+            want_discord = True
+        if want_discord:
+            posted = post_swing_scan_to_discord(results, cfg=sc)
+            if posted.get("ok"):
+                print(
+                    f"[discord] posted swing scan ({posted.get('chunks', 1)} chunk(s))",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[discord] skip/fail: {posted.get('error', 'unknown')}",
+                    file=sys.stderr,
+                )
+        return 0
+
     if cmd in ("soulz", "soulz-pa", "soulz-brief", "soulz-backtest"):
         from trading_agent.scalp.soulz_pa import (
             SoulzPaConfig,
@@ -735,7 +798,7 @@ def _run_research(args: argparse.Namespace) -> int:
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
-        "soulz | soulz-backtest | multi-method | multi-method-backtest",
+        "soulz | soulz-backtest | multi-method | multi-method-backtest | swing-scan",
         file=sys.stderr,
     )
     return 2
@@ -1562,6 +1625,53 @@ def main(argv: list[str] | None = None) -> int:
         help="Replace book instead of merging with existing desk entries",
     )
     multi_p.add_argument("--output", "-o", metavar="FILE")
+
+    swing_p = research_sub.add_parser(
+        "swing-scan",
+        help="Daily swing scanner (1d patterns + structure + EMA/RS), multi-day holds",
+    )
+    swing_p.add_argument(
+        "symbols_list",
+        nargs="?",
+        default="",
+        help="Comma-separated symbols (optional; else screener/default universe)",
+    )
+    swing_p.add_argument("--symbols", default="", help="Alternate symbol list")
+    swing_p.add_argument("--limit", type=int, default=25, help="Max symbols to scan")
+    swing_p.add_argument("--period", default="1y", help="Daily history window (default 1y)")
+    swing_p.add_argument("--interval", default="1d", help="Bar size (default 1d)")
+    swing_p.add_argument("--source", default="yfinance")
+    swing_p.add_argument("--min-score", type=float, default=58.0)
+    swing_p.add_argument(
+        "--require-pattern",
+        action="store_true",
+        help="Only PLAY confirmed classical daily patterns (no structure-only)",
+    )
+    swing_p.add_argument("--no-rs", action="store_true", help="Skip RS vs SPY")
+    swing_p.add_argument("--min-atr", type=float, default=1.2, help="Min daily ATR%")
+    swing_p.add_argument("--max-atr", type=float, default=8.0, help="Max daily ATR%")
+    swing_p.add_argument(
+        "--no-write-cards",
+        action="store_true",
+        help="Do not write process trade cards for PLAY names",
+    )
+    swing_p.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="When writing cards, do not update process focus list",
+    )
+    swing_p.add_argument("--card-size", default="1R", help="Size on swing cards (default 1R)")
+    swing_p.add_argument(
+        "--discord",
+        action="store_true",
+        help="Force post PLAY shortlist to Discord (default already posts if configured)",
+    )
+    swing_p.add_argument(
+        "--no-discord",
+        action="store_true",
+        help="Do not post swing scan to Discord",
+    )
+    swing_p.add_argument("--output", "-o", metavar="FILE")
 
     multi_bt = research_sub.add_parser(
         "multi-method-backtest",

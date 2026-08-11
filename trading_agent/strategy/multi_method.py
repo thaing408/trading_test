@@ -11,7 +11,8 @@ Methods (paper / research):
   - fvg          — fair value gap pullback + rejection
   - range_fade   — pure range-edge fade
   - sweep        — liquidity sweep + reclaim (failed breakout)
-  - chart_patterns — classical H&S / double / triangle / flag (measured move)
+  - chart_patterns — classical H&S / double / triangle / flag (measured move) on shared bars
+  - swing_daily   — multi-day swing (own daily bars: pattern + structure + EMA/RS)
   - process_methods — baseline process tags (risk/checklist soft score)
 
 HTF bias (daily structure) soft-filters sides when available.
@@ -39,6 +40,7 @@ METHOD_IDS = (
     "range_fade",
     "sweep",
     "chart_patterns",
+    "swing_daily",
     "process_methods",
 )
 
@@ -107,6 +109,7 @@ class MultiMethodConfig:
             "range_fade": 0.95,
             "sweep": 1.0,
             "chart_patterns": 1.0,
+            "swing_daily": 1.05,
             "process_methods": 0.5,
         }
     )
@@ -509,6 +512,46 @@ def eval_range_fade(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
         )
 
 
+def eval_swing_daily(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
+    """Daily swing method — fetches its own 1d bars (ignores shared 15m df)."""
+    try:
+        from trading_agent.strategy.swing_scan import SwingScanConfig, evaluate_swing_symbol
+
+        sc = SwingScanConfig(
+            bar_period="1y",
+            bar_interval="1d",
+            data_source=cfg.data_source,
+            min_score=cfg.min_method_score,
+            require_confirmed_pattern=False,
+            allow_structure_only=True,
+            use_rs=True,
+        )
+        cand = evaluate_swing_symbol(symbol, cfg=sc)
+        play = bool(cand.play and cand.score >= cfg.min_method_score)
+        return MethodVote(
+            method_id="swing_daily",
+            play=play,
+            side=cand.side if play or cand.side else "",
+            score=float(cand.score),
+            tags=list(cand.tags)[:12],
+            reasons=list(cand.reasons)[:6]
+            or ([f"swing {cand.side}"] if play else ["no daily swing setup"]),
+            entry=float(cand.entry or 0),
+            stop=float(cand.stop or 0),
+            target=float(cand.target or 0),
+            error=cand.error or "",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return MethodVote(
+            method_id="swing_daily",
+            play=False,
+            side="",
+            score=0.0,
+            error=str(exc),
+            reasons=[str(exc)],
+        )
+
+
 def eval_chart_patterns(
     symbol: str, df, cfg: MultiMethodConfig, *, htf_direction: str = ""
 ) -> MethodVote:
@@ -678,6 +721,7 @@ EVALUATORS: Dict[str, Callable[..., MethodVote]] = {
     "range_fade": eval_range_fade,
     "sweep": eval_sweep,
     "chart_patterns": eval_chart_patterns,
+    "swing_daily": eval_swing_daily,
 }
 
 
