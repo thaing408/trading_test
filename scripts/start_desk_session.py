@@ -154,9 +154,9 @@ def main() -> int:
         time.sleep(5)
 
     # Phase scope
-    until = (os.environ.get("TRADING_AGENT_UNTIL_PHASE") or "cio_review").strip()
+    until = (os.environ.get("TRADING_AGENT_UNTIL_PHASE") or "evening_scan").strip()
     if until in ("full", "all", "day", "fullday", "full_day"):
-        until = "cio_review"
+        until = "evening_scan"
     if until in ("prep", "pre-market", "premarket"):
         until = "preopen"
     from_phase = (os.environ.get("TRADING_AGENT_FROM_PHASE") or "intelligence").strip()

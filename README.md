@@ -65,8 +65,11 @@ You do **not** need any author-specific path (e.g. a personal `researcher\.env`)
 | 06:30-13:00 | Trading Desk (intraday) | `intraday` |
 | 13:15 | Performance Review | `performance` |
 | 13:30 | CIO Daily Review | `cio_review` |
+| 15:00 PT / **18:00 ET** | Evening scanners (swing + multi-method) | `evening_scan` |
 
-**Default for scheduled desk:** full day (`TRADING_AGENT_UNTIL_PHASE=cio_review`) — morning prep, intraday PT/SL + discovery refreshes (07:00 / 09:30 / 11:00 PT), then close reviews. Use `preopen` for prep-only without the all-day desk.
+**Default for scheduled desk:** full day (`TRADING_AGENT_UNTIL_PHASE=evening_scan`) — morning prep, **research-time scanners**, intraday PT/SL + discovery refreshes (07:00 / 09:30 / 11:00 PT), close reviews, then **6 PM ET** evening scanners. Use `preopen` for prep-only; use `cio_review` to stop before 6 PM ET.
+
+**Swing / multi-method schedule:** runs **once at research** (with the research universe) and again at **`evening_scan` (18:00 ET)**. Disable with `TRADING_AGENT_DESK_SCANNERS=0` or `TRADING_AGENT_EVENING_SCAN=0`.
 
 **macOS Grok + Schwab pipeline (optional):** full 7 phases via `scripts/macos/` after install.
 
@@ -178,7 +181,8 @@ python -m pytest tests/test_install_wizard.py -q
 
 See `.env.example`. Key vars (written by the installer):
 
-- `TRADING_AGENT_UNTIL_PHASE=cio_review` — full day (default); `preopen` = stop after phase 4
+- `TRADING_AGENT_UNTIL_PHASE=evening_scan` — full day (default); `cio_review` = stop before 6pm ET; `preopen` = stop after phase 4
+- `TRADING_AGENT_DESK_SCANNERS=1` — swing + multi-method at research + evening
 - `TRADING_AGENT_DISCOVERY_REFRESH=1` — light rescreens at 07:00 / 09:30 / 11:00 PT
 - `TRADING_AGENT_PYTHON` — explicit Python path for scheduled tasks
 - `TRADING_AGENT_DRY_RUN=1` / `TRADING_AGENT_NO_DISCORD=1` — no Discord posts

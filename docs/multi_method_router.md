@@ -46,6 +46,17 @@ Defaults: `1y` / `1d`, min score 58, structure-only setups allowed, RS vs SPY on
 (`DISCORD_SWING_CHANNEL_ID` → `DISCORD_ALERTS_CHANNEL_ID` → `DISCORD_RESEARCH_CHANNEL_ID` → desk/default).  
 Skip with `--no-discord`.
 
+### Desk session schedule (automatic)
+
+When the full desk session runs (`until-phase=evening_scan`):
+
+| When | Phase | What runs |
+|------|--------|-----------|
+| **~05:00 PT** | `research` (after pipeline) | Swing-scan + multi-method on research watchlist |
+| **18:00 ET** (~15:00 PT) | `evening_scan` | Same scanner pack post-close (daily bars settled) |
+
+Module: `trading_agent/session/scanners.py`. Env: `TRADING_AGENT_DESK_SCANNERS`, `TRADING_AGENT_EVENING_SCAN`, `TRADING_AGENT_DESK_MULTI_METHOD`, `TRADING_AGENT_DESK_SCANNER_LIMIT`.
+
 HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).
 
 ## Decision policy

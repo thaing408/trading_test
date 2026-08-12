@@ -22,7 +22,7 @@ from trading_agent.session.schedule import (
 )
 
 
-def test_compute_desk_schedule_has_seven_phases():
+def test_compute_desk_schedule_has_eight_phases():
     trading_date = date(2026, 7, 9)
     schedule = compute_desk_schedule(trading_date, interval_minutes=30)
 
@@ -34,6 +34,11 @@ def test_compute_desk_schedule_has_seven_phases():
     assert schedule.market_close.time() == DESK_CLOSE_PT
     assert schedule.phases[5].scheduled_at.time() == PERFORMANCE_TIME
     assert schedule.phases[6].scheduled_at.time() == CIO_REVIEW_TIME
+    assert schedule.phases[7].kind == DeskPhaseKind.EVENING_SCAN
+    # 18:00 ET on the session date
+    assert schedule.phases[7].scheduled_at.astimezone(
+        __import__("zoneinfo").ZoneInfo("America/New_York")
+    ).hour == 18
     assert schedule.intraday_cycles[0] == schedule.market_open
     assert schedule.intraday_cycles[-1] < schedule.market_close
     assert len(schedule.intraday_cycles) == 13

@@ -35,6 +35,11 @@ class SessionConfig:
     enable_discovery_refresh: bool = True
     # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
     enable_gap_book_watch: bool = True
+    # Swing + multi-method at research (05:00 PT) and evening_scan (18:00 ET)
+    enable_desk_scanners: bool = True
+    enable_evening_scan: bool = True
+    desk_scanner_limit: int = 20
+    desk_scanner_multi_method: bool = True
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -66,6 +71,25 @@ class SessionConfig:
             "no",
             "off",
         )
+        desk_scan = os.getenv("TRADING_AGENT_DESK_SCANNERS", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        evening = os.getenv("TRADING_AGENT_EVENING_SCAN", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        multi = os.getenv("TRADING_AGENT_DESK_MULTI_METHOD", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        scan_lim = int(os.getenv("TRADING_AGENT_DESK_SCANNER_LIMIT", "20") or 20)
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -82,4 +106,8 @@ class SessionConfig:
             from_phase=from_phase,
             enable_discovery_refresh=disc,
             enable_gap_book_watch=gap_watch,
+            enable_desk_scanners=desk_scan,
+            enable_evening_scan=evening,
+            desk_scanner_limit=max(1, scan_lim),
+            desk_scanner_multi_method=multi,
         )

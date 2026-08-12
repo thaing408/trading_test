@@ -24,6 +24,9 @@ DESK_OPEN_PT = time(6, 30)
 DESK_CLOSE_PT = time(13, 0)
 PERFORMANCE_TIME = time(13, 15)
 CIO_REVIEW_TIME = time(13, 30)
+# After US cash close + buffer: daily bar settled — swing + companion scanners
+# 18:00 America/New_York (= 15:00 PT during PDT)
+EVENING_SCAN_TIME_ET = time(18, 0)
 
 # Light discovery refresh slots (Pacific Time) during RTH — not full CIO rebuilds.
 # 07:00 PT = 10:00 ET (post-open range set)
@@ -44,6 +47,7 @@ class DeskPhaseKind(str, Enum):
     INTRADAY = "intraday"
     PERFORMANCE = "performance"
     CIO_REVIEW = "cio_review"
+    EVENING_SCAN = "evening_scan"
 
 
 @dataclass(frozen=True)
@@ -106,7 +110,10 @@ def compute_desk_schedule(
     interval_minutes: int = 15,
     tz: ZoneInfo = PT,
 ) -> DeskSchedule:
-    """Compute all 7 desk phases and intraday cycles for a trading day (Pacific Time)."""
+    """Compute desk phases and intraday cycles for a trading day (Pacific Time).
+
+    Includes evening_scan at 18:00 ET (daily swing + companion scanners).
+    """
     intelligence = datetime.combine(trading_date, INTELLIGENCE_TIME, tzinfo=tz)
     research = datetime.combine(trading_date, RESEARCH_TIME, tzinfo=tz)
     cio_approval = datetime.combine(trading_date, CIO_APPROVAL_TIME, tzinfo=tz)
@@ -115,6 +122,8 @@ def compute_desk_schedule(
     close_dt = datetime.combine(trading_date, DESK_CLOSE_PT, tzinfo=tz)
     performance = datetime.combine(trading_date, PERFORMANCE_TIME, tzinfo=tz)
     cio_review = datetime.combine(trading_date, CIO_REVIEW_TIME, tzinfo=tz)
+    evening_et = datetime.combine(trading_date, EVENING_SCAN_TIME_ET, tzinfo=ET)
+    evening_scan = evening_et.astimezone(tz)
 
     cycles: list[datetime] = []
     cursor = open_dt
@@ -136,6 +145,11 @@ def compute_desk_schedule(
         DeskPhase(DeskPhaseKind.INTRADAY, "Trading Desk", open_dt),
         DeskPhase(DeskPhaseKind.PERFORMANCE, "Performance & Learning Team", performance),
         DeskPhase(DeskPhaseKind.CIO_REVIEW, "Chief Investment Officer Daily Review", cio_review),
+        DeskPhase(
+            DeskPhaseKind.EVENING_SCAN,
+            "Evening Scanners (Swing + multi-method)",
+            evening_scan,
+        ),
     )
 
     return DeskSchedule(
@@ -170,15 +184,33 @@ def resolve_start_phase(
         DeskPhaseKind.INTRADAY,
         DeskPhaseKind.PERFORMANCE,
         DeskPhaseKind.CIO_REVIEW,
+        DeskPhaseKind.EVENING_SCAN,
     ]
+    by_kind = {p.kind: p.scheduled_at for p in schedule.phases}
     phase_times = {
-        DeskPhaseKind.INTELLIGENCE: schedule.phases[0].scheduled_at,
-        DeskPhaseKind.RESEARCH: schedule.phases[1].scheduled_at,
-        DeskPhaseKind.CIO_APPROVAL: schedule.phases[2].scheduled_at,
-        DeskPhaseKind.PREOPEN: schedule.phases[3].scheduled_at,
+        DeskPhaseKind.INTELLIGENCE: by_kind.get(
+            DeskPhaseKind.INTELLIGENCE, schedule.phases[0].scheduled_at
+        ),
+        DeskPhaseKind.RESEARCH: by_kind.get(
+            DeskPhaseKind.RESEARCH, schedule.phases[1].scheduled_at
+        ),
+        DeskPhaseKind.CIO_APPROVAL: by_kind.get(
+            DeskPhaseKind.CIO_APPROVAL, schedule.phases[2].scheduled_at
+        ),
+        DeskPhaseKind.PREOPEN: by_kind.get(
+            DeskPhaseKind.PREOPEN, schedule.phases[3].scheduled_at
+        ),
         DeskPhaseKind.INTRADAY: schedule.market_open,
-        DeskPhaseKind.PERFORMANCE: schedule.phases[5].scheduled_at,
-        DeskPhaseKind.CIO_REVIEW: schedule.phases[6].scheduled_at,
+        DeskPhaseKind.PERFORMANCE: by_kind.get(
+            DeskPhaseKind.PERFORMANCE, schedule.phases[5].scheduled_at
+        ),
+        DeskPhaseKind.CIO_REVIEW: by_kind.get(
+            DeskPhaseKind.CIO_REVIEW, schedule.phases[6].scheduled_at
+        ),
+        DeskPhaseKind.EVENING_SCAN: by_kind.get(
+            DeskPhaseKind.EVENING_SCAN,
+            schedule.phases[-1].scheduled_at,
+        ),
     }
     for kind in reversed(ordered):
         if now >= phase_times[kind]:
@@ -199,15 +231,26 @@ def render_desk_schedule_log(schedule: DeskSchedule, interval_minutes: int) -> s
         f"({schedule.market_close.astimezone(ET).strftime('%H:%M %Z')} ET)",
         f"- Performance Review: {schedule.phases[5].scheduled_at.strftime('%H:%M %Z')}",
         f"- CIO Daily Review: {schedule.phases[6].scheduled_at.strftime('%H:%M %Z')}",
-        f"- Intraday interval: {interval_minutes} minutes (baseline when flat)",
-        f"- In-position PT/SL interval: {DEFAULT_IN_POSITION_INTERVAL_MINUTES} minutes "
-        f"(while open positions exist; adaptive)",
-        f"- Intraday cycle count (baseline grid): {len(schedule.intraday_cycles)}",
-        f"- Discovery refresh slots (PT): {len(schedule.discovery_refreshes)} "
-        f"(light rescreen — not full CIO rebuild)",
-        "",
-        "## Discovery refresh times (PT)",
     ]
+    evening = next((p for p in schedule.phases if p.kind == DeskPhaseKind.EVENING_SCAN), None)
+    if evening:
+        lines.append(
+            f"- Evening scanners: {evening.scheduled_at.strftime('%H:%M %Z')} "
+            f"({evening.scheduled_at.astimezone(ET).strftime('%H:%M %Z')} ET) "
+            f"— swing-scan + multi-method"
+        )
+    lines.extend(
+        [
+            f"- Intraday interval: {interval_minutes} minutes (baseline when flat)",
+            f"- In-position PT/SL interval: {DEFAULT_IN_POSITION_INTERVAL_MINUTES} minutes "
+            f"(while open positions exist; adaptive)",
+            f"- Intraday cycle count (baseline grid): {len(schedule.intraday_cycles)}",
+            f"- Discovery refresh slots (PT): {len(schedule.discovery_refreshes)} "
+            f"(light rescreen — not full CIO rebuild)",
+            "",
+            "## Discovery refresh times (PT)",
+        ]
+    )
     for index, slot in enumerate(schedule.discovery_refreshes, start=1):
         lines.append(
             f"{index}. {slot.strftime('%H:%M %Z')} "
