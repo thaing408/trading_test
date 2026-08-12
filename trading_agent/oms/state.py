@@ -82,6 +82,8 @@ class OmsStore:
             "lots": {},
             "day_realized_pnl": 0.0,
             "day_key": "",
+            # Closed round-trips today by symbol (reset each ensure_day)
+            "day_round_trips": {},
         }
         self.load()
 
@@ -156,12 +158,59 @@ class OmsStore:
         if self._data.get("day_key") != day_key:
             self._data["day_key"] = day_key
             self._data["day_realized_pnl"] = 0.0
+            self._data["day_round_trips"] = {}
 
     def add_realized_pnl(self, pnl: float) -> None:
         self._data["day_realized_pnl"] = float(self._data.get("day_realized_pnl") or 0.0) + float(pnl)
 
     def day_realized_pnl(self) -> float:
         return float(self._data.get("day_realized_pnl") or 0.0)
+
+    def day_round_trips_map(self) -> Dict[str, int]:
+        raw = self._data.get("day_round_trips") or {}
+        if not isinstance(raw, dict):
+            return {}
+        out: Dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                out[str(k).upper()] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def symbol_round_trips_today(self, symbol: str) -> int:
+        """Closed round-trips for symbol today (+ closed lots not yet recorded)."""
+        sym = str(symbol or "").upper().strip()
+        if not sym:
+            return 0
+        counted = int(self.day_round_trips_map().get(sym, 0) or 0)
+        # Also count CLOSED lots closed on this day_key (idempotent upper bound)
+        day = str(self._data.get("day_key") or "")
+        closed_n = 0
+        for lot in self.all_lots():
+            if lot.symbol.upper() != sym:
+                continue
+            if lot.status != LotStatus.CLOSED.value:
+                continue
+            closed_at = str(lot.closed_at or "")
+            if day and closed_at.startswith(day):
+                closed_n += 1
+            elif not day and closed_at:
+                closed_n += 1
+        return max(counted, closed_n)
+
+    def total_round_trips_today(self) -> int:
+        return int(sum(self.day_round_trips_map().values()))
+
+    def record_round_trip(self, symbol: str) -> int:
+        """Increment closed round-trip count for symbol; return new count."""
+        sym = str(symbol or "").upper().strip()
+        if not sym:
+            return 0
+        m = self.day_round_trips_map()
+        m[sym] = int(m.get(sym, 0) or 0) + 1
+        self._data["day_round_trips"] = m
+        return m[sym]
 
     def open_risk_dollars(self) -> float:
         total = 0.0

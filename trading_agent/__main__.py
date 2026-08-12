@@ -527,11 +527,21 @@ def _run_research(args: argparse.Namespace) -> int:
         if getattr(args, "allow_single", False):
             rcfg.min_play_methods = 1
         bt = RouterBacktestConfig(
-            max_trades_per_day=int(getattr(args, "max_per_day", None) or 1),
+            max_trades_per_day=int(getattr(args, "max_per_day", None) or 20),
+            max_trades_per_symbol_per_day=int(
+                getattr(args, "max_per_symbol", None) or 2
+            ),
             min_method_score=rcfg.min_method_score,
             min_play_methods=rcfg.min_play_methods,
             require_two=rcfg.min_play_methods >= 2,
+            require_export_quality=bool(getattr(args, "export_quality", False)),
+            min_best_play_score=float(getattr(args, "min_best", None) or 65),
+            min_play_avg_score=float(getattr(args, "min_avg", None) or 65),
+            swing_needs_confluence=not bool(getattr(args, "allow_swing_solo", False)),
         )
+        if getattr(args, "swing_weight", None) is not None:
+            bt.method_rank_weights = dict(bt.method_rank_weights or {})
+            bt.method_rank_weights["swing_daily"] = float(args.swing_weight)
         result = run_multi_method_backtest(
             syms,
             period=getattr(args, "period", None) or "30d",
@@ -1648,8 +1658,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Only PLAY confirmed classical daily patterns (no structure-only)",
     )
     swing_p.add_argument("--no-rs", action="store_true", help="Skip RS vs SPY")
-    swing_p.add_argument("--min-atr", type=float, default=1.2, help="Min daily ATR%")
-    swing_p.add_argument("--max-atr", type=float, default=8.0, help="Max daily ATR%")
+    swing_p.add_argument("--min-atr", type=float, default=1.2, help="Min daily ATR percent")
+    swing_p.add_argument("--max-atr", type=float, default=8.0, help="Max daily ATR percent")
     swing_p.add_argument(
         "--no-write-cards",
         action="store_true",
@@ -1694,8 +1704,42 @@ def main(argv: list[str] | None = None) -> int:
     multi_bt.add_argument(
         "--max-per-day",
         type=int,
-        default=1,
-        help="Max trades per day (default 1 = best PLAY only)",
+        default=20,
+        help="Book-wide max trades/day (high so other tickers stay open)",
+    )
+    multi_bt.add_argument(
+        "--max-per-symbol",
+        type=int,
+        default=2,
+        help="Max round-trips per ticker per day (default 2; other symbols still OK)",
+    )
+    multi_bt.add_argument(
+        "--export-quality",
+        action="store_true",
+        help="Only trade names that pass export quality (best/avg score gates)",
+    )
+    multi_bt.add_argument(
+        "--min-best",
+        type=float,
+        default=65.0,
+        help="With --export-quality: min best play-method score (default 65)",
+    )
+    multi_bt.add_argument(
+        "--min-avg",
+        type=float,
+        default=65.0,
+        help="With --export-quality: min avg play-method score (default 65)",
+    )
+    multi_bt.add_argument(
+        "--swing-weight",
+        type=float,
+        default=None,
+        help="Rank weight for swing_daily (default 0.45; lower = less selected)",
+    )
+    multi_bt.add_argument(
+        "--allow-swing-solo",
+        action="store_true",
+        help="Allow weak swing_daily as sole best method (default: require confluence)",
     )
     multi_bt.add_argument("--output", "-o", metavar="FILE")
 

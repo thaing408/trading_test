@@ -24,6 +24,10 @@ class PretradeConfig:
     max_day_loss_dollars: float = 500.0
     max_orders_per_consume: int = 3
     max_symbol_lots: int = 1
+    # Round-trips: cap is **per symbol per day** (default 2). Other tickers stay free.
+    max_round_trips_per_symbol_per_day: int = 2
+    # Optional global day cap; 0 = unlimited (do NOT halt book after 2 total trips)
+    max_round_trips_per_day: int = 0
     require_defined_risk: bool = True
     # quote age seconds; 0 disables
     max_quote_age_seconds: float = 0.0
@@ -56,6 +60,11 @@ class PretradeConfig:
             max_day_loss_dollars=_f("TRADING_AGENT_MAX_DAY_LOSS", 500.0),
             max_orders_per_consume=_i("TRADING_AGENT_MAX_ORDERS_PER_CONSUME", 3),
             max_symbol_lots=_i("TRADING_AGENT_MAX_SYMBOL_LOTS", 1),
+            max_round_trips_per_symbol_per_day=_i(
+                "TRADING_AGENT_MAX_ROUND_TRIPS_PER_SYMBOL", 2
+            ),
+            # Default 0 = no global day halt; set >0 only if you want a hard book-wide cap
+            max_round_trips_per_day=_i("TRADING_AGENT_MAX_ROUND_TRIPS_PER_DAY", 0),
             require_defined_risk=os.getenv("TRADING_AGENT_REQUIRE_DEFINED_RISK", "1")
             .strip()
             .lower()
@@ -131,6 +140,21 @@ def evaluate_pretrade(
         n_sym = sum(1 for lot in store.open_lots() if lot.symbol.upper() == sym)
         if n_sym >= cfg.max_symbol_lots:
             return False, "max_symbol_lots"
+        # Per-ticker round-trip cap (default 2). Does NOT block other symbols.
+        max_sym_rt = int(cfg.max_round_trips_per_symbol_per_day or 0)
+        if max_sym_rt > 0:
+            trips = int(store.symbol_round_trips_today(sym) or 0)
+            if trips >= max_sym_rt:
+                return (
+                    False,
+                    f"max_round_trips_per_symbol:{sym}:{trips}>={max_sym_rt}",
+                )
+    # Optional global day cap only if explicitly configured (>0)
+    max_day_rt = int(cfg.max_round_trips_per_day or 0)
+    if max_day_rt > 0:
+        total_rt = int(store.total_round_trips_today() or 0)
+        if total_rt >= max_day_rt:
+            return False, f"max_round_trips_per_day:{total_rt}>={max_day_rt}"
 
     if cfg.require_defined_risk and getattr(order, "instrument", "").lower() in (
         "options",
@@ -185,7 +209,10 @@ def pretrade_snapshot(store: OmsStore, config: Optional[PretradeConfig] = None) 
             "max_open_risk_dollars": cfg.max_open_risk_dollars,
             "max_day_loss_dollars": cfg.max_day_loss_dollars,
             "max_orders_per_consume": cfg.max_orders_per_consume,
+            "max_round_trips_per_symbol_per_day": cfg.max_round_trips_per_symbol_per_day,
+            "max_round_trips_per_day": cfg.max_round_trips_per_day,
             "require_process_gate": cfg.require_process_gate,
             "process_min_step_score": cfg.process_min_step_score,
         },
+        "day_round_trips": store.day_round_trips_map(),
     }
