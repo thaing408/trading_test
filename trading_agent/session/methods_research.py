@@ -24,6 +24,26 @@ class MethodsResearchResult:
 
 
 def _resolve_symbols(limit: int) -> List[str]:
+    # 1) Shared scanned list (same file as trading_agent desk)
+    try:
+        from trading_agent.export.scanned_list import symbols_from_scanned_list
+
+        shared = symbols_from_scanned_list(prefer="universe", limit=limit)
+        if shared:
+            return shared
+        shared_w = symbols_from_scanned_list(prefer="watchlist", limit=limit)
+        if shared_w:
+            return shared_w
+    except Exception:
+        pass
+    try:
+        from trading_agent.screener.universe import resolve_screener_symbols
+
+        uni = resolve_screener_symbols()
+        if uni:
+            return [str(s).upper() for s in uni[:limit]]
+    except Exception:
+        pass
     try:
         from trading_agent.strategy.swing_scan import resolve_swing_universe
 
@@ -191,4 +211,37 @@ def run_methods_research(
         "bias_narrative": "methods lab — multi-method confluence (no CIO)",
         "market_environment_score": 50.0,
     }
+    # Publish shared scanned list so trading_agent CIO desk sees the same names
+    try:
+        from trading_agent.export.scanned_list import publish_scanned_list
+
+        meta = {
+            s: {"multi_play": s in out.play_symbols}
+            for s in syms[:80]
+        }
+        doc, paths = publish_scanned_list(
+            universe=syms,
+            watchlist=out.play_symbols or syms[:15],
+            play_symbols=out.play_symbols,
+            stay_in_cash=out.plan_context["stay_in_cash"],
+            source_product="trading_test",
+            source_phase="methods_research",
+            notes=[f"multi_plays={out.multi_plays}", f"swing_plays={out.swing_plays}"],
+            symbol_meta=meta,
+        )
+        out.export_paths.extend(str(p) for p in paths)
+        out.plan_context["scanned_list"] = {
+            "path": str(paths[0]) if paths else "",
+            "universe_n": len(doc.get("universe") or []),
+            "watch_n": len(doc.get("watchlist") or []),
+            "play_n": len(doc.get("play_symbols") or []),
+        }
+        lines.append("")
+        lines.append(
+            f"_Shared scanned_list: universe={len(doc.get('universe') or [])} "
+            f"watch={len(doc.get('watchlist') or [])} plays={len(doc.get('play_symbols') or [])}_"
+        )
+        out.message = "\n".join(lines)
+    except Exception as exc:  # noqa: BLE001
+        out.errors.append(f"scanned_list: {exc}")
     return out

@@ -396,15 +396,36 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         cash_recommendation_reason=cash_reason,
     )
 
+    # Always publish shared scanned list (methods lab + live desk consume same file)
+    try:
+        from trading_agent.export.scanned_list import publish_scanned_list
+        from trading_agent.session.context import default_session_dir
+
+        session_dir = default_session_dir(datetime.now(timezone.utc).date())
+        screened = [c.symbol for c in screener.candidates]
+        plays = [o.symbol for o in opportunities]
+        publish_scanned_list(
+            universe=screened or plan.top_watchlist,
+            watchlist=plan.top_watchlist,
+            play_symbols=plays,
+            stay_in_cash=plan.stay_in_cash,
+            source_product="trading_test",
+            source_phase="desk_research",
+            trading_date=plan.date,
+            notes=[(plan.cash_recommendation_reason or "")[:200]],
+            session_dir=session_dir,
+        )
+    except Exception:
+        session_dir = None
+
     # Windows research host → local auto_trade_book (suggest only; Mac pulls code via git)
     if bool(getattr(config.risk, "export_auto_trade_book", True)):
         try:
             from trading_agent.export.auto_trade_book import export_plan_for_execution
-            from trading_agent.session.context import default_session_dir
+            from trading_agent.session.context import default_session_dir as _sess_dir
 
-            session_dir = default_session_dir(
-                datetime.now(timezone.utc).date()
-            )
+            if session_dir is None:
+                session_dir = _sess_dir(datetime.now(timezone.utc).date())
             book = export_plan_for_execution(
                 plan,
                 session_dir=session_dir,

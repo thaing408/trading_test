@@ -44,6 +44,33 @@ Env overrides:
 - Posts **scanned / watchlist / board** for human + CIO decisions
 - Mac executes from local books after git pull of **trading_agent** (not this lab)
 
+## Shared scanned lists
+
+Both products read/write the **same local artifact** so they look at one universe:
+
+| File | Path |
+|------|------|
+| Canonical | `~/.trading_agent/sync/scanned_list.json` |
+| Compat | `~/.trading_agent/sync/auto_trade_scan_symbols.json` |
+
+Module: `trading_agent/export/scanned_list.py` (identical in both repos).
+
+| Writer | When |
+|--------|------|
+| **trading_test** methods research | After multi-method + swing |
+| **Either** auto_trade_book export | On book write |
+| **trading_agent** desk research | After pipeline (full screener universe + watchlist) |
+
+| Reader | Use |
+|--------|-----|
+| `resolve_screener_symbols()` | Prefers shared universe after env/file |
+| multi-method / swing | Prefer shared list when no CLI symbols |
+| CIO desk process | Watchlist / focus from book + scanned_list |
+
+Override: `TRADING_AGENT_SYMBOLS` / `TRADING_AGENT_SYMBOLS_FILE` win.  
+Ignore shared: `TRADING_AGENT_IGNORE_SCANNED_LIST=1`.  
+On dual machines without shared disk, copy `scanned_list.json` via your sync path or re-run the same symbols env on both.
+
 ## What not to confuse
 
 - Methods PLAY in trading_test ≠ live CIO approval on trading_agent

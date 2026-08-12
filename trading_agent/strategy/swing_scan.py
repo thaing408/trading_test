@@ -439,10 +439,26 @@ def resolve_swing_universe(
     *,
     limit: int = 40,
 ) -> List[str]:
-    """Resolve symbols: explicit list → env/screener universe → defaults."""
+    """Resolve symbols: explicit → shared scanned_list → screener → defaults."""
     if symbols:
         out = [str(s).upper().strip() for s in symbols if str(s).strip()]
         return out[:limit] if limit > 0 else out
+    try:
+        from trading_agent.export.scanned_list import symbols_from_scanned_list
+
+        shared = symbols_from_scanned_list(prefer="universe", limit=limit)
+        if shared:
+            return shared
+    except Exception:
+        pass
+    try:
+        from trading_agent.screener.universe import resolve_screener_symbols
+
+        uni = resolve_screener_symbols()
+        if uni:
+            return [str(s).upper() for s in uni[:limit]]
+    except Exception:
+        pass
     try:
         from trading_agent.config import load_config
 

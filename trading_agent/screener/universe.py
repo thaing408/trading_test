@@ -236,12 +236,17 @@ def resolve_screener_symbols(
     env_symbols: str | None = None,
     env_file: str | None = None,
     use_expanded_default: bool = True,
+    prefer_shared_scanned_list: bool = True,
 ) -> List[str]:
-    """Resolve scan universe: file → env list → configured → expanded default.
+    """Resolve scan universe: file → env list → shared scanned_list → configured → default.
+
+    Shared list path (same for trading_test + trading_agent):
+      ~/.trading_agent/sync/scanned_list.json
 
     Env:
       TRADING_AGENT_SYMBOLS=AAPL,MSFT,NVDA
       TRADING_AGENT_SYMBOLS_FILE=/path/to/symbols.txt
+      TRADING_AGENT_IGNORE_SCANNED_LIST=1  — skip shared list
     """
     file_path = env_file if env_file is not None else os.getenv("TRADING_AGENT_SYMBOLS_FILE", "").strip()
     if file_path:
@@ -255,6 +260,21 @@ def resolve_screener_symbols(
         resolved = _dedupe_preserve(parts)
         if resolved:
             return resolved
+
+    ignore_shared = os.getenv("TRADING_AGENT_IGNORE_SCANNED_LIST", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if prefer_shared_scanned_list and not ignore_shared:
+        try:
+            from trading_agent.export.scanned_list import symbols_from_scanned_list
+
+            shared = symbols_from_scanned_list(prefer="universe", limit=0)
+            if shared:
+                return _dedupe_preserve(shared)
+        except Exception:
+            pass
 
     if configured:
         return _dedupe_preserve(configured)

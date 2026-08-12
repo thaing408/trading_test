@@ -321,11 +321,13 @@ def build_multi_method_book(
         "entries": entries,
         "exits": [],
         "watchlist": watchlist,
-        "scan_symbols": watchlist,
+        # Full method universe (not only PLAYs) so desk/methods share scan list
+        "scan_symbols": [str(getattr(r, "symbol", "")).upper() for r in results if getattr(r, "symbol", "")],
         "entry_count": len(entries),
         "rejected_incomplete": rejected[:60],
         "multi_method": {
             "play_count": len(play_syms),
+            "play_symbols": list(play_syms),
             "scanned": len(results),
             "export": True,
         },
