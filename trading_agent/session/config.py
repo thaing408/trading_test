@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from trading_agent.product import include_cio_default, product_mode
 from trading_agent.session.schedule import DeskPhaseKind
 
 
@@ -26,7 +27,11 @@ class SessionConfig:
     plan_file: str | None = None
     session_dir: Path | None = None
     wait_for_schedule: bool = True
-    include_cio: bool = True
+    # trading_test default: False (methods lab). trading_agent desk: True.
+    include_cio: bool = False
+    # methods = multi-method primary research, no CIO decisions
+    # desk = classic pipeline + CIO (live agent repo)
+    product_mode: str = "methods"
     portfolio_value: float = 100_000.0
     log_file: str | None = None
     from_phase: DeskPhaseKind | None = None
@@ -35,6 +40,7 @@ class SessionConfig:
     enable_discovery_refresh: bool = True
     # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
     enable_gap_book_watch: bool = True
+    methods_scan_limit: int = 20
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -66,6 +72,11 @@ class SessionConfig:
             "no",
             "off",
         )
+        mode = product_mode()
+        # Methods lab: discovery still ok but never promotes CIO
+        if mode == "methods" and not os.getenv("TRADING_AGENT_DISCOVERY_REFRESH"):
+            disc = False
+        limit = int(os.getenv("TRADING_TEST_SCAN_LIMIT", os.getenv("TRADING_AGENT_METHODS_LIMIT", "20")) or 20)
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -80,6 +91,9 @@ class SessionConfig:
             log_file=os.getenv("TRADING_AGENT_SESSION_LOG"),
             until_phase=until_phase,
             from_phase=from_phase,
+            include_cio=include_cio_default(),
+            product_mode=mode,
             enable_discovery_refresh=disc,
             enable_gap_book_watch=gap_watch,
+            methods_scan_limit=max(1, limit),
         )

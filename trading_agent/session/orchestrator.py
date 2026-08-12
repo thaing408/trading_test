@@ -235,17 +235,53 @@ def run_session(
             elif phase_kind == DeskPhaseKind.RESEARCH:
                 phase = schedule.phases[1]
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
-                plan = run_pipeline(agent_config)
-                plan_context = plan_to_context(plan)
-                plan_path = save_plan_context(plan_context, session_dir)
-                save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
-                watch_symbols = list(plan_context.get("top_watchlist", []))
-                message = format_research_plays(plan)
-                phase_messages["research"] = message
-                _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                methods_mode = (
+                    getattr(config, "product_mode", "methods") == "methods"
+                    or not bool(getattr(config, "include_cio", True))
+                )
+                if methods_mode:
+                    # trading_test: multi-method + swing lab — no CIO capital decisions
+                    from trading_agent.session.methods_research import run_methods_research
+                    from trading_agent.product import PRODUCT_NAME
+
+                    _log(log, f"[product] {PRODUCT_NAME} · methods research (CIO off)")
+                    mres = run_methods_research(
+                        limit=int(getattr(config, "methods_scan_limit", 20) or 20),
+                        fixture_mode=config.fixture_mode,
+                        export_book=not config.fixture_mode,
+                    )
+                    plan_context = dict(mres.plan_context)
+                    plan_path = save_plan_context(plan_context, session_dir)
+                    watch_symbols = list(
+                        plan_context.get("top_watchlist") or mres.play_symbols or mres.symbols
+                    )
+                    message = mres.message
+                    phase_messages["research"] = message
+                    phase_messages["methods_research"] = message
+                    _deliver(
+                        message,
+                        "Methods lab research (no CIO)",
+                        config=config,
+                        discord=discord,
+                        log=log,
+                        posts=posts,
+                    )
+                else:
+                    plan = run_pipeline(agent_config)
+                    plan_context = plan_to_context(plan)
+                    plan_path = save_plan_context(plan_context, session_dir)
+                    save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
+                    watch_symbols = list(plan_context.get("top_watchlist", []))
+                    message = format_research_plays(plan)
+                    phase_messages["research"] = message
+                    _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
 
             elif phase_kind == DeskPhaseKind.CIO_APPROVAL:
                 if not config.include_cio:
+                    _log(log, "[product] skip CIO approval (methods lab / include_cio=0)")
+                    phase_messages["cio_approval"] = (
+                        "_CIO approval skipped — trading_test methods lab (no capital decision desk)._"
+                    )
                     continue
                 phase = schedule.phases[2]
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
@@ -451,7 +487,8 @@ def run_session(
                                     prior_context=plan_context,
                                     slot_label=key + " PT",
                                     scheduled_at=slot,
-                                    promote_cio=True,
+                                    # methods lab: never promote CIO capital decisions
+                                    promote_cio=bool(config.include_cio),
                                     fixture_mode=config.fixture_mode,
                                     portfolio_value=config.portfolio_value,
                                     already_promoted=discovery_cio_promoted,
@@ -570,6 +607,10 @@ def run_session(
 
             elif phase_kind == DeskPhaseKind.CIO_REVIEW:
                 if not config.include_cio:
+                    _log(log, "[product] skip CIO review (methods lab / include_cio=0)")
+                    phase_messages["cio_review"] = (
+                        "_CIO daily review skipped — trading_test methods lab._"
+                    )
                     continue
                 phase = schedule.phases[6]
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
