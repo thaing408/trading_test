@@ -392,6 +392,19 @@ def write_auto_trade_book(
             paths.append(path)
         except OSError:
             continue
+    # Canonical shared scanned list (trading_test + trading_agent same path)
+    try:
+        from trading_agent.export.scanned_list import merge_publish_from_book
+
+        _, scan_paths = merge_publish_from_book(
+            book,
+            source_phase="auto_trade_book",
+            session_dir=session_dir,
+            sync_dir=sync,
+        )
+        paths.extend(scan_paths)
+    except Exception:
+        pass
     return paths
 
 
