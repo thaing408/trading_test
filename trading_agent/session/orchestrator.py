@@ -275,6 +275,37 @@ def run_session(
                     message = format_research_plays(plan)
                     phase_messages["research"] = message
                     _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                    # Desk path: extra swing + multi-method scanners on research universe
+                    if getattr(config, "enable_desk_scanners", True):
+                        try:
+                            from trading_agent.session.scanners import run_desk_scanners
+
+                            scan = run_desk_scanners(
+                                slot="research",
+                                plan_context=plan_context,
+                                fixture_mode=config.fixture_mode,
+                                post_discord=False,
+                                limit=int(getattr(config, "desk_scanner_limit", 20) or 20),
+                                run_multi_method=bool(
+                                    getattr(config, "desk_scanner_multi_method", True)
+                                ),
+                            )
+                            sm = scan.combined_message()
+                            phase_messages["research_scanners"] = sm
+                            _deliver(
+                                sm,
+                                "Research scanners (swing + multi-method)",
+                                config=config,
+                                discord=discord,
+                                log=log,
+                                posts=posts,
+                            )
+                            for sym in scan.symbols:
+                                if sym not in watch_symbols:
+                                    watch_symbols.append(sym)
+                        except Exception as scan_exc:  # noqa: BLE001
+                            _log(log, f"[warn] Research scanners failed: {scan_exc}")
+                            _log(log, traceback.format_exc())
 
             elif phase_kind == DeskPhaseKind.CIO_APPROVAL:
                 if not config.include_cio:
@@ -612,7 +643,7 @@ def run_session(
                         "_CIO daily review skipped — trading_test methods lab._"
                     )
                     continue
-                phase = schedule.phases[6]
+                phase = next(p for p in schedule.phases if p.kind == DeskPhaseKind.CIO_REVIEW)
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
                 cio_config = CIOConfig.from_env()
                 cio_config.fixture_mode = config.fixture_mode
@@ -623,6 +654,48 @@ def run_session(
                 message = format_cio_review(cio_report)
                 phase_messages["cio_review"] = message
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+
+            elif phase_kind == DeskPhaseKind.EVENING_SCAN:
+                if not getattr(config, "enable_evening_scan", True):
+                    continue
+                if not getattr(config, "enable_desk_scanners", True):
+                    continue
+                phase = next(p for p in schedule.phases if p.kind == DeskPhaseKind.EVENING_SCAN)
+                _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
+                try:
+                    from trading_agent.session.scanners import run_desk_scanners
+
+                    if plan_path and plan_path.exists():
+                        plan_context = load_saved_plan_context(plan_path)
+                    scan = run_desk_scanners(
+                        slot="evening",
+                        plan_context=plan_context,
+                        symbols=watch_symbols or None,
+                        fixture_mode=config.fixture_mode,
+                        post_discord=False,
+                        limit=int(
+                            getattr(config, "desk_scanner_limit", None)
+                            or getattr(config, "methods_scan_limit", 20)
+                            or 20
+                        ),
+                        run_multi_method=bool(
+                            getattr(config, "desk_scanner_multi_method", True)
+                        ),
+                    )
+                    sm = scan.combined_message()
+                    phase_messages["evening_scan"] = sm
+                    _deliver(
+                        sm,
+                        phase.label,
+                        config=config,
+                        discord=discord,
+                        log=log,
+                        posts=posts,
+                    )
+                except Exception as scan_exc:  # noqa: BLE001
+                    _log(log, f"[warn] Evening scanners failed: {scan_exc}")
+                    _log(log, traceback.format_exc())
+                    phase_messages["evening_scan"] = f"Evening scanners failed: {scan_exc}"
         except Exception as exc:
             label = phase_kind.value
             _log(log, f"[error] Phase {label} failed: {exc}")

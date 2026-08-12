@@ -321,7 +321,6 @@ def build_multi_method_book(
         "entries": entries,
         "exits": [],
         "watchlist": watchlist,
-        # Full method universe (not only PLAYs) so desk/methods share scan list
         "scan_symbols": [str(getattr(r, "symbol", "")).upper() for r in results if getattr(r, "symbol", "")],
         "entry_count": len(entries),
         "rejected_incomplete": rejected[:60],

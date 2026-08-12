@@ -396,7 +396,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
         cash_recommendation_reason=cash_reason,
     )
 
-    # Always publish shared scanned list (methods lab + live desk consume same file)
+    # Always publish shared scanned list (same path as trading_test methods lab)
     try:
         from trading_agent.export.scanned_list import publish_scanned_list
         from trading_agent.session.context import default_session_dir

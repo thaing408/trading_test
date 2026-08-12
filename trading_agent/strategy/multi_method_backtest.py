@@ -6,7 +6,8 @@ Each RTH day:
   3. Pick the best PLAY (highest score / aggregate).
   4. Simulate synthetic option premium path after decision bar.
 
-Default: **one trade per day** (best PLAY across the universe).
+Default: up to **2 round-trips per symbol per day**; different tickers can all trade
+(book-wide cap is high so one name's 2 trips do not end the day for everyone).
 """
 
 from __future__ import annotations
@@ -33,7 +34,10 @@ ET = ZoneInfo("America/New_York")
 
 @dataclass
 class RouterBacktestConfig:
-    max_trades_per_day: int = 1
+    # Book-wide cap (high default so different tickers are not blocked after 2 total)
+    max_trades_per_day: int = 20
+    # Strict cap only for the same ticker (user re-entry / 2 round trips)
+    max_trades_per_symbol_per_day: int = 2
     decision_time_et: time = time(15, 0)  # evaluate as-of this time (or last bar before)
     take_profit_pct: float = 0.25
     stop_loss_pct: float = 0.20
@@ -48,6 +52,27 @@ class RouterBacktestConfig:
     min_method_score: float = 55.0
     min_play_methods: int = 1
     require_two: bool = False
+    # Export-quality style filters (match multi_method export gate)
+    require_export_quality: bool = False
+    min_best_play_score: float = 65.0
+    min_play_avg_score: float = 65.0
+    # Rank / select: multiply best-method score by weight (swing_daily was flooding the book)
+    method_rank_weights: Dict[str, float] = field(
+        default_factory=lambda: {
+            "swing_daily": 0.45,
+            "chart_patterns": 1.15,
+            "top_winners": 1.1,
+            "soulz_pa": 1.05,
+            "fvg": 1.0,
+            "sweep": 1.0,
+            "orb_vwap": 0.95,
+            "odte_breakout": 0.9,
+            "range_fade": 0.9,
+            "process_methods": 0.0,
+        }
+    )
+    # If True, never pick swing_daily as sole best unless another play method score ≥ min_best
+    swing_needs_confluence: bool = True
 
 
 def _session_days_from_frames(frames: Dict[str, Any]) -> List[date]:
@@ -175,29 +200,92 @@ def run_multi_method_backtest(
         if not plays:
             continue
         days_with_play += 1
-        # rank by best method score then aggregate
-        def _rank_key(e: TickerMultiEval):
-            best_sc = 0.0
-            for v in e.votes:
-                if v.method_id == e.best_method:
-                    best_sc = v.score
-                    break
-            return (best_sc, e.aggregate_score)
 
+        # Export-quality filter (same idea as auto_trade export gate)
+        if bt.require_export_quality:
+            from trading_agent.strategy.multi_method import (
+                MultiMethodConfig,
+                compute_play_quality,
+                passes_export_quality,
+            )
+
+            qcfg = MultiMethodConfig(
+                export_min_play_methods=int(bt.min_play_methods or 2),
+                export_min_best_score=float(bt.min_best_play_score),
+                export_min_play_avg_score=float(bt.min_play_avg_score),
+            )
+            filtered: List[TickerMultiEval] = []
+            for e in plays:
+                best_sc, avg_sc, _ = compute_play_quality(e)
+                e.best_play_score = best_sc
+                e.play_quality_score = avg_sc
+                ok, _why = passes_export_quality(e, cfg=qcfg)
+                if ok:
+                    filtered.append(e)
+            plays = filtered
+            if not plays:
+                continue
+
+        wmap = bt.method_rank_weights or {}
+
+        def _best_play_vote(e: TickerMultiEval):
+            """Best play vote after rank weights; may prefer non-swing if confluence required."""
+            play_votes = [
+                v
+                for v in e.votes
+                if v.play and v.method_id != "process_methods" and v.side in ("CALL", "PUT", "")
+            ]
+            if not play_votes:
+                return None
+            # Weighted ranking score
+            ranked = sorted(
+                play_votes,
+                key=lambda v: float(v.score) * float(wmap.get(v.method_id, 1.0)),
+                reverse=True,
+            )
+            top = ranked[0]
+            if (
+                bt.swing_needs_confluence
+                and top.method_id == "swing_daily"
+                and float(top.score) < float(bt.min_best_play_score)
+            ):
+                # Prefer next non-swing method if any is strong enough
+                for v in ranked[1:]:
+                    if v.method_id != "swing_daily" and float(v.score) >= float(
+                        bt.min_method_score
+                    ):
+                        return v
+                # Or require another method also PLAY with decent score
+                others = [v for v in ranked if v.method_id != "swing_daily"]
+                if not others:
+                    return None  # pure swing-only weak → skip
+            return top
+
+        def _rank_key(e: TickerMultiEval):
+            bv = _best_play_vote(e)
+            if bv is None:
+                return (-1.0, -1.0)
+            w = float(wmap.get(bv.method_id, 1.0))
+            return (float(bv.score) * w, e.aggregate_score)
+
+        plays = [e for e in plays if _best_play_vote(e) is not None]
+        if not plays:
+            continue
         plays.sort(key=_rank_key, reverse=True)
         taken = 0
+        taken_by_symbol: Dict[str, int] = defaultdict(int)
         for ev in plays:
             if taken >= bt.max_trades_per_day:
                 break
+            sym_u = str(ev.symbol or "").upper()
+            # Per-ticker cap only — other names still eligible
+            if taken_by_symbol[sym_u] >= int(bt.max_trades_per_symbol_per_day or 0):
+                continue
             df = frames.get(ev.symbol)
             if df is None:
                 continue
-            # resolve best vote levels
-            best = None
-            for v in ev.votes:
-                if v.method_id == ev.best_method and v.play:
-                    best = v
-                    break
+            # resolve best vote levels (weighted / swing-aware)
+            best = _best_play_vote(ev)
             if best is None:
                 continue
             entry_spot = float(best.entry or 0)
@@ -207,7 +295,7 @@ def run_multi_method_backtest(
                 if sub is None or len(sub) == 0:
                     continue
                 entry_spot = float(sub["Close"].iloc[-1])
-            side = (ev.best_side or best.side or "CALL").upper()
+            side = (best.side or ev.best_side or "CALL").upper()
             if side not in ("CALL", "PUT"):
                 side = "CALL"
 
@@ -238,9 +326,9 @@ def run_multi_method_backtest(
             pnl_dollars = (ep - bt.entry_prem) * 100 * bt.contracts
             equity += pnl_dollars
             curve.append(equity)
-            method_trades[ev.best_method] += 1
+            method_trades[best.method_id] += 1
             if pnl_dollars > 0:
-                method_wins[ev.best_method] += 1
+                method_wins[best.method_id] += 1
             entry_ts = times[0] if times else d.isoformat()
             # use decision bar time approx
             sub = _slice_asof(df, d, bt.decision_time_et)
@@ -251,7 +339,10 @@ def run_multi_method_backtest(
                 OdteTrade(
                     day=d.isoformat(),
                     side=side,
-                    level_name=f"router:{ev.best_method}+{','.join(ev.play_methods)}",
+                    level_name=(
+                        f"router:{best.method_id}+{','.join(ev.play_methods)}"
+                        f"|best_sc={best.score:.0f}"
+                    ),
                     level=entry_spot,
                     entry_time=entry_ts.isoformat() if hasattr(entry_ts, "isoformat") else str(entry_ts),
                     exit_time=exit_s,
@@ -266,6 +357,7 @@ def run_multi_method_backtest(
                 )
             )
             taken += 1
+            taken_by_symbol[sym_u] += 1
             day_play_counts[d.isoformat()] += 1
 
     winners = [t for t in trades if t.pnl_dollars > 0]
@@ -321,9 +413,18 @@ def run_multi_method_backtest(
         assumptions=[
             "Multi-method router historical BT: evaluate all methods per symbol as-of decision time",
             f"Decision time ET={bt.decision_time_et.strftime('%H:%M')}; "
-            f"max_trades/day={bt.max_trades_per_day}",
+            f"max_trades/day={bt.max_trades_per_day} "
+            f"(max {bt.max_trades_per_symbol_per_day}/symbol)",
             f"Pool={pool}",
             f"min_method_score={rcfg.min_method_score}; min_play_methods={rcfg.min_play_methods}",
+            (
+                f"export_quality={'on' if bt.require_export_quality else 'off'} "
+                f"(best≥{bt.min_best_play_score:.0f} or avg≥{bt.min_play_avg_score:.0f})"
+            ),
+            (
+                f"swing_weight={float((bt.method_rank_weights or {}).get('swing_daily', 1.0)):.2f}; "
+                f"swing_needs_confluence={bt.swing_needs_confluence}"
+            ),
             f"Period={period}; interval={interval}; source={data_source}",
             f"Synthetic premium ${bt.entry_prem:.2f} delta={bt.premium_delta}; "
             f"TP +{bt.take_profit_pct:.0%} / SL −{bt.stop_loss_pct:.0%}; trail={'on' if bt.use_trail else 'off'}",
@@ -343,6 +444,7 @@ def run_multi_method_backtest(
             "pct_days_with_play": round(days_with_play / len(days), 4) if days else 0.0,
             "by_method": by_method,
             "max_trades_per_day": bt.max_trades_per_day,
+            "max_trades_per_symbol_per_day": bt.max_trades_per_symbol_per_day,
             "decision_time_et": bt.decision_time_et.strftime("%H:%M"),
             "errors": load_errors,
         },

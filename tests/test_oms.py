@@ -71,6 +71,57 @@ def test_pretrade_blocks_on_max_open(tmp_path):
     assert not ok and reason == "max_open_lots"
 
 
+def test_pretrade_blocks_same_symbol_after_two_round_trips(tmp_path):
+    """2 round trips block re-entry on same ticker only — other symbols OK."""
+    store = OmsStore(root=tmp_path / "oms")
+    store.ensure_day("2026-08-12")
+    store.record_round_trip("NVDA")
+    store.record_round_trip("NVDA")
+    store.save()
+    cfg = PretradeConfig(
+        max_open_lots=10,
+        max_open_risk_dollars=50_000,
+        max_round_trips_per_symbol_per_day=2,
+        max_round_trips_per_day=0,  # no global day halt
+        require_process_gate=False,
+    )
+    blocked = ReadyOrder(
+        order_id="nvda3",
+        symbol="NVDA",
+        action="ENTER",
+        side="long",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=1,
+        stop=0.5,
+        target=2,
+        max_risk_dollars=50,
+        defined_risk=True,
+    )
+    ok, reason = evaluate_pretrade(blocked, store, config=cfg)
+    assert not ok
+    assert "max_round_trips_per_symbol" in reason
+    assert "NVDA" in reason
+
+    other = ReadyOrder(
+        order_id="amd1",
+        symbol="AMD",
+        action="ENTER",
+        side="long",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=1,
+        stop=0.5,
+        target=2,
+        max_risk_dollars=50,
+        defined_risk=True,
+    )
+    ok2, reason2 = evaluate_pretrade(other, store, config=cfg)
+    assert ok2, reason2
+
+
 def test_pretrade_daily_loss(tmp_path):
     store = OmsStore(root=tmp_path / "oms")
     store.add_realized_pnl(-600)

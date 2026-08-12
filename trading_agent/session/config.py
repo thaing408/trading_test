@@ -41,6 +41,12 @@ class SessionConfig:
     # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
     enable_gap_book_watch: bool = True
     methods_scan_limit: int = 20
+    # Swing + multi-method at research (05:00 PT) and evening_scan (18:00 ET)
+    # In methods mode, research already runs multi-method; evening re-scan still useful
+    enable_desk_scanners: bool = True
+    enable_evening_scan: bool = True
+    desk_scanner_limit: int = 20
+    desk_scanner_multi_method: bool = True
 
     @classmethod
     def from_env(cls) -> "SessionConfig":
@@ -72,11 +78,33 @@ class SessionConfig:
             "no",
             "off",
         )
+        desk_scan = os.getenv("TRADING_AGENT_DESK_SCANNERS", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        evening = os.getenv("TRADING_AGENT_EVENING_SCAN", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        multi = os.getenv("TRADING_AGENT_DESK_MULTI_METHOD", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        scan_lim = int(os.getenv("TRADING_AGENT_DESK_SCANNER_LIMIT", "20") or 20)
         mode = product_mode()
         # Methods lab: discovery still ok but never promotes CIO
         if mode == "methods" and not os.getenv("TRADING_AGENT_DISCOVERY_REFRESH"):
             disc = False
-        limit = int(os.getenv("TRADING_TEST_SCAN_LIMIT", os.getenv("TRADING_AGENT_METHODS_LIMIT", "20")) or 20)
+        limit = int(
+            os.getenv("TRADING_TEST_SCAN_LIMIT", os.getenv("TRADING_AGENT_METHODS_LIMIT", "20"))
+            or 20
+        )
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -96,4 +124,8 @@ class SessionConfig:
             enable_discovery_refresh=disc,
             enable_gap_book_watch=gap_watch,
             methods_scan_limit=max(1, limit),
+            enable_desk_scanners=desk_scan,
+            enable_evening_scan=evening,
+            desk_scanner_limit=max(1, scan_lim),
+            desk_scanner_multi_method=multi,
         )

@@ -20,6 +20,7 @@ PHASE_ORDER = [
     DeskPhaseKind.INTRADAY,
     DeskPhaseKind.PERFORMANCE,
     DeskPhaseKind.CIO_REVIEW,
+    DeskPhaseKind.EVENING_SCAN,
 ]
 
 

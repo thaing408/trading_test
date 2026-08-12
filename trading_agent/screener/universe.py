@@ -240,13 +240,13 @@ def resolve_screener_symbols(
 ) -> List[str]:
     """Resolve scan universe: file → env list → shared scanned_list → configured → default.
 
-    Shared list path (same for trading_test + trading_agent):
+    Shared list (same path as trading_test methods lab):
       ~/.trading_agent/sync/scanned_list.json
 
     Env:
       TRADING_AGENT_SYMBOLS=AAPL,MSFT,NVDA
       TRADING_AGENT_SYMBOLS_FILE=/path/to/symbols.txt
-      TRADING_AGENT_IGNORE_SCANNED_LIST=1  — skip shared list
+      TRADING_AGENT_IGNORE_SCANNED_LIST=1
     """
     file_path = env_file if env_file is not None else os.getenv("TRADING_AGENT_SYMBOLS_FILE", "").strip()
     if file_path:

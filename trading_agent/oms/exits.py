@@ -145,11 +145,21 @@ def close_lot(
         if entry and exit_px and (lot.instrument or "").lower() in ("equity", "underlying", "etf", "stock"):
             pnl = (exit_px - entry) * int(lot.quantity or 0)
         store.add_realized_pnl(pnl)
+        try:
+            trips = store.record_round_trip(lot.symbol)
+        except Exception:
+            trips = 0
         if journal:
             _journal_close(lot, pnl=pnl)
         append_audit(
             "lot_closed",
-            payload={"lot_id": lot.lot_id, "symbol": lot.symbol, "reason": reason, "pnl": pnl},
+            payload={
+                "lot_id": lot.lot_id,
+                "symbol": lot.symbol,
+                "reason": reason,
+                "pnl": pnl,
+                "symbol_round_trips_today": trips,
+            },
         )
     elif not live:
         lot.status = LotStatus.EXITING.value

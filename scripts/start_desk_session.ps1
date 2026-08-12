@@ -224,8 +224,12 @@ try {
     # PT/SL + discovery refreshes at 07:00 / 09:30 / 11:00 PT). Always start from
     # intelligence so a late StartWhenAvailable catch-up still runs morning prep.
     # Override with TRADING_AGENT_UNTIL_PHASE=preopen for prep-only.
-    $untilRaw = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE.Trim() } else { "cio_review" }
-    if ($untilRaw -in @("full", "all", "day", "fullday", "full_day")) { $untilRaw = "cio_review" }
+    # full day includes evening_scan (18:00 ET swing + multi-method)
+    $untilRaw = if ($env:TRADING_AGENT_UNTIL_PHASE) { $env:TRADING_AGENT_UNTIL_PHASE.Trim() } else { "evening_scan" }
+    if ($untilRaw -in @("full", "all", "day", "fullday", "full_day")) { $untilRaw = "evening_scan" }
+    if ($untilRaw -eq "cio_review") {
+        # legacy alias still valid — stops before 6pm ET evening scanners
+    }
     if ($untilRaw -in @("prep", "pre-market", "premarket")) { $untilRaw = "preopen" }
     $untilPhase = $untilRaw
     $fromPhase = if ($env:TRADING_AGENT_FROM_PHASE) { $env:TRADING_AGENT_FROM_PHASE.Trim() } else { "intelligence" }

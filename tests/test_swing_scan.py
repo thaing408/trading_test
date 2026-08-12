@@ -103,6 +103,21 @@ def test_multi_method_includes_swing_daily_id():
     assert "swing_daily" in EVALUATORS
 
 
+def test_desk_scanners_fixture_skips_network():
+    from trading_agent.session.scanners import run_desk_scanners
+
+    res = run_desk_scanners(
+        slot="research",
+        symbols=["SPY", "QQQ"],
+        fixture_mode=True,
+        post_discord=False,
+    )
+    assert "Fixture" in res.swing_text or "fixture" in res.swing_text.lower()
+    assert res.combined_message()
+    evening = run_desk_scanners(slot="evening", fixture_mode=True, post_discord=False)
+    assert evening.slot == "evening"
+
+
 def test_format_swing_scan_discord_play_and_empty():
     from trading_agent.strategy.swing_scan import (
         SwingCandidate,

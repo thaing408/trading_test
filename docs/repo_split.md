@@ -44,6 +44,12 @@ Env overrides:
 - Posts **scanned / watchlist / board** for human + CIO decisions
 - Mac executes from local books after git pull of **trading_agent** (not this lab)
 
+## Round-trip policy (from trading_agent OMS)
+
+- **Max 2 closed round-trips per symbol per day** (`TRADING_AGENT_MAX_ROUND_TRIPS_PER_SYMBOL=2`)
+- **Not a global day halt** — other tickers may still enter (`TRADING_AGENT_MAX_ROUND_TRIPS_PER_DAY=0`)
+- Multi-method historical BT: `--max-per-symbol 2 --max-per-day 20` plus optional `--export-quality` / `--swing-weight`
+
 ## Shared scanned lists
 
 Both products read/write the **same local artifact** so they look at one universe:

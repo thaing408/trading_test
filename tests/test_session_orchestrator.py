@@ -35,6 +35,7 @@ def test_fixture_session_methods_lab_no_cio_desk(tmp_path):
     assert result.phase_messages.get("preopen")
     assert result.phase_messages.get("intraday_1")
     assert result.phase_messages.get("performance")
+    assert result.phase_messages.get("evening_scan")
     assert "2026-07-09" in result.schedule_log
     assert (tmp_path / "intelligence.json").exists()
     assert (tmp_path / "daily_plan_context.json").exists()
