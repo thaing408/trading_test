@@ -10,6 +10,7 @@ Living notes on **price action (PA)** for the desk, with **code** under `trading
 - Soulz-style PA: `docs/soulz_pa_scalp.md`, `trading_agent/scalp/soulz_pa.py` (BRR + range + fib)
 - Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `range_fade`, `sweep`, `chart_patterns`, `swing_daily`)
 - Systematic process: `docs/systematic_process.md`
+- ICT Venom Model notes (NY 08:00–09:30 box + open sweep): `docs/venom_model_ict.md`
 
 ---
 
