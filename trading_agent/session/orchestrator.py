@@ -43,6 +43,7 @@ from trading_agent.session.intelligence import run_intelligence_pass
 from trading_agent.session.play_formatter import (
     format_cio_plays,
     format_cio_review,
+    format_income_plays,
     format_intelligence_brief,
     format_intraday_discord_title,
     format_intraday_plays,
@@ -243,6 +244,22 @@ def run_session(
                 message = format_research_plays(plan)
                 phase_messages["research"] = message
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                # Income / short-premium plays → dedicated Discord channel
+                income_discord = DiscordConfig.income_channel_from_env()
+                if income_discord is not None:
+                    try:
+                        income_msg = format_income_plays(plan)
+                        phase_messages["income_plays"] = income_msg
+                        _deliver(
+                            income_msg,
+                            "Income Plays",
+                            config=config,
+                            discord=income_discord,
+                            log=log,
+                            posts=posts,
+                        )
+                    except Exception as income_exc:  # noqa: BLE001
+                        _log(log, f"[warn] Income plays Discord failed: {income_exc}")
                 # Once at research: swing-scan + multi-method on research universe
                 if getattr(config, "enable_desk_scanners", True):
                     try:
