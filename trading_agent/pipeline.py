@@ -409,7 +409,7 @@ def run_pipeline(config: AgentConfig) -> DailyTradingPlan:
             watchlist=plan.top_watchlist,
             play_symbols=plays,
             stay_in_cash=plan.stay_in_cash,
-            source_product="trading_agent",
+            source_product="trading_test",
             source_phase="desk_research",
             trading_date=plan.date,
             notes=[(plan.cash_recommendation_reason or "")[:200]],

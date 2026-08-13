@@ -495,6 +495,34 @@ def _run_research(args: argparse.Namespace) -> int:
         print(json.dumps(summary, indent=2))
         print(f"log: {manage_log_path(day)}")
         return 0
+    if cmd in ("venom-backtest", "venom_backtest", "venom"):
+        from trading_agent.strategy.venom_backtest import (
+            render_venom_backtest,
+            run_venom_multi,
+        )
+
+        raw = getattr(args, "symbols", None) or ""
+        pos = getattr(args, "symbols_list", None) or ""
+        if pos:
+            raw = f"{raw},{pos}" if raw else pos
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        if not syms:
+            syms = ["QQQ", "SPY"]
+        results = run_venom_multi(
+            syms,
+            period=getattr(args, "period", None) or "59d",
+            interval=getattr(args, "interval", None) or "5m",
+            source=getattr(args, "source", None) or "yfinance",
+            r_multiple=float(getattr(args, "r_multiple", None) or 2.0),
+            require_structure=not bool(getattr(args, "no_structure", False)),
+        )
+        text = render_venom_backtest(results)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     if cmd in ("multi-method-backtest", "multi_method_backtest", "router-backtest"):
         from trading_agent.strategy.multi_method import MultiMethodConfig
         from trading_agent.strategy.multi_method_backtest import (
@@ -808,7 +836,8 @@ def _run_research(args: argparse.Namespace) -> int:
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
-        "soulz | soulz-backtest | multi-method | multi-method-backtest | swing-scan",
+        "soulz | soulz-backtest | multi-method | multi-method-backtest | "
+        "swing-scan | venom-backtest",
         file=sys.stderr,
     )
     return 2
@@ -1682,6 +1711,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Do not post swing scan to Discord",
     )
     swing_p.add_argument("--output", "-o", metavar="FILE")
+
+    venom_bt = research_sub.add_parser(
+        "venom-backtest",
+        help="ICT Venom Model v1 BT (08:00–09:30 ET box → open sweep → FVG entry) on QQQ/SPY",
+    )
+    venom_bt.add_argument(
+        "symbols_list",
+        nargs="?",
+        default="",
+        help="Comma symbols (default QQQ,SPY)",
+    )
+    venom_bt.add_argument("--symbols", default="")
+    venom_bt.add_argument("--period", default="59d")
+    venom_bt.add_argument("--interval", default="5m", help="Bar size (5m recommended; 1m if available)")
+    venom_bt.add_argument("--source", default="yfinance")
+    venom_bt.add_argument("--r-multiple", type=float, default=2.0)
+    venom_bt.add_argument(
+        "--no-structure",
+        action="store_true",
+        help="Do not require MSS proxy after sweep",
+    )
+    venom_bt.add_argument("--output", "-o", metavar="FILE")
 
     multi_bt = research_sub.add_parser(
         "multi-method-backtest",

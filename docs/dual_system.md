@@ -1,11 +1,14 @@
 # Dual-system architecture (fully separated)
 
+> **Repo split:** methods lab = **`trading_test`** (this fork). Live CIO desk = **`trading_agent`**.  
+> Details: [repo_split.md](repo_split.md).
+
 ## Physical setup
 
 | Location | Machine | Role | Shares with the other machine? |
 |----------|---------|------|--------------------------------|
-| **Work** | **Windows** | Research / methods / Discord research posts | **No files.** Only **git push** of code. |
-| **Home** | **macOS** | Live trading (TOS / Schwab MCP) | **No files from work.** Only **git pull** of code. |
+| **Work** | **Windows** | Research / methods (`trading_test`) / Discord research posts | **No files.** Only **git push** of code. |
+| **Home** | **macOS** | Live trading (TOS / Schwab MCP) via **`trading_agent`** | **No files from work.** Only **git pull** of desk code. |
 
 **Hard rule:** do **not** sync positions, journals, `.env`, tokens, or account data between work and home. No shared cloud trading folder. No work secrets on the Mac, no home brokerage state on the work PC.
 

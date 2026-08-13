@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from trading_agent.product import include_cio_default, product_mode
 from trading_agent.session.schedule import DeskPhaseKind
 
 
@@ -26,8 +27,11 @@ class SessionConfig:
     plan_file: str | None = None
     session_dir: Path | None = None
     wait_for_schedule: bool = True
-    # trading_test / paper fork: CIO off by default (research → book, no approval board)
+    # trading_test default: False (methods lab / paper). trading_agent desk: True.
     include_cio: bool = False
+    # methods = multi-method primary research, no CIO decisions
+    # desk = classic pipeline + CIO (live agent repo)
+    product_mode: str = "methods"
     portfolio_value: float = 100_000.0
     log_file: str | None = None
     from_phase: DeskPhaseKind | None = None
@@ -36,9 +40,11 @@ class SessionConfig:
     enable_discovery_refresh: bool = True
     # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
     enable_gap_book_watch: bool = True
+    methods_scan_limit: int = 20
     # When CIO is off, export research plan straight to auto_trade_book after research
     auto_export_book_without_cio: bool = True
     # Swing + multi-method at research (05:00 PT) and evening_scan (18:00 ET)
+    # In methods mode, research already runs multi-method; evening re-scan still useful
     enable_desk_scanners: bool = True
     enable_evening_scan: bool = True
     desk_scanner_limit: int = 20
@@ -74,22 +80,6 @@ class SessionConfig:
             "no",
             "off",
         )
-        # Default OFF for this fork. Opt-in: TRADING_AGENT_INCLUDE_CIO=1
-        include_cio = os.getenv("TRADING_AGENT_INCLUDE_CIO", "0").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-        # Explicit kill-switch aliases
-        if os.getenv("TRADING_AGENT_NO_CIO", "").strip().lower() in ("1", "true", "yes", "on"):
-            include_cio = False
-        auto_export = os.getenv("TRADING_AGENT_AUTO_EXPORT_WITHOUT_CIO", "1").strip().lower() not in (
-            "0",
-            "false",
-            "no",
-            "off",
-        )
         desk_scan = os.getenv("TRADING_AGENT_DESK_SCANNERS", "1").lower() not in (
             "0",
             "false",
@@ -109,6 +99,14 @@ class SessionConfig:
             "off",
         )
         scan_lim = int(os.getenv("TRADING_AGENT_DESK_SCANNER_LIMIT", "20") or 20)
+        mode = product_mode()
+        # Methods lab: discovery still ok but never promotes CIO
+        if mode == "methods" and not os.getenv("TRADING_AGENT_DISCOVERY_REFRESH"):
+            disc = False
+        limit = int(
+            os.getenv("TRADING_TEST_SCAN_LIMIT", os.getenv("TRADING_AGENT_METHODS_LIMIT", "20"))
+            or 20
+        )
         wait = os.getenv("TRADING_AGENT_WAIT_FOR_SCHEDULE", "1").strip().lower() not in (
             "0",
             "false",
@@ -117,6 +115,15 @@ class SessionConfig:
         )
         if os.getenv("PAPER_NO_WAIT", "").strip().lower() in ("1", "true", "yes", "on"):
             wait = False
+        include_cio = include_cio_default()
+        if os.getenv("TRADING_AGENT_NO_CIO", "").strip().lower() in ("1", "true", "yes", "on"):
+            include_cio = False
+        auto_export = os.getenv("TRADING_AGENT_AUTO_EXPORT_WITHOUT_CIO", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -132,9 +139,11 @@ class SessionConfig:
             wait_for_schedule=wait,
             until_phase=until_phase,
             from_phase=from_phase,
+            include_cio=include_cio,
+            product_mode=mode,
             enable_discovery_refresh=disc,
             enable_gap_book_watch=gap_watch,
-            include_cio=include_cio,
+            methods_scan_limit=max(1, limit),
             auto_export_book_without_cio=auto_export,
             enable_desk_scanners=desk_scan,
             enable_evening_scan=evening,
