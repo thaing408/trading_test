@@ -1,8 +1,32 @@
-# Trading Agent
+# trading_test
+
+**Paper-trading fork** of the trading desk — **IBKR paper**, **no CIO**, isolated from production Schwab desk.
+
+| | Production | This repo |
+|--|------------|-----------|
+| Repo | [`trading_agent`](https://github.com/thaing408/trading_agent) | **[`trading_test`](https://github.com/thaing408/trading_test)** |
+| Broker | Schwab (Mac) | IBKR paper (me-ai / Linux) |
+| CIO | On by default | Off (`TRADING_AGENT_INCLUDE_CIO=0`) |
+| State | `~/.trading_agent` | `~/.trading_test` |
+
+See [`PAPER_NO_CIO.md`](PAPER_NO_CIO.md) and [`docs/ibkr_gateway_paper_linux.md`](docs/ibkr_gateway_paper_linux.md).
+
+```bash
+git clone https://github.com/thaing408/trading_test.git
+cd trading_test
+python3 -m venv .venv && .venv/bin/pip install -e . ib_insync
+cp .env.paper.example ~/.trading_test/trading-test.env   # edit ports / account
+```
+
+Optional: track prod as `upstream` for cherry-picks only — do **not** push this repo to `trading_agent`.
+
+---
+
+# Trading Agent (upstream lineage)
 
 Multi-phase options trading desk: market intelligence, research, CIO approval, and Discord delivery.
 
-**Repo:** https://github.com/thaing408/trading_agent
+**Prod repo:** https://github.com/thaing408/trading_agent
 
 ## Quick start (new machine / new user)
 

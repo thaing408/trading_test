@@ -26,7 +26,8 @@ class SessionConfig:
     plan_file: str | None = None
     session_dir: Path | None = None
     wait_for_schedule: bool = True
-    include_cio: bool = True
+    # trading_test / paper fork: CIO off by default (research → book, no approval board)
+    include_cio: bool = False
     portfolio_value: float = 100_000.0
     log_file: str | None = None
     from_phase: DeskPhaseKind | None = None
@@ -35,6 +36,8 @@ class SessionConfig:
     enable_discovery_refresh: bool = True
     # Each intraday cycle: watch gap_screener_book.json for updates / new continuation names
     enable_gap_book_watch: bool = True
+    # When CIO is off, export research plan straight to auto_trade_book after research
+    auto_export_book_without_cio: bool = True
     # Swing + multi-method at research (05:00 PT) and evening_scan (18:00 ET)
     enable_desk_scanners: bool = True
     enable_evening_scan: bool = True
@@ -71,6 +74,22 @@ class SessionConfig:
             "no",
             "off",
         )
+        # Default OFF for this fork. Opt-in: TRADING_AGENT_INCLUDE_CIO=1
+        include_cio = os.getenv("TRADING_AGENT_INCLUDE_CIO", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        # Explicit kill-switch aliases
+        if os.getenv("TRADING_AGENT_NO_CIO", "").strip().lower() in ("1", "true", "yes", "on"):
+            include_cio = False
+        auto_export = os.getenv("TRADING_AGENT_AUTO_EXPORT_WITHOUT_CIO", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
         desk_scan = os.getenv("TRADING_AGENT_DESK_SCANNERS", "1").lower() not in (
             "0",
             "false",
@@ -90,6 +109,14 @@ class SessionConfig:
             "off",
         )
         scan_lim = int(os.getenv("TRADING_AGENT_DESK_SCANNER_LIMIT", "20") or 20)
+        wait = os.getenv("TRADING_AGENT_WAIT_FOR_SCHEDULE", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        if os.getenv("PAPER_NO_WAIT", "").strip().lower() in ("1", "true", "yes", "on"):
+            wait = False
         return cls(
             fixture_mode=fixture,
             dry_run=dry,
@@ -102,10 +129,13 @@ class SessionConfig:
             session_file=os.getenv("TRADING_AGENT_SESSION_FILE"),
             plan_file=os.getenv("TRADING_AGENT_PLAN_FILE"),
             log_file=os.getenv("TRADING_AGENT_SESSION_LOG"),
+            wait_for_schedule=wait,
             until_phase=until_phase,
             from_phase=from_phase,
             enable_discovery_refresh=disc,
             enable_gap_book_watch=gap_watch,
+            include_cio=include_cio,
+            auto_export_book_without_cio=auto_export,
             enable_desk_scanners=desk_scan,
             enable_evening_scan=evening,
             desk_scanner_limit=max(1, scan_lim),

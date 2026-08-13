@@ -83,6 +83,14 @@ def live_enabled(*, cli_live: bool = False) -> bool:
     )
 
 
+def broker_name() -> str:
+    """schwab (default) | ibkr — paper IBKR when TRADING_AGENT_BROKER=ibkr."""
+    raw = (os.getenv("TRADING_AGENT_BROKER") or "schwab").strip().lower()
+    if raw in ("ibkr", "ib", "interactive", "tws"):
+        return "ibkr"
+    return "schwab"
+
+
 def options_only() -> bool:
     """When True (default), block auto share lots — options debit only."""
     raw = os.getenv("TRADING_AGENT_OPTIONS_ONLY", "1").strip().lower()
@@ -551,7 +559,7 @@ def _apply_place_response(order: ReadyOrder, resp: Dict[str, Any], *, occ: str =
 
 
 def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
-    """BUY_TO_OPEN one OCC contract via schwab-mcp place_order."""
+    """BUY_TO_OPEN one option contract (Schwab MCP or IBKR paper)."""
     exp = parse_expiration_date(order.expiration)
     cp = infer_call_put(order)
     if not exp or not cp or not order.strike_prices:
@@ -562,8 +570,24 @@ def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
         }
         return order
     strike = float(order.strike_prices[0])
-    occ = format_occ_symbol(order.symbol, exp, cp, strike)
     qty = max(1, int(order.quantity or 1))
+
+    if broker_name() == "ibkr":
+        from trading_agent.oms.ibkr_broker import place_option_market
+
+        resp = place_option_market(
+            underlying=order.symbol,
+            expiration=exp.isoformat(),
+            right=cp,
+            strike=strike,
+            quantity=qty,
+            instruction="BUY_TO_OPEN",
+            live=live,
+        )
+        occ = f"{order.symbol} {exp} {cp}{strike}"
+        return _apply_place_response(order, resp, occ=occ)
+
+    occ = format_occ_symbol(order.symbol, exp, cp, strike)
     payload = {
         "symbol": occ,
         "quantity": qty,
@@ -580,8 +604,19 @@ def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
 
 
 def submit_equity_buy(order: ReadyOrder, *, live: bool) -> ReadyOrder:
-    """BUY underlying shares via place_order (no bracket — stops managed elsewhere)."""
+    """BUY underlying shares (Schwab MCP or IBKR paper)."""
     qty = max(1, int(order.quantity or 1))
+    if broker_name() == "ibkr":
+        from trading_agent.oms.ibkr_broker import place_equity_market
+
+        resp = place_equity_market(
+            symbol=order.symbol,
+            quantity=qty,
+            instruction="BUY",
+            live=live,
+        )
+        return _apply_place_response(order, resp)
+
     payload = {
         "symbol": order.symbol.upper(),
         "quantity": qty,
@@ -598,14 +633,16 @@ def submit_equity_buy(order: ReadyOrder, *, live: bool) -> ReadyOrder:
 
 
 def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
-    """Attempt broker submit via Schwab MCP; default dry-run / ready-only.
+    """Attempt broker submit; default dry-run / ready-only.
 
-    Live paths supported on this Mac's schwab-mcp-server:
-      - single-leg **debit** options → ``place_order`` BUY_TO_OPEN (OCC)
-      - simple **equity buy** → ``place_order`` BUY (disabled when TRADING_AGENT_OPTIONS_ONLY=1)
+    Broker: TRADING_AGENT_BROKER=schwab|ibkr (ibkr = paper/live TWS socket).
+
+    Live paths supported:
+      - single-leg **debit** options → BUY_TO_OPEN (Schwab MCP or IBKR)
+      - simple **equity buy** → BUY (disabled when TRADING_AGENT_OPTIONS_ONLY=1)
 
     Multi-leg packages (iron condor, spreads, etc.) and credit shorts stay
-    ``ready`` for human TOS — no multi-leg builder on MCP yet.
+    ``ready`` for human — no multi-leg builder yet.
     """
     if order.status == "skipped":
         return order
@@ -615,9 +652,10 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
         order.broker_response = {
             "mode": "dry_run",
             "place_path": path,
+            "broker": broker_name(),
             "message": (
                 "Ready order written; set TRADING_AGENT_AUTO_TRADE_LIVE=1 to submit "
-                f"(path={path})"
+                f"(path={path} broker={broker_name()})"
             ),
         }
         return order
@@ -645,8 +683,8 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
             "mode": "ready_only",
             "place_path": path,
             "message": (
-                "Multi-leg options package — no MCP multi-leg builder; "
-                "enter in TOS from ready_orders.json"
+                "Multi-leg options package — no multi-leg builder; "
+                "enter manually from ready_orders.json"
             ),
         }
         return order
@@ -658,7 +696,7 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
             "place_path": path,
             "message": (
                 "Credit/short-premium not auto-submitted (debit BUY_TO_OPEN only); "
-                "use TOS from ready_orders.json"
+                "manual from ready_orders.json"
             ),
         }
         return order
@@ -676,9 +714,13 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
 
     order.status = "ready"
     order.broker_response = {
-        "mode": "ready_only",
+        "mode": "ready_only" if path != "unsupported" else "skipped",
         "place_path": path,
-        "message": "No safe live place path; human TOS from ready_orders.json",
+        "message": (
+            "No safe live options place path (need 1 strike + expiration + CALL/PUT)"
+            if path == "unsupported"
+            else "No safe live place path; human from ready_orders.json"
+        ),
     }
     return order
 

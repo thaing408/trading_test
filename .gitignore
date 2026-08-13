@@ -10,3 +10,8 @@ venv/
 .env
 *.log
 e2e_phase*.txt
+# paper local (never commit)
+.env.paper
+**/.trading_test/
+*.env.local
+discord-paper.env

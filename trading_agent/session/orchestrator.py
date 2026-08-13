@@ -238,9 +238,31 @@ def run_session(
                 plan = run_pipeline(agent_config)
                 plan_context = plan_to_context(plan)
                 plan_path = save_plan_context(plan_context, session_dir)
-                save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
+                if config.include_cio:
+                    save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
                 watch_symbols = list(plan_context.get("top_watchlist", []))
                 message = format_research_plays(plan)
+                # No-CIO mode: ranked research → auto_trade_book (no approval board)
+                if not config.include_cio and config.auto_export_book_without_cio:
+                    try:
+                        from trading_agent.export.auto_trade_book import export_plan_for_execution
+
+                        book = export_plan_for_execution(plan, session_dir=session_dir)
+                        n = int(book.get("entry_count") or len(book.get("entries") or []))
+                        cash = bool(book.get("stay_in_cash"))
+                        message += (
+                            f"\n\n**No CIO** — research exported to auto-trade book "
+                            f"({n} ENTER row(s)"
+                            f"{'; stay_in_cash' if cash else ''})."
+                        )
+                        for e in book.get("entries") or []:
+                            sym = str(e.get("symbol") or "").upper()
+                            if sym and sym not in watch_symbols:
+                                watch_symbols.append(sym)
+                        _log(log, f"[no-cio] auto_trade_book entries={n} stay_in_cash={cash}")
+                    except Exception as exp_exc:  # noqa: BLE001
+                        message += f"\n\n**No CIO export failed:** {exp_exc}"
+                        _log(log, f"[warn] no-cio export: {exp_exc}")
                 phase_messages["research"] = message
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
                 # Once at research: swing-scan + multi-method on research universe
@@ -278,6 +300,8 @@ def run_session(
 
             elif phase_kind == DeskPhaseKind.CIO_APPROVAL:
                 if not config.include_cio:
+                    _log(log, "[skip] CIO approval disabled (TRADING_AGENT_INCLUDE_CIO=0)")
+                    phase_messages["cio_approval"] = "_CIO skipped — no-CIO paper/test mode_"
                     continue
                 phase = schedule.phases[2]
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)
@@ -483,7 +507,7 @@ def run_session(
                                     prior_context=plan_context,
                                     slot_label=key + " PT",
                                     scheduled_at=slot,
-                                    promote_cio=True,
+                                    promote_cio=bool(config.include_cio),
                                     fixture_mode=config.fixture_mode,
                                     portfolio_value=config.portfolio_value,
                                     already_promoted=discovery_cio_promoted,
@@ -599,9 +623,28 @@ def run_session(
                 message = format_performance_plays(perf_report)
                 phase_messages["performance"] = message
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
+                # Paper EOD: full activity summary to paper journal channel
+                try:
+                    from trading_agent.discord.paper_activity import post_eod_summary, post_positions
+
+                    eod = post_eod_summary(
+                        trading_date=trading_date.isoformat(),
+                        extra={
+                            "performance_phase": phase.label,
+                            "session_dir": str(session_dir),
+                        },
+                    )
+                    posts.extend(eod)
+                    pos_posts = post_positions(source="IBKR paper EOD")
+                    posts.extend(pos_posts)
+                    _log(log, f"[discord paper] EOD summary posted ({len(eod)} chunk(s))")
+                except Exception as eod_exc:  # noqa: BLE001
+                    _log(log, f"[discord paper] EOD skip: {eod_exc}")
 
             elif phase_kind == DeskPhaseKind.CIO_REVIEW:
                 if not config.include_cio:
+                    _log(log, "[skip] CIO review disabled (no-CIO mode)")
+                    phase_messages["cio_review"] = "_CIO review skipped — no-CIO paper/test mode_"
                     continue
                 phase = next(p for p in schedule.phases if p.kind == DeskPhaseKind.CIO_REVIEW)
                 _wait_until(phase.scheduled_at, wait=wait, sleep=sleep, log=log, label=phase.label)

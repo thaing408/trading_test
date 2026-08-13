@@ -29,10 +29,11 @@ if str(_REPO) not in sys.path:
 
 
 def _load_env_files() -> None:
-    """Load home env; AUTO_TRADE_* / TRADING_AGENT_* always refresh from file."""
+    """Load home env; paper test env wins for channel/broker isolation."""
     for p in (
         Path.home() / ".grok" / "trading-agent.env",
         Path.home() / ".grok" / "discord.env",
+        Path.home() / ".trading_test" / "trading-test.env",
         _REPO / ".env",
     ):
         if not p.is_file():
@@ -46,12 +47,27 @@ def _load_env_files() -> None:
                 k, v = k.strip(), v.strip().strip('"').strip("'")
                 if not k:
                     continue
-                if k.startswith("AUTO_TRADE_") or k.startswith("TRADING_AGENT_"):
+                # trading_test env always overrides
+                if "trading_test" in str(p) or "trading-test" in str(p):
+                    os.environ[k] = v
+                elif k.startswith("AUTO_TRADE_") or k.startswith("TRADING_AGENT_"):
                     os.environ[k] = v
                 elif k not in os.environ:
                     os.environ[k] = v
         except OSError:
             continue
+    # Paper channel: force bot mode (never production webhook)
+    paper_ch = (
+        os.environ.get("DISCORD_PAPER_CHANNEL_ID")
+        or os.environ.get("DISCORD_CHANNEL_ID")
+        or "1536602374502613013"
+    )
+    os.environ["DISCORD_PAPER_CHANNEL_ID"] = paper_ch
+    os.environ["DISCORD_CHANNEL_ID"] = paper_ch
+    os.environ.pop("DISCORD_WEBHOOK_URL", None)
+    # Prefer bot token alias
+    if not os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_BOT_TOKEN"):
+        os.environ["DISCORD_TOKEN"] = os.environ["DISCORD_BOT_TOKEN"]
 
 
 def _log_unified_universe() -> None:
@@ -156,6 +172,60 @@ def main(argv: list[str] | None = None) -> int:
                 print("books:", ", ".join(books))
             else:
                 print("books: (none found — run local research/QT or pass a path)")
+
+        # Discord: paper channel — entries / exits / cycle summary / positions
+        try:
+            from trading_agent.discord.paper_activity import (
+                post_activity,
+                post_order_event,
+                post_orders_batch,
+                post_positions,
+            )
+            from trading_agent.export.mac_execute import ReadyOrder
+
+            raw_orders = result.get("orders") or []
+            orders_objs = []
+            for d in raw_orders:
+                if isinstance(d, dict):
+                    try:
+                        orders_objs.append(ReadyOrder(**{k: d[k] for k in ReadyOrder.__dataclass_fields__ if k in d}))
+                    except TypeError:
+                        continue
+
+            if orders_objs:
+                post_orders_batch(orders_objs, label="Consumer · order cycle")
+            for o in orders_objs:
+                st = (getattr(o, "status", "") or "").lower()
+                act = (getattr(o, "action", "") or "").upper()
+                if st == "submitted":
+                    ev = "EXIT" if act in ("EXIT", "SELL", "SELL_TO_CLOSE", "CLOSE") else "ENTER"
+                    post_order_event(o, event=ev)
+                elif st == "failed":
+                    post_order_event(o, event="FAILED")
+                elif st == "dry_run":
+                    post_order_event(o, event="DRY_RUN")
+
+            manage = result.get("manage") or []
+            if manage:
+                lines = ["**Manage / exits**"]
+                for m in manage[:20]:
+                    if isinstance(m, dict):
+                        lines.append(
+                            f"- {m.get('symbol') or m.get('lot_id')}: "
+                            f"{m.get('action') or m.get('status') or m} "
+                            f"{(m.get('reason') or '')[:80]}"
+                        )
+                    else:
+                        lines.append(f"- {m}")
+                post_activity("\n".join(lines), title="Manage · exits")
+
+            # Snapshot positions after activity
+            if orders_objs or manage:
+                post_positions(source="IBKR paper")
+        except Exception as disc_exc:  # noqa: BLE001
+            if not args.quiet:
+                print(f"[discord paper] skip: {disc_exc}", flush=True)
+
         if result.get("blocked"):
             return 2
         if not result.get("books"):
