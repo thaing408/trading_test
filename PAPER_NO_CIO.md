@@ -55,22 +55,25 @@ bash ~/trading_test/scripts/macos/paper-day-setup.sh
 
 ## Discord paper journal
 
-All **trading_test** activity posts to channel:
-
-**`1536602374502613013`**
+| Channel | ID | Content |
+|---------|-----|---------|
+| **#ibkr-tradings** | `1536602374502613013` | EOD **P/L journal** (realized/unrealized gains & losses, fills, NAV, positions) |
+| Same channel (activity) | `DISCORD_PAPER_CHANNEL_ID` | ENTER / EXIT / positions snapshots |
 
 | Event | When |
 |-------|------|
-| Desk phases (research, intraday, performance) | Session posts |
+| Desk phases | Session posts |
 | **ENTER / EXIT / FAILED / DRY_RUN** | Auto-trade consumer |
-| **Manage exits** | OMS manage loop |
-| **Positions snapshot** | After order cycles + EOD |
-| **EOD summary** | Performance phase + `post-paper-eod.sh` |
+| **EOD P/L journal** | me-ai cron **13:15 PT** (`paper-eod.sh`) + performance phase |
 
 ```bash
-# Manual EOD post
+# Manual EOD post → #ibkr-tradings
 bash ~/trading_test/scripts/macos/post-paper-eod.sh
+# me-ai:
+bash ~/bin/paper-eod.sh
 ```
+
+EOD journal includes **day realized**, **unrealized**, **gains vs losses**, fill W/L, NAV/cash, open positions — similar to production `#trading-journal` (Schwab).
 
 Uses bot token from `~/.grok/discord.env`; production webhook is unset so traffic stays on this channel.
 
