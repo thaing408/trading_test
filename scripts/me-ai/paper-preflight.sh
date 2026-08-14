@@ -132,15 +132,32 @@ set -a
 [[ -f "$STATE/discord-paper.env" ]] && source "$STATE/discord-paper.env"
 set +a
 
-# Research ping
+# Research ping — try configured id, then alternates (Error 326 = client id in use).
 PING_JSON=""
-if ! PING_JSON=$(.venv/bin/python scripts/ibkr_research_ping.py --json 2>&1); then
+PING_OK=0
+BASE_ID="${IBKR_CLIENT_ID:-17}"
+for try_id in "$BASE_ID" 91 92 93 51 18 19; do
+  echo "research ping client_id=$try_id ..."
+  if PING_JSON=$(IBKR_CLIENT_ID="$try_id" .venv/bin/python scripts/ibkr_research_ping.py --json 2>&1); then
+    if echo "$PING_JSON" | grep -q '"connected": true'; then
+      PING_OK=1
+      echo "ping OK with client_id=$try_id"
+      break
+    fi
+  fi
+  echo "ping fail client_id=$try_id: $(echo "$PING_JSON" | head -c 200)"
+  # if client-id conflict, try next; otherwise break after one hard fail
+  if ! echo "$PING_JSON" | grep -qiE 'already in use|client id|326'; then
+    break
+  fi
+done
+if [[ "$PING_OK" != "1" ]]; then
   echo "FATAL: research ping failed: $PING_JSON"
   notify "🚨 **me-ai paper preflight FAIL** · :4002 open but **API ping failed**
+Often **client id already in use** (orphan consumer). Run: \`bash ~/bin/paper-consumer-stop.sh\`
 \`\`\`
 $(echo "$PING_JSON" | head -c 400)
-\`\`\`
-Check Gateway login / API client permissions."
+\`\`\`"
   exit 1
 fi
 echo "$PING_JSON"
