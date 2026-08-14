@@ -24,8 +24,8 @@ ET = ZoneInfo("America/New_York")
 
 # Default paper journal channel (user-specified)
 DEFAULT_PAPER_CHANNEL_ID = "1536602374502613013"
-# #ibkr-tradings — set DISCORD_IBKR_CHANNEL_ID in env (required for EOD journal target)
-DEFAULT_IBKR_CHANNEL_ID = ""  # filled via env; no hardcode unless user provides
+# #ibkr-tradings (888-Tradings)
+DEFAULT_IBKR_CHANNEL_ID = "1536602374502613013"
 
 
 def paper_channel_id() -> str:
@@ -42,6 +42,7 @@ def ibkr_journal_channel_id() -> str:
         os.getenv("DISCORD_IBKR_CHANNEL_ID")
         or os.getenv("DISCORD_IBKR_TRADINGS_CHANNEL_ID")
         or os.getenv("DISCORD_PAPER_EOD_CHANNEL_ID")
+        or DEFAULT_IBKR_CHANNEL_ID
         or paper_channel_id()
     ).strip()
 
