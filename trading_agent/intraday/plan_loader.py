@@ -173,6 +173,84 @@ def refresh_schwab_positions_file(path: str | Path | None = None) -> bool:
         return False
 
 
+def _maybe_seed_ibkr_positions_file(path: str | Path) -> bool:
+    """When broker is IBKR, write positions.json from Gateway so desk can start.
+
+    Paper me-ai has no Schwab MCP; missing positions.json previously aborted the
+    whole session. Returns True if a file was written.
+    """
+    broker = (os.getenv("TRADING_AGENT_BROKER") or "").strip().lower()
+    ibkr_on = (os.getenv("IBKR_ENABLED") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if broker not in ("ibkr", "ib") and not ibkr_on:
+        return False
+    out = Path(path).expanduser()
+    try:
+        from trading_agent.discord.paper_activity import fetch_ibkr_positions
+
+        rows = fetch_ibkr_positions() or []
+        payload = {
+            "schema_version": 1,
+            "source": "ibkr",
+            "positions": [
+                {
+                    "symbol": r.get("symbol") or r.get("localSymbol"),
+                    "quantity": r.get("quantity") or r.get("qty"),
+                    "entry_price": r.get("average_price")
+                    or r.get("avg_cost")
+                    or r.get("entry_price")
+                    or r.get("avg"),
+                    "current_price": r.get("market_price")
+                    or r.get("current_price")
+                    or r.get("mkt")
+                    or r.get("average_price")
+                    or 0,
+                    "strategy": "ibkr_paper",
+                    "thesis": "IBKR paper open position",
+                    "instrument_type": (
+                        "option"
+                        if str(r.get("secType") or "").upper() in ("OPT", "FOP")
+                        else "equity"
+                    ),
+                    "expiration": r.get("expiration") or "",
+                    "strike_prices": r.get("strike_prices") or [],
+                }
+                for r in rows
+                if r.get("symbol") or r.get("localSymbol")
+            ],
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        logger.info(
+            "IBKR positions seeded -> %s (%s rows)",
+            out,
+            len(payload["positions"]),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("IBKR positions seed failed: %s", exc)
+        # Still create an empty book so the desk can open without FileNotFoundError
+        try:
+            if not out.is_file():
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(
+                    json.dumps(
+                        {"schema_version": 1, "source": "empty", "positions": []},
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                logger.info("Wrote empty positions book -> %s", out)
+                return True
+        except Exception as write_exc:  # noqa: BLE001
+            logger.warning("Could not write empty positions: %s", write_exc)
+        return False
+
+
 def load_positions(
     path: str | None,
     fixture_mode: bool,
@@ -197,10 +275,25 @@ def load_positions(
             not in ("0", "false", "no", "off")
         )
     if refresh and path and not fixture_mode:
+        # Schwab export is a no-op / fail on IBKR-only paper hosts (me-ai).
         refresh_schwab_positions_file(path)
+        _maybe_seed_ibkr_positions_file(path)
 
     if path:
-        with Path(path).open(encoding="utf-8") as handle:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            # Paper IBKR desk used to hard-crash here when Schwab refresh never
+            # created the file (FileNotFoundError aborted session on me-ai).
+            logger.warning(
+                "positions file missing (%s) — empty open book for this run",
+                p,
+            )
+            _maybe_seed_ibkr_positions_file(str(p))
+            if p.is_file():
+                with p.open(encoding="utf-8") as handle:
+                    return positions_from_payload(json.load(handle))
+            return []
+        with p.open(encoding="utf-8") as handle:
             data = json.load(handle)
         return positions_from_payload(data)
     if fixture_mode:
