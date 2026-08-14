@@ -22,17 +22,49 @@ bash ~/trading_test/scripts/macos/paper-day-setup.sh
 # edit ~/.trading_test/trading-test.env
 ```
 
-## Tomorrow morning
+## me-ai paper auto (production host)
+
+Cron + scripts live on **me-ai** (`scripts/me-ai/`). Install:
+
+```bash
+bash ~/trading_test/scripts/me-ai/install-paper-cron.sh
+```
+
+| PT (Mon–Fri) | Job | Discord |
+|--------------|-----|---------|
+| **01:20** | `paper-gateway-wake` — Xvfb + start Gateway | only if :4002 still down |
+| **01:50** | `paper-preflight` — :4002 + API ping + seed positions | ✅ OK or 🚨 FAIL |
+| **01:55** | `paper-desk-start` — no-CIO session → book | desk started |
+| **06:20** | `paper-consumer-start` — **LIVE** options paper | 🔴 LIVE started |
+| **13:15** | EOD P/L journal | #ibkr-tradings |
+| **13:20** | stop consumer | — |
+
+If preflight FAIL: tunnel + TigerVNC paper login:
+
+```bash
+ssh -N -L 5901:127.0.0.1:5900 ubuntu@10.0.0.52
+# TigerVNC → 127.0.0.1:5901
+```
+
+Manual preflight:
+
+```bash
+bash ~/bin/paper-preflight.sh
+# early wake only:
+PAPER_PREFLIGHT_MODE=wake bash ~/bin/paper-preflight.sh
+```
+
+## Local Mac / TWS paper (optional)
 
 1. **Log into TWS Paper**
    - API: Enable ActiveX and Socket Clients  
-   - Port **7497**  
-   - For paper **orders**: uncheck **Read-Only API** (or TWS will reject placeOrder)  
+   - Port **7497** (Mac TWS) or **4002** (Gateway)  
+   - For paper **orders**: uncheck **Read-Only API**  
    - Keep paper account selected  
 
 2. **Env checks** in `~/.trading_test/trading-test.env`:
    ```bash
-   IBKR_PORT=7497
+   IBKR_PORT=4002           # me-ai Gateway; Mac TWS often 7497
    IBKR_READONLY=0          # required to place paper orders
    TRADING_AGENT_BROKER=ibkr
    TRADING_AGENT_INCLUDE_CIO=0
