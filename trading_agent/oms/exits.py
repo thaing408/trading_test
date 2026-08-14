@@ -275,6 +275,37 @@ def manage_open_lots(
         und = underlying_marks.get(lot.symbol.upper())
         mark = marks.get(lot.occ_symbol or lot.symbol.upper(), und or 0.0)
         should, reason = should_exit_lot(lot, mark_price=float(mark or 0), underlying_price=und)
+
+        def _row(action: str, reason_s: str = "") -> Dict[str, Any]:
+            strikes = lot.strike_prices or []
+            strike_s = ""
+            if strikes:
+                try:
+                    strike_s = "/".join(f"{float(s):g}" for s in strikes[:3])
+                except (TypeError, ValueError):
+                    strike_s = ",".join(str(s) for s in strikes[:3])
+            return {
+                "lot_id": lot.lot_id,
+                "lot_id_short": (lot.lot_id or "")[-6:],
+                "symbol": lot.symbol,
+                "action": action,
+                "reason": reason_s,
+                "status": lot.status,
+                "side": lot.side or "",
+                "instrument": lot.instrument or "",
+                "strategy": lot.strategy or "",
+                "setup_id": lot.setup_id or "",
+                "quantity": lot.quantity,
+                "entry": lot.entry,
+                "stop": lot.stop,
+                "target": lot.target,
+                "expiration": lot.expiration or "",
+                "occ_symbol": lot.occ_symbol or "",
+                "strikes": strike_s,
+                "mark": float(mark or 0) or None,
+                "underlying": float(und) if und is not None else None,
+            }
+
         if should:
             close_lot(
                 store,
@@ -284,16 +315,9 @@ def manage_open_lots(
                 reason=reason,
                 exit_price=float(und or mark or 0),
             )
-            results.append(
-                {
-                    "lot_id": lot.lot_id,
-                    "action": "exit",
-                    "reason": reason,
-                    "status": lot.status,
-                }
-            )
+            results.append(_row("exit", reason or ""))
         else:
-            results.append({"lot_id": lot.lot_id, "action": "hold", "status": lot.status})
+            results.append(_row("hold"))
     store.save()
     return results
 

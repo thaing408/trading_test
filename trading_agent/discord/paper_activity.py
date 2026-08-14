@@ -182,6 +182,135 @@ def post_orders_batch(orders: Sequence[Any], *, label: str = "Consumer cycle") -
     return post_activity("\n".join(lines), title=label)
 
 
+def _fmt_px(val: Any) -> str:
+    try:
+        f = float(val)
+        if f <= 0:
+            return "—"
+        if f >= 100:
+            return f"{f:.2f}"
+        return f"{f:.2f}"
+    except (TypeError, ValueError):
+        return "—" if val in (None, "") else str(val)
+
+
+def format_manage_activity(manage: Sequence[Dict[str, Any]]) -> str:
+    """Human-readable manage/exits for Discord (symbols, not raw lot hashes)."""
+    if not manage:
+        return "_No open lots to manage._"
+
+    rows = [m for m in manage if isinstance(m, dict)]
+    # flatten_all special case
+    flats = [m for m in rows if (m.get("action") or "") == "flatten_all"]
+    lots = [m for m in rows if (m.get("action") or "") != "flatten_all"]
+
+    holds = [m for m in lots if (m.get("action") or "").lower() == "hold"]
+    exits = [m for m in lots if (m.get("action") or "").lower() in ("exit", "close", "sell")]
+    other = [
+        m
+        for m in lots
+        if (m.get("action") or "").lower() not in ("hold", "exit", "close", "sell")
+    ]
+
+    lines: List[str] = []
+    if flats:
+        lines.append("🚨 **FLATTEN ALL** kill switch fired")
+        for m in flats:
+            detail = m.get("detail") or {}
+            if isinstance(detail, dict):
+                lines.append(f"_lots closed: {detail.get('lots', '?')}_")
+
+    if exits:
+        lines.append(f"**Exits** ({len(exits)})")
+        for m in exits[:15]:
+            lines.append(_format_manage_lot_line(m, emoji="🔴"))
+    if other:
+        lines.append(f"**Other** ({len(other)})")
+        for m in other[:10]:
+            lines.append(_format_manage_lot_line(m, emoji="•"))
+    if holds:
+        lines.append(f"**Still open — hold** ({len(holds)})")
+        for m in holds[:20]:
+            lines.append(_format_manage_lot_line(m, emoji="🟢", compact=True))
+
+    if not lines:
+        lines.append("_No manage actions._")
+    return "\n".join(lines)
+
+
+def _format_manage_lot_line(
+    m: Dict[str, Any],
+    *,
+    emoji: str = "•",
+    compact: bool = False,
+) -> str:
+    sym = str(m.get("symbol") or m.get("occ_symbol") or "?").upper()
+    action = str(m.get("action") or m.get("status") or "?").upper()
+    side = str(m.get("side") or "").strip()
+    instr = str(m.get("instrument") or "").lower()
+    qty = m.get("quantity") or 1
+    exp = str(m.get("expiration") or "")[:10]
+    strikes = str(m.get("strikes") or "")
+    reason = str(m.get("reason") or "").strip()
+    status = str(m.get("status") or "")
+    short_id = str(m.get("lot_id_short") or (str(m.get("lot_id") or "")[-6:]))
+
+    # Options-ish label
+    kind = ""
+    if "option" in instr:
+        kind = "opt"
+        if side:
+            kind = side[:8]  # Bullish / CALL-ish
+    elif side:
+        kind = side[:10]
+    else:
+        kind = instr[:8] or "eq"
+
+    opt_bits = []
+    if exp:
+        opt_bits.append(exp)
+    if strikes:
+        opt_bits.append(f"K{strikes}")
+    opt_s = " · ".join(opt_bits)
+
+    head = f"{emoji} **{sym}** ×{qty}"
+    if kind:
+        head += f" · {kind}"
+    if opt_s:
+        head += f" · {opt_s}"
+
+    if compact and action == "HOLD":
+        levels = f"entry {_fmt_px(m.get('entry'))} · stop {_fmt_px(m.get('stop'))}"
+        tgt = m.get("target")
+        if tgt:
+            levels += f" · tgt {_fmt_px(tgt)}"
+        line = f"{head} — hold · {levels}"
+        if short_id:
+            line += f" · `…{short_id}`"
+        return line
+
+    line = f"{head} — **{action}**"
+    if reason:
+        line += f" · {reason[:100]}"
+    line += (
+        f"\n    entry {_fmt_px(m.get('entry'))} · stop {_fmt_px(m.get('stop'))} · "
+        f"tgt {_fmt_px(m.get('target'))}"
+    )
+    und = m.get("underlying") or m.get("mark")
+    if und:
+        line += f" · px {_fmt_px(und)}"
+    if status and status.lower() not in ("open", "protected", ""):
+        line += f" · status `{status}`"
+    if short_id:
+        line += f" · `…{short_id}`"
+    return line
+
+
+def post_manage_activity(manage: Sequence[Dict[str, Any]]) -> List[dict]:
+    """Post manage/exits cycle to paper Discord channel."""
+    return post_activity(format_manage_activity(manage), title="Manage · exits")
+
+
 def format_positions_snapshot(positions: Sequence[Dict[str, Any]]) -> str:
     if not positions:
         return "_Flat — no open positions._"

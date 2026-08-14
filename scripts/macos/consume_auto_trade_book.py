@@ -207,17 +207,12 @@ def main(argv: list[str] | None = None) -> int:
 
             manage = result.get("manage") or []
             if manage:
-                lines = ["**Manage / exits**"]
-                for m in manage[:20]:
-                    if isinstance(m, dict):
-                        lines.append(
-                            f"- {m.get('symbol') or m.get('lot_id')}: "
-                            f"{m.get('action') or m.get('status') or m} "
-                            f"{(m.get('reason') or '')[:80]}"
-                        )
-                    else:
-                        lines.append(f"- {m}")
-                post_activity("\n".join(lines), title="Manage · exits")
+                from trading_agent.discord.paper_activity import post_manage_activity
+
+                post_manage_activity(
+                    [m for m in manage if isinstance(m, dict)]
+                    or [{"action": "note", "symbol": "?", "reason": str(manage)[:120]}]
+                )
 
             # Snapshot positions after activity
             if orders_objs or manage:
