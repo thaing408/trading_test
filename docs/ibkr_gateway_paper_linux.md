@@ -93,6 +93,47 @@ Mac never runs IBKR.
 
 **Prefer Option A** so the Air stays TOS-only.
 
+### Mac TigerVNC (paper Gateway login UI) — automated
+
+me-ai runs **Xvfb :99** + **x11vnc** on **localhost:5900** (not exposed to the LAN).  
+Your Mac only needs a local SSH forward + TigerVNC.
+
+**One-time install (Mac):**
+
+```bash
+cd ~/trading_test && git pull
+bash scripts/macos/install-me-ai-vnc-tunnel-launchd.sh
+```
+
+That loads LaunchAgent **`com.grok.me-ai-vnc-tunnel`** which keeps:
+
+`127.0.0.1:5901` → `ubuntu@me-ai:127.0.0.1:5900`
+
+**Daily (only login in the viewer):**
+
+```bash
+me-ai-vnc
+# or: bash ~/trading_test/scripts/macos/me-ai-vnc-open.sh
+```
+
+TigerVNC opens to **`127.0.0.1::5901`**. Log into **IB Gateway paper** (API **4002**). Leave it running.
+
+| CLI | Role |
+|-----|------|
+| `me-ai-vnc` | Ensure tunnel + open TigerVNC |
+| `me-ai-vnc-tunnel --status` | Local tunnel + remote 5900/4002 |
+| `me-ai-vnc-tunnel --once` | Start tunnel only (no viewer) |
+| `me-ai-vnc-tunnel --stop` | Stop local tunnel |
+
+**Prereq:** passwordless SSH (`ssh ubuntu@me-ai.local`). Host order: `ME_AI_HOST` → `~/.grok/researcher_host` → `me-ai.local` → `10.0.0.52`.
+
+**Manual equivalent (if you skip LaunchAgent):**
+
+```bash
+ssh -N -L 5901:127.0.0.1:5900 ubuntu@me-ai.local
+# TigerVNC → 127.0.0.1::5901
+```
+
 ---
 
 ## 4. Env sketch (Linux `trading_test`)
