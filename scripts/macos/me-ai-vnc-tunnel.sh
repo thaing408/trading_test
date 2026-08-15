@@ -32,7 +32,11 @@ resolve_host() {
   fi
   if [[ -f "$HOME/.grok/researcher_host" ]]; then
     local h
-    h=$(tr -d '[:space:]' <"$HOME/.grok/researcher_host" || true)
+    # file may be bare IP/hostname or "host=10.0.0.52"
+    h=$(head -1 "$HOME/.grok/researcher_host" | tr -d '[:space:]' || true)
+    if [[ "$h" == host=* ]]; then
+      h="${h#host=}"
+    fi
     if [[ -n "$h" ]]; then
       echo "$h"
       return
