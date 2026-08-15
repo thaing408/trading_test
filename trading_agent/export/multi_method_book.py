@@ -376,16 +376,27 @@ def export_multi_method_auto_trade(
             if existing.get("regime"):
                 regime = f"{existing.get('regime')} + multi-method"
 
-    # Respect process cash bias if set
+    # Process cash bias: only suppress when explicitly requested (stay_in_cash=True)
+    # or when auto-export is off and day bias is cash. Default multi-method path
+    # (AUTO_EXPORT=1) does not empty the book just because research was cash.
     if stay_in_cash is None:
-        try:
-            from trading_agent.runbook.process import load_day_state
+        auto = os.getenv("TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        if not auto:
+            try:
+                from trading_agent.runbook.process import load_day_state
 
-            st = load_day_state()
-            if (st.bias or "").lower() == "cash":
-                stay_in_cash = True
-        except Exception:
-            pass
+                st = load_day_state()
+                if (st.bias or "").lower() == "cash":
+                    stay_in_cash = True
+            except Exception:
+                pass
+        else:
+            stay_in_cash = False
 
     book = build_multi_method_book(
         results,
@@ -393,13 +404,16 @@ def export_multi_method_auto_trade(
         stay_in_cash=stay_in_cash,
         regime=regime,
     )
-    # If human set cash bias, force empty multi-method entries only — keep desk? fail closed empty all
+    # Explicit cash suppress only when caller or (non-auto) process bias forced it
     if stay_in_cash is True:
         book["entries"] = []
         book["entry_count"] = 0
         book["stay_in_cash"] = True
         book["cash_reason"] = "process bias=cash — multi-method export suppressed"
         book["watchlist"] = []
+    else:
+        book["cio_required"] = False
+        book["export_policy"] = "multi_method_auto_export_no_cio"
 
     paths = write_auto_trade_book(book, session_dir=session_dir, sync_dir=sync_dir)
     return book, paths

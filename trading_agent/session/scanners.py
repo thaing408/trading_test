@@ -7,6 +7,7 @@ Called from session orchestrator:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -18,6 +19,8 @@ class DeskScannerResult:
     multi_text: str = ""
     swing_plays: int = 0
     multi_plays: int = 0
+    multi_export_entries: int = 0
+    multi_export_paths: List[str] = field(default_factory=list)
     symbols: List[str] = field(default_factory=list)
     discord_posted: bool = False
     errors: List[str] = field(default_factory=list)
@@ -34,9 +37,25 @@ class DeskScannerResult:
         if self.multi_text:
             parts.append(self.multi_text.strip())
             parts.append("")
+        if self.multi_export_entries:
+            parts.append(
+                f"_auto_trade_book (multi-method, no CIO required): "
+                f"**{self.multi_export_entries}** ENTER row(s)_"
+            )
+            parts.append("")
         if self.errors:
             parts.append("**Errors:** " + "; ".join(self.errors[:4]))
         return "\n".join(parts).strip() + "\n"
+
+
+def multi_method_auto_export_enabled() -> bool:
+    """When true, export-eligible multi-method PLAYs write auto_trade_book without CIO."""
+    return os.getenv("TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 def symbols_from_plan_context(
@@ -170,6 +189,56 @@ def run_desk_scanners(
             plays_m = [e for e in evals if e.play]
             result.multi_plays = len(plays_m)
             result.multi_text = format_multi_method_report(evals, cfg=mcfg)
+
+            # P1: multi-method EXPORT → auto_trade_book without CIO approval.
+            # Research/CIO capital-preservation stay_in_cash no longer blocks this path.
+            # Consumer still applies process gate, OMS limits, and LIVE flags.
+            if multi_method_auto_export_enabled() and evals:
+                try:
+                    from trading_agent.export.multi_method_book import (
+                        export_multi_method_auto_trade,
+                    )
+                    from trading_agent.session.context import default_session_dir
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+
+                    pt = ZoneInfo("America/Los_Angeles")
+                    session_dir = default_session_dir(datetime.now(pt).date())
+                    book, paths = export_multi_method_auto_trade(
+                        evals,
+                        merge_desk=True,
+                        session_dir=session_dir,
+                        # Explicit False: do not suppress ENTERs because process
+                        # bias is cash from an empty research pass.
+                        stay_in_cash=False,
+                    )
+                    result.multi_export_entries = int(
+                        book.get("entry_count") or len(book.get("entries") or [])
+                    )
+                    result.multi_export_paths = [str(p) for p in (paths or [])]
+                    if result.multi_export_entries > 0:
+                        try:
+                            from trading_agent.runbook.process import (
+                                sync_process_bias_from_desk,
+                            )
+
+                            sync_process_bias_from_desk(
+                                stay_in_cash=False,
+                                market_regime="multi-method auto-export",
+                                ranked_count=result.multi_export_entries,
+                                multi_method_entries=result.multi_export_entries,
+                                focus_symbols=[
+                                    str(e.get("symbol") or "")
+                                    for e in (book.get("entries") or [])
+                                    if isinstance(e, dict)
+                                ],
+                                reason=f"desk scanners multi-method export ({slot})",
+                                force=True,
+                            )
+                        except Exception as bias_exc:  # noqa: BLE001
+                            result.errors.append(f"bias after mm export: {bias_exc}")
+                except Exception as exp_exc:  # noqa: BLE001
+                    result.errors.append(f"multi-method export: {exp_exc}")
         except Exception as exc:  # noqa: BLE001
             result.errors.append(f"multi-method: {exc}")
             result.multi_text = f"_Multi-method failed: {exc}_"

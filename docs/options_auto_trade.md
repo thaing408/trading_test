@@ -79,7 +79,18 @@ Agent: `com.grok.pull-researcher-sync` every **15m** + desk startup.
 |------|-------------------|
 | Gap book | On **CIO board** as decision candidates (continuation); soft pipeline tag |
 | Playlist | On **CIO board** + screener universe; confidence boost if already Phase-1 |
-| Both | Full CIO gates still apply — **not auto-approve** |
+| Both | Full CIO gates still apply for gap/playlist — **not auto-approve** |
+| **Multi-method EXPORT** | **P1 auto-export** to `auto_trade_book` **without CIO** when `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT=1` (default **on**). Consumer still uses process gate + OMS + LIVE. Disable with `=0`. |
+
+### Multi-method auto-export (no CIO required)
+
+At research (and evening) desk scanners, **export-eligible** multi-method PLAYs write ENTER rows into local `auto_trade_book.json` even if classic research is `stay_in_cash` or CIO approves nothing.
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT` | `1` | Write multi-method ENTERs without CIO |
+| `TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK` | `1` | Discovery/cash empty books cannot wipe those ENTERs same day |
+| `TRADING_AGENT_MULTILEG_LIVE` | `0` | Spreads still need opt-in for LIVE place (single-leg debit OK when LIVE=1) |
 
 Disable:
 
