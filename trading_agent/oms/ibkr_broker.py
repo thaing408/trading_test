@@ -153,7 +153,14 @@ def place_equity_market(
 
     try:
         contract = Stock(sym, "SMART", "USD")
-        ib.qualifyContracts(contract)
+        qualified = ib.qualifyContracts(contract)
+        if not qualified or int(getattr(contract, "conId", 0) or 0) <= 0:
+            return {
+                "error": "unqualified_contract",
+                "message": f"No IBKR security definition for equity {sym}",
+                "broker": "ibkr",
+                "symbol": sym,
+            }
         order = MarketOrder(action, qty)
         cfg = ibkr_trade_config()
         if cfg["account"]:
@@ -218,7 +225,28 @@ def place_option_market(
         return {"error": "no_ib_insync", "message": "pip install ib_insync"}
 
     try:
+        from datetime import date as _date
+        from datetime import datetime as _dt
+
         ymd = expiration.replace("-", "")[:8]
+        if len(ymd) != 8 or not ymd.isdigit():
+            return {
+                "error": "bad_expiration",
+                "message": f"expiration must be YYYY-MM-DD or YYYYMMDD, got {expiration!r}",
+                "broker": "ibkr",
+            }
+        exp_d = _dt.strptime(ymd, "%Y%m%d").date()
+        min_dte = int(os.getenv("IBKR_MIN_OPTION_DTE", "1") or 1)
+        dte = (exp_d - _date.today()).days
+        if dte < min_dte:
+            return {
+                "error": "dte_too_short",
+                "message": f"DTE {dte} < min {min_dte} for {underlying} {ymd}",
+                "broker": "ibkr",
+                "dte": dte,
+                "min_dte": min_dte,
+            }
+
         cp = "C" if str(right).upper().startswith("C") else "P"
         side = "BUY" if str(instruction).upper().startswith("BUY") else "SELL"
         contract = Option(
@@ -229,7 +257,21 @@ def place_option_market(
             "SMART",
             currency="USD",
         )
-        ib.qualifyContracts(contract)
+        qualified = ib.qualifyContracts(contract)
+        con_id = int(getattr(contract, "conId", 0) or 0)
+        if not qualified or con_id <= 0:
+            return {
+                "error": "unqualified_contract",
+                "message": (
+                    f"No IBKR security definition for {underlying.upper()} "
+                    f"{ymd} {cp}{float(strike):g} (Error 200 class)"
+                ),
+                "broker": "ibkr",
+                "underlying": underlying.upper(),
+                "expiration": expiration,
+                "right": cp,
+                "strike": float(strike),
+            }
         order = MarketOrder(side, max(1, int(quantity)))
         cfg = ibkr_trade_config()
         if cfg["account"]:
@@ -250,6 +292,8 @@ def place_option_market(
             "order_id": getattr(trade.order, "orderId", None),
             "orderStatus": {"status": status},
             "localSymbol": getattr(contract, "localSymbol", None),
+            "conId": con_id,
+            "dte": dte,
         }
     except Exception as exc:  # noqa: BLE001
         _LAST_ERROR = str(exc)

@@ -135,8 +135,9 @@ set +a
 # Research ping — try configured id, then alternates (Error 326 = client id in use).
 PING_JSON=""
 PING_OK=0
-BASE_ID="${IBKR_CLIENT_ID:-17}"
-for try_id in "$BASE_ID" 91 92 93 51 18 19; do
+# Dedicated ping ids — never steal desk(17) or trade(27) when possible
+BASE_ID="${IBKR_PING_CLIENT_ID:-${IBKR_CLIENT_ID_PING:-91}}"
+for try_id in "$BASE_ID" 91 92 93 51 18 19 17; do
   echo "research ping client_id=$try_id ..."
   if PING_JSON=$(IBKR_CLIENT_ID="$try_id" .venv/bin/python scripts/ibkr_research_ping.py --json 2>&1); then
     if echo "$PING_JSON" | grep -q '"connected": true'; then

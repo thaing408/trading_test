@@ -53,6 +53,9 @@ def process_root() -> Path:
     raw = os.getenv("TRADING_AGENT_PROCESS_DIR", "").strip()
     if raw:
         return Path(raw)
+    state = os.getenv("TRADING_AGENT_STATE_DIR", "").strip()
+    if state:
+        return Path(state).expanduser() / "process"
     return Path.home() / ".trading_agent" / "process"
 
 
@@ -184,6 +187,103 @@ def set_regime(
     state.regime_reason = reason.strip() or state.regime_reason
     save_day_state(state, day)
     return state
+
+
+def suggest_bias_from_desk(
+    *,
+    stay_in_cash: bool = False,
+    ranked_count: int = 0,
+    multi_method_entries: int = 0,
+    environment_score: float | None = None,
+) -> str:
+    """Map desk/research outcome → process bias (trade | light | cash).
+
+    Multi-method ENTERs and non-cash ranked setups unlock trade/light so the
+    OMS process gate does not fail with process_bias_unset all day.
+    """
+    mm = max(0, int(multi_method_entries or 0))
+    ranked = max(0, int(ranked_count or 0))
+    if mm > 0 or (ranked > 0 and not stay_in_cash):
+        if mm >= 2 or ranked >= 3:
+            return "trade"
+        return "light"
+    if stay_in_cash and mm == 0 and ranked == 0:
+        return "cash"
+    # Default light so consumer can still process QT/gap books when research is empty
+    if environment_score is not None and float(environment_score) < 40.0:
+        return "cash"
+    return "light"
+
+
+def sync_process_bias_from_desk(
+    *,
+    stay_in_cash: bool = False,
+    market_regime: str = "",
+    environment_score: float | None = None,
+    ranked_count: int = 0,
+    multi_method_entries: int = 0,
+    focus_symbols: Sequence[str] | None = None,
+    reason: str = "",
+    force: bool = False,
+    day: date | None = None,
+) -> ProcessDayState:
+    """Fill process day bias from desk when unset (or force).
+
+    Never overwrites an existing human bias unless force=True or
+    TRADING_AGENT_PROCESS_BIAS_FORCE=1. Never upgrades cash→trade when the
+    operator already set cash, unless force.
+    """
+    force = force or os.getenv("TRADING_AGENT_PROCESS_BIAS_FORCE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    state = ensure_day_state(day)
+    suggested = suggest_bias_from_desk(
+        stay_in_cash=stay_in_cash,
+        ranked_count=ranked_count,
+        multi_method_entries=multi_method_entries,
+        environment_score=environment_score,
+    )
+    # Prefer multi-method / ranked unlock over research-only cash wipe
+    if multi_method_entries > 0 and suggested in ("trade", "light"):
+        pass
+    elif stay_in_cash and multi_method_entries <= 0 and ranked_count <= 0:
+        suggested = "cash"
+
+    current = (state.bias or "").strip().lower()
+    if current in ("trade", "light", "cash") and not force:
+        # Still refresh regime text / focus if empty
+        changed = False
+        if market_regime and not state.regime:
+            state.regime = str(market_regime)[:200]
+            changed = True
+        if focus_symbols:
+            try:
+                upsert_focus_list(list(focus_symbols)[:20], day=day)
+            except Exception:
+                pass
+        if changed:
+            save_day_state(state, day)
+        return load_day_state(day)
+
+    why = reason or (
+        f"auto desk: stay_in_cash={stay_in_cash} ranked={ranked_count} "
+        f"mm_entries={multi_method_entries} env={environment_score}"
+    )
+    state = set_regime(
+        suggested,
+        regime=str(market_regime or state.regime or "")[:200],
+        reason=why[:300],
+        day=day,
+    )
+    if focus_symbols:
+        try:
+            upsert_focus_list(list(focus_symbols)[:20], day=day)
+        except Exception:
+            pass
+    return load_day_state(day)
 
 
 def upsert_focus_list(symbols: Sequence[str], *, day: date | None = None) -> ProcessDayState:

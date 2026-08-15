@@ -13,7 +13,10 @@ from typing import Any, Dict, Optional
 def default_oms_dir() -> Path:
     raw = os.getenv("TRADING_AGENT_OMS_DIR", "").strip()
     if raw:
-        return Path(raw)
+        return Path(raw).expanduser()
+    state = os.getenv("TRADING_AGENT_STATE_DIR", "").strip()
+    if state:
+        return Path(state).expanduser() / "oms"
     return Path.home() / ".trading_agent" / "oms"
 
 
