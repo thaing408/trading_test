@@ -156,6 +156,14 @@ Non-stationarity · overfitting · costs/impact · data leakage · competition �
 4. Session replay CLI  
 5. Journal slippage fields  
 
+### Near-term ops backlog (P2/P3)
+
+Tactical Mac auto-trade checklist (watchdog, Discord alerts, Schwab qualify, multileg opt-in, promotion) lives in:
+
+**[`docs/AUTO_TRADE_NEXT_STEPS.md`](AUTO_TRADE_NEXT_STEPS.md)**
+
+Use that file for Monday continuation after multi-method no-CIO export; use this roadmap for multi-week institutional phasing.
+
 ---
 
 ## Part C — Current auto-trade stack (what exists)

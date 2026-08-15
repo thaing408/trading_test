@@ -98,6 +98,8 @@ python -m trading_agent desk-ui                     # http://127.0.0.1:8787/ (ma
 
 See **`docs/DESK_UI_AUTO_TRADE.md`** for the operator dashboard design (Overview/Book first; localhost-only v1).
 
+**Monday auto-trade continue (P0/P2/P3):** [`docs/AUTO_TRADE_NEXT_STEPS.md`](docs/AUTO_TRADE_NEXT_STEPS.md).
+
 ## Dual system (Windows @ work + macOS @ home) — fully separated
 
 | Where | Machine | Role |

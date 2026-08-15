@@ -2,6 +2,8 @@
 
 **Roadmap / full-auto gaps:** see [`docs/quant_institution_roadmap.md`](quant_institution_roadmap.md) (institutional goals + missing pieces for ultimate fully auto trade).
 
+**Monday continue (P0 proof + P2/P3 backlog):** see [`docs/AUTO_TRADE_NEXT_STEPS.md`](AUTO_TRADE_NEXT_STEPS.md).
+
 ## Goal
 Windows builds **defined-risk options** suggestions with IV/POP/DTE/liquidity gates and posts them to Discord.  
 Mac pulls **code only** from git, then trades in **local TOS** using Discord cards + optional local book file.
