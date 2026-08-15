@@ -241,6 +241,33 @@ def run_session(
                 plan_path = save_plan_context(plan_context, session_dir)
                 save_cio_approval_snapshot(session_dir, plan, config.fixture_mode)
                 watch_symbols = list(plan_context.get("top_watchlist", []))
+                # Fill process day bias so OMS consumer does not fail process_bias_unset
+                try:
+                    from trading_agent.runbook.process import sync_process_bias_from_desk
+
+                    mm_n = 0
+                    try:
+                        from trading_agent.export.auto_trade_book import default_sync_dir
+                        import json as _json
+                        from pathlib import Path as _Path
+
+                        _bp = default_sync_dir() / "auto_trade_book.json"
+                        if _bp.is_file():
+                            _bd = _json.loads(_bp.read_text(encoding="utf-8"))
+                            mm_n = int(_bd.get("entry_count") or len(_bd.get("entries") or []))
+                    except Exception:
+                        mm_n = 0
+                    sync_process_bias_from_desk(
+                        stay_in_cash=bool(getattr(plan, "stay_in_cash", False)),
+                        market_regime=str(getattr(plan, "market_regime", "") or ""),
+                        environment_score=getattr(plan, "market_environment_score", None),
+                        ranked_count=len(getattr(plan, "ranked_opportunities", None) or []),
+                        multi_method_entries=mm_n,
+                        focus_symbols=watch_symbols,
+                        reason="desk research phase",
+                    )
+                except Exception as bias_exc:  # noqa: BLE001
+                    _log(log, f"[warn] process bias sync failed: {bias_exc}")
                 message = format_research_plays(plan)
                 phase_messages["research"] = message
                 _deliver(message, phase.label, config=config, discord=discord, log=log, posts=posts)
@@ -289,6 +316,31 @@ def run_session(
                         for sym in scan.symbols:
                             if sym not in watch_symbols:
                                 watch_symbols.append(sym)
+                        # Scanners may write multi-method ENTERs — unlock process bias
+                        try:
+                            from trading_agent.runbook.process import sync_process_bias_from_desk
+                            import json as _json
+                            from trading_agent.export.auto_trade_book import default_sync_dir
+
+                            _bp = default_sync_dir() / "auto_trade_book.json"
+                            mm_n = 0
+                            if _bp.is_file():
+                                _bd = _json.loads(_bp.read_text(encoding="utf-8"))
+                                mm_n = int(
+                                    _bd.get("entry_count") or len(_bd.get("entries") or [])
+                                )
+                            sync_process_bias_from_desk(
+                                stay_in_cash=bool(plan_context.get("stay_in_cash")),
+                                market_regime=str(plan_context.get("market_regime") or ""),
+                                environment_score=plan_context.get("market_environment_score"),
+                                ranked_count=len(plan_context.get("ranked_opportunities") or []),
+                                multi_method_entries=mm_n,
+                                focus_symbols=watch_symbols,
+                                reason="desk research scanners",
+                                force=mm_n > 0,  # multi-method ENTERs beat unset/cash
+                            )
+                        except Exception as bias_exc:  # noqa: BLE001
+                            _log(log, f"[warn] process bias after scanners: {bias_exc}")
                     except Exception as scan_exc:  # noqa: BLE001
                         _log(log, f"[warn] Research scanners failed: {scan_exc}")
                         _log(log, traceback.format_exc())

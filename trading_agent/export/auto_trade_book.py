@@ -53,7 +53,10 @@ def _load_day_bias_sidecar():
 def default_sync_dir() -> Path:
     raw = os.getenv("TRADING_AGENT_SYNC_DIR", "").strip()
     if raw:
-        return Path(raw)
+        return Path(raw).expanduser()
+    state = os.getenv("TRADING_AGENT_STATE_DIR", "").strip()
+    if state:
+        return Path(state).expanduser() / "sync"
     return Path.home() / ".trading_agent" / "sync"
 
 
@@ -338,6 +341,122 @@ def build_auto_trade_book(
     }
 
 
+def _entry_count(book: Dict[str, Any]) -> int:
+    try:
+        n = int(book.get("entry_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    entries = book.get("entries") or []
+    if isinstance(entries, list) and len(entries) > n:
+        return len(entries)
+    return n if n > 0 else (len(entries) if isinstance(entries, list) else 0)
+
+
+def _looks_like_export_book(book: Dict[str, Any]) -> bool:
+    """True if book has ENTER rows worth keeping (multi-method or desk export)."""
+    entries = book.get("entries") or []
+    if not isinstance(entries, list) or not entries:
+        return False
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        if str(e.get("action") or "").upper() == "ENTER":
+            return True
+        tags = e.get("method_tags") or []
+        blob = " ".join(str(t) for t in tags) if isinstance(tags, list) else str(tags)
+        blob += " " + str(e.get("strategy") or "") + " " + str(e.get("setup_id") or "")
+        low = blob.lower()
+        if any(
+            k in low
+            for k in (
+                "multi_method",
+                "multi-method",
+                "top_winners",
+                "swing_daily",
+                "soulz",
+                "fvg",
+                "options",
+            )
+        ):
+            return True
+    return bool(entries)
+
+
+def protect_auto_trade_book_from_empty_overwrite(
+    book: Dict[str, Any],
+    *,
+    sync_dir: Path | None = None,
+) -> Dict[str, Any]:
+    """Do not let discovery/cash empty books wipe multi-method ENTERs same day.
+
+    When the new book has 0 entries (typically stay_in_cash capital preservation)
+    and the on-disk book for the same trading_date already has ENTER rows, keep
+    those entries and annotate the book. Disable with
+    TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK=0.
+    """
+    flag = os.getenv("TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK", "1").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return book
+
+    new_n = _entry_count(book)
+    if new_n > 0:
+        return book
+
+    sync = Path(sync_dir) if sync_dir is not None else default_sync_dir()
+    existing_path = sync / "auto_trade_book.json"
+    if not existing_path.is_file():
+        return book
+    try:
+        existing = json.loads(existing_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return book
+    if not isinstance(existing, dict):
+        return book
+
+    td_new = str(book.get("trading_date") or "")
+    td_old = str(existing.get("trading_date") or "")
+    if td_new and td_old and td_new != td_old:
+        return book
+    if not _looks_like_export_book(existing):
+        return book
+
+    old_entries = list(existing.get("entries") or [])
+    if not old_entries:
+        return book
+
+    # Archive the empty attempt for forensics
+    try:
+        arch = sync / "archive"
+        arch.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%H%M%S")
+        td = td_new or td_old or "unknown"
+        (arch / f"auto_trade_book_empty_attempt_{td}_{stamp}.json").write_text(
+            json.dumps(book, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    preserved = dict(book)
+    preserved["entries"] = old_entries
+    preserved["entry_count"] = len(old_entries)
+    preserved["stay_in_cash"] = False
+    preserved["cash_reason"] = ""
+    preserved["empty_overwrite_blocked"] = True
+    preserved["preserved_entry_count"] = len(old_entries)
+    preserved["preserved_from_generated_at"] = existing.get("generated_at")
+    preserved["empty_attempt_reason"] = str(book.get("cash_reason") or "")[:400]
+    # Keep newer watchlist/scan when provided
+    if not preserved.get("watchlist") and existing.get("watchlist"):
+        preserved["watchlist"] = existing.get("watchlist")
+    if not preserved.get("scan_symbols") and existing.get("scan_symbols"):
+        preserved["scan_symbols"] = existing.get("scan_symbols")
+    # Prefer richer regime string
+    if existing.get("regime") and "multi-method" in str(existing.get("regime") or "").lower():
+        preserved["regime"] = existing.get("regime")
+    return preserved
+
+
 def write_auto_trade_book(
     book: Dict[str, Any],
     *,
@@ -346,11 +465,12 @@ def write_auto_trade_book(
 ) -> List[Path]:
     """Write book to session dir and sync dir (Mac pull path)."""
     paths: List[Path] = []
+    sync = Path(sync_dir) if sync_dir is not None else default_sync_dir()
+    book = protect_auto_trade_book_from_empty_overwrite(book, sync_dir=sync)
     payload = json.dumps(book, indent=2) + "\n"
     targets: List[Path] = []
     if session_dir is not None:
         targets.append(Path(session_dir) / "auto_trade_book.json")
-    sync = Path(sync_dir) if sync_dir is not None else default_sync_dir()
     targets.append(sync / "auto_trade_book.json")
     # Mac auto-trade MCP reads ~/.grok/state as well
     grok_state = Path.home() / ".grok" / "state"
