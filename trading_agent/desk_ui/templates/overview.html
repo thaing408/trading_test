@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Overview</h1>
+  <p class="lede">
+    {% if snap.stay_in_cash %}
+    <strong class="text-cash">CASH</strong> — no ENTER export for this session.
+    {% else %}
+    <strong class="text-armed">ARMED</strong> — {{ snap.entries|length }} ENTER row(s).
+    {% endif %}
+  </p>
+  {% if snap.cash_reason %}
+  <p class="cash-reason">{{ snap.cash_reason }}</p>
+  {% endif %}
+</section>
+
+<section class="kpi-row">
+  <div class="kpi-card"><div class="k">Entries</div><div class="v">{{ snap.entries|length }}</div></div>
+  <div class="kpi-card"><div class="k">Rejections</div><div class="v">{{ snap.rejections|length }}</div></div>
+  <div class="kpi-card"><div class="k">Play</div><div class="v">{{ snap.play_symbols|length }}</div></div>
+  <div class="kpi-card"><div class="k">Manage events</div><div class="v">{{ snap.manage.summary.get('events', 0) }}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Market context</h2>
+  {% if snap.market and snap.market.rows %}
+  <table class="data market-table">
+    <thead>
+      <tr><th class="col-field">Field</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      {% for field, detail in snap.market.rows %}
+      <tr>
+        <th scope="row">{{ field }}</th>
+        <td>{{ detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if snap.market.overnight %}
+  <h3 class="subhead">Overnight tape</h3>
+  <table class="data market-table compact">
+    <thead><tr><th>Region / asset</th><th>Print</th></tr></thead>
+    <tbody>
+      {% for label, val in snap.market.overnight.items() %}
+      <tr><th scope="row">{{ label }}</th><td>{{ val }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if snap.market.signals %}
+  <h3 class="subhead">Signals</h3>
+  <ul class="signal-list">
+    {% for s in snap.market.signals[:12] %}
+    <li>{{ s }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if snap.market.highlights %}
+  <h3 class="subhead">Headlines</h3>
+  <ol class="headline-list">
+    {% for h in snap.market.highlights[:6] %}
+    <li>{{ h }}</li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% else %}
+  <p class="muted">No structured market context (intelligence / bias missing).</p>
+  {% if snap.regime %}<p class="cash-reason">{{ snap.regime }}</p>{% endif %}
+  {% endif %}
+</section>
+
+<section class="panel two-col">
+  <div>
+    <h2>Phase</h2>
+    <ul class="plain">
+      <li><strong>{{ snap.phase.phase_kind }}</strong> — {{ snap.phase.phase_label }}</li>
+      <li>Intraday window: {{ 'yes' if snap.phase.in_intraday_window else 'no' }}</li>
+      {% if snap.phase.discovery_slot_label %}
+      <li>Discovery slot: {{ snap.phase.discovery_slot_label }}</li>
+      {% endif %}
+      {% if next_phase_label %}
+      <li>Next: {{ next_phase_label }}</li>
+      {% endif %}
+    </ul>
+  </div>
+  <div>
+    <h2>Watch vs play</h2>
+    <p><span class="muted">Watch:</span> {{ snap.watchlist|join(', ') or '—' }}</p>
+    <p><span class="muted">Play:</span> {{ snap.play_symbols|join(', ') or '—' }}</p>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Top rejections <a class="more" href="/rejections">all →</a></h2>
+  {% if snap.rejections %}
+  <table class="data">
+    <thead><tr><th>Symbol</th><th>Source</th><th>Reason</th><th>Gates</th></tr></thead>
+    <tbody>
+      {% for r in snap.rejections[:5] %}
+      <tr>
+        <td>{{ r.symbol }}</td>
+        <td><code>{{ r.source }}</code></td>
+        <td>{{ r.reason }}</td>
+        <td>{% for g in r.gates %}<span class="tag">{{ g }}</span>{% endfor %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No rejections (or plan/book missing).</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>ENTER table</h2>
+  {% if snap.entries %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Side</th><th>Grade</th><th>Entry</th><th>Stop</th><th>Target</th><th>Strategy</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in snap.entries %}
+      <tr>
+        <td>{{ e.get('symbol') }}</td>
+        <td>{{ e.get('side') }}</td>
+        <td>{{ e.get('setup_grade') }}</td>
+        <td>{{ e.get('entry') }}</td>
+        <td>{{ e.get('stop') }}</td>
+        <td>{{ e.get('target') }}</td>
+        <td>{{ e.get('strategy') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty-entries">No ENTER rows (empty book entries).</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Last manage</h2>
+  {% if snap.manage.latest_cycle %}
+  {% set pl = snap.manage.latest_cycle.get('payload') or {} %}
+  <p>
+    ts=<code>{{ snap.manage.latest_cycle.get('ts') }}</code>
+    · n_recommendations=<strong>{{ pl.get('n_recommendations') }}</strong>
+    · wait={{ pl.get('wait_minutes') }}m
+  </p>
+  {% else %}
+  <p class="muted">No manage_cycle events.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Export health</h2>
+  <ul class="plain paths">
+    {% for t in snap.export_health.targets %}
+    <li>
+      <span class="dot {{ 'ok' if t.exists else 'miss' }}"></span>
+      <code>{{ t.path }}</code>
+      {% if t.age_seconds is not none %}
+      <span class="muted">{{ (t.age_seconds / 60)|round(0)|int }}m</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% for note in snap.export_health.notes %}
+  <p class="muted">{{ note }}</p>
+  {% endfor %}
+</section>
+{% endblock %}

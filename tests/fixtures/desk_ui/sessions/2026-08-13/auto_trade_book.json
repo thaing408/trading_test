@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "trading_date": "2026-08-13",
+  "generated_at": "2026-08-13T12:00:00+00:00",
+  "role": "windows-research",
+  "stay_in_cash": true,
+  "cash_reason": "4 rejected setups; stay in cash",
+  "environment_score": 42.0,
+  "regime": "risk_off",
+  "entries": [],
+  "entry_count": 0,
+  "watchlist": [
+    "QQQ",
+    "IWM"
+  ],
+  "scan_symbols": [
+    "QQQ",
+    "IWM"
+  ],
+  "rejected_incomplete": [],
+  "broker_boundary": "windows-research-suggest-export-only; no TOS order placement on research host"
+}

@@ -1743,6 +1743,62 @@ def main(argv: list[str] | None = None) -> int:
     )
     multi_bt.add_argument("--output", "-o", metavar="FILE")
 
+    desk_ui = subparsers.add_parser(
+        "desk-ui",
+        help="Local auto-trade desk web UI (FastAPI; optional [desk-ui] extra)",
+    )
+    desk_ui.add_argument(
+        "--host",
+        default=None,
+        help="Bind host (default 127.0.0.1; localhost only in v1)",
+    )
+    desk_ui.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port (default 8787)",
+    )
+    desk_ui.add_argument(
+        "--reload",
+        action="store_true",
+        help="Uvicorn reload (dev)",
+    )
+    desk_ui.add_argument(
+        "--state",
+        metavar="DIR",
+        help="Fixture/state root instead of ~/.trading_agent",
+    )
+    desk_ui.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Override trading date for snapshot",
+    )
+
+    desk_status = subparsers.add_parser(
+        "desk-status",
+        help="Local auto-trade desk snapshot (book, rejections, manage; no HTTP)",
+    )
+    desk_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit full DeskSnapshot as JSON",
+    )
+    desk_status.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Override trading date (default: resolve_trading_date PT)",
+    )
+    desk_status.add_argument(
+        "--state",
+        metavar="DIR",
+        help="Fixture/state root instead of ~/.trading_agent",
+    )
+    desk_status.add_argument(
+        "--positions",
+        metavar="FILE",
+        help="Positions JSON path (never refreshes brokerage)",
+    )
+
     process = subparsers.add_parser(
         "process",
         help="Systematic 5-step process runbook (regime → select → prepare → execute → review)",
@@ -1813,6 +1869,39 @@ def main(argv: list[str] | None = None) -> int:
         return _run_research(args)
     if args.command == "process":
         return _run_process(args)
+    if args.command == "desk-ui":
+        try:
+            import fastapi  # noqa: F401
+            import uvicorn  # noqa: F401
+        except ImportError:
+            print(
+                "desk-ui requires optional deps. Install:\n"
+                '  pip install -e ".[desk-ui]"',
+                file=sys.stderr,
+            )
+            return 2
+        from trading_agent.desk_ui.cli import run_server
+
+        return run_server(
+            host=getattr(args, "host", None),
+            port=getattr(args, "port", None),
+            reload=bool(getattr(args, "reload", False)),
+            state=getattr(args, "state", None),
+            trading_date=getattr(args, "date", None),
+        )
+    if args.command == "desk-status":
+        from trading_agent.desk_ui.cli_status import run_desk_status
+
+        extra: list[str] = []
+        if getattr(args, "json", False):
+            extra.append("--json")
+        if getattr(args, "date", None):
+            extra.extend(["--date", args.date])
+        if getattr(args, "state", None):
+            extra.extend(["--state", args.state])
+        if getattr(args, "positions", None):
+            extra.extend(["--positions", args.positions])
+        return run_desk_status(extra)
     if args.command == "premarket":
         return _run_premarket(args)
 

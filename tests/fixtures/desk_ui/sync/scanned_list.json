@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "trading_date": "2026-08-13",
+  "watchlist": [
+    "QQQ",
+    "IWM"
+  ],
+  "symbols": [
+    "QQQ",
+    "IWM"
+  ],
+  "play_symbols": [],
+  "stay_in_cash": true
+}

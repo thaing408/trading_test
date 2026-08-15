@@ -87,7 +87,16 @@ python -m trading_agent premarket
 python -m trading_agent cio --fixture
 python -m trading_agent intraday --fixture
 python -m trading_agent performance --fixture
+
+# Desk investigation UI (local files only; no orders)
+python -m trading_agent desk-status                  # text snapshot (no extra deps)
+python -m trading_agent desk-status --json
+pip install -e ".[desk-ui]"                         # once: FastAPI + Jinja + uvicorn
+python -m trading_agent desk-ui                     # http://127.0.0.1:8787/ (manual launch)
+# Optional: TRADING_AGENT_DESK_UI_TOKEN=... for Bearer/cookie auth
 ```
+
+See **`docs/DESK_UI_AUTO_TRADE.md`** for the operator dashboard design (Overview/Book first; localhost-only v1).
 
 ## Dual system (Windows @ work + macOS @ home) — fully separated
 

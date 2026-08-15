@@ -1,0 +1,14 @@
+{
+  "positions": [
+    {
+      "symbol": "SPY",
+      "quantity": 1,
+      "entry_price": 500.0,
+      "current_price": 501.0,
+      "strategy": "test",
+      "thesis": "fixture",
+      "expiration": "",
+      "strike_prices": []
+    }
+  ]
+}
