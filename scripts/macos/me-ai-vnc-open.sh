@@ -24,7 +24,28 @@ if ! bash "$TUNNEL" --once; then
   exit 1
 fi
 
+# If Gateway is not running, start it on DISPLAY=:99 (login UI for VNC)
+HOST_LINE=$(bash "$TUNNEL" --status 2>/dev/null | head -1 || true)
+echo "$HOST_LINE"
+if echo "$(bash "$TUNNEL" --status 2>/dev/null)" | grep -q 'java=DOWN'; then
+  echo "IB Gateway not running on me-ai — starting on DISPLAY=:99 …"
+  # resolve host the same way as tunnel script
+  ME_HOST="${ME_AI_HOST:-}"
+  if [[ -z "$ME_HOST" && -f "$HOME/.grok/researcher_host" ]]; then
+    ME_HOST=$(head -1 "$HOME/.grok/researcher_host" | tr -d '[:space:]')
+    [[ "$ME_HOST" == host=* ]] && ME_HOST="${ME_HOST#host=}"
+  fi
+  ME_HOST="${ME_HOST:-10.0.0.52}"
+  ssh -o BatchMode=yes -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new \
+    "ubuntu@${ME_HOST}" 'bash ~/bin/start-ibgateway-display99.sh' || true
+  sleep 8
+fi
+
 bash "$TUNNEL" --status || true
+echo ""
+echo "Note: 'SetDesktopSize failed' from TigerVNC is usually harmless with x11vnc."
+echo "If the window is black, wait ~10s for Gateway, or File→Refresh / reconnect."
+echo ""
 
 TARGET="127.0.0.1::${LOCAL_PORT}"
 echo "Opening TigerVNC → ${TARGET}"
