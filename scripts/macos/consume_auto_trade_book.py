@@ -207,6 +207,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"ready_orders: {result['ready_orders_path']}")
             if result.get("pretrade"):
                 print(f"pretrade: {result['pretrade']}")
+            ac = result.get("account_cash") or (result.get("pretrade") or {}).get("account_cash")
+            if ac:
+                print(
+                    "account_cash: "
+                    f"fetched={ac.get('fetched')} "
+                    f"available={ac.get('cash_available')} "
+                    f"bp={ac.get('buying_power')} "
+                    f"tradable={ac.get('tradable_after_reserve')} "
+                    f"remaining={ac.get('remaining_after_submits', ac.get('tradable_after_reserve'))} "
+                    f"err={ac.get('error')}"
+                )
             if result.get("manage"):
                 print(f"manage: {result['manage']}")
             books = result.get("books") or []

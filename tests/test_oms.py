@@ -7,7 +7,12 @@ from pathlib import Path
 from trading_agent.export.mac_execute import ReadyOrder
 from trading_agent.oms.kill_switch import clear_kill_switch, is_killed, set_kill_switch
 from trading_agent.oms.multileg import build_multileg_package
-from trading_agent.oms.pretrade import PretradeConfig, evaluate_pretrade
+from trading_agent.oms.broker import parse_tradable_cash
+from trading_agent.oms.pretrade import (
+    PretradeConfig,
+    estimate_order_cash_required,
+    evaluate_pretrade,
+)
 from trading_agent.oms.protect import should_exit_lot
 from trading_agent.oms.state import LotStatus, OpenLot, OmsStore
 
@@ -293,3 +298,134 @@ def test_pretrade_process_gate_allows_when_steps_complete(tmp_path, monkeypatch)
     assert ok, reason
     assert reason == ""
     assert detail.get("ok") is True
+
+
+def test_parse_tradable_cash_prefers_available():
+    resp = {
+        "balances": {
+            "cash_available": 108.75,
+            "buying_power": 435.0,
+            "cash_balance": 0.0,
+        }
+    }
+    assert parse_tradable_cash(resp, prefer="cash_available") == 108.75
+    assert parse_tradable_cash(resp, prefer="buying_power") == 435.0
+    assert parse_tradable_cash(resp, prefer="min") == 108.75
+
+
+def test_estimate_order_cash_prefers_premium():
+    order = ReadyOrder(
+        order_id="p",
+        symbol="AMD",
+        action="ENTER",
+        side="Bullish",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=100,
+        stop=90,
+        target=120,
+        max_risk_dollars=50,
+        quantity=1,
+    )
+    assert estimate_order_cash_required(order, premium_dollars=1395.0) == 1395.0
+    # fallback uses risk * buffer
+    assert estimate_order_cash_required(order, buffer=1.05) == 52.5
+
+
+def test_pretrade_blocks_insufficient_cash(tmp_path):
+    store = OmsStore(root=tmp_path / "oms")
+    order = ReadyOrder(
+        order_id="rich",
+        symbol="AMAT",
+        action="ENTER",
+        side="Bullish",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=500,
+        stop=400,
+        target=550,
+        max_risk_dollars=500,
+        quantity=2,
+        defined_risk=True,
+    )
+    ok, reason = evaluate_pretrade(
+        order,
+        store,
+        config=PretradeConfig(
+            require_process_gate=False,
+            max_open_lots=10,
+            max_open_risk_dollars=50_000,
+            require_account_cash=True,
+            min_cash_reserve=25,
+        ),
+        buying_power=83.75,  # ~108 cash - 25 reserve
+        cash_required=2790.0,  # 2x ~$13.95 ask * 100
+    )
+    assert not ok
+    assert reason.startswith("insufficient_cash:")
+
+
+def test_pretrade_allows_when_cash_covers(tmp_path):
+    store = OmsStore(root=tmp_path / "oms")
+    order = ReadyOrder(
+        order_id="cheap",
+        symbol="TLT",
+        action="ENTER",
+        side="Bearish",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=82,
+        stop=83,
+        target=80,
+        max_risk_dollars=50,
+        quantity=1,
+        defined_risk=True,
+    )
+    ok, reason = evaluate_pretrade(
+        order,
+        store,
+        config=PretradeConfig(
+            require_process_gate=False,
+            max_open_lots=10,
+            max_open_risk_dollars=50_000,
+            require_account_cash=True,
+        ),
+        buying_power=200.0,
+        cash_required=5.25,  # $0.05 put * 100 * 1.05
+    )
+    assert ok, reason
+
+
+def test_pretrade_blocks_missing_cash_when_required(tmp_path):
+    store = OmsStore(root=tmp_path / "oms")
+    order = ReadyOrder(
+        order_id="nocash",
+        symbol="SPY",
+        action="ENTER",
+        side="Bullish",
+        instrument="options",
+        strategy="x",
+        setup_id="x",
+        entry=500,
+        stop=490,
+        target=510,
+        max_risk_dollars=100,
+        quantity=1,
+        defined_risk=True,
+    )
+    ok, reason = evaluate_pretrade(
+        order,
+        store,
+        config=PretradeConfig(
+            require_process_gate=False,
+            require_account_cash=True,
+            max_open_lots=10,
+            max_open_risk_dollars=50_000,
+        ),
+        buying_power=None,
+        cash_required=100.0,
+    )
+    assert not ok and reason == "account_cash_unavailable"

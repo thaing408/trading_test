@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 
 from trading_agent.oms.kill_switch import is_killed, kill_switch_status
 from trading_agent.oms.state import OmsStore
@@ -33,6 +33,11 @@ class PretradeConfig:
     max_quote_age_seconds: float = 0.0
     # optional buying-power floor (0 = disabled); LIVE path may pass live_bp
     min_buying_power: float = 0.0
+    # Cash affordability — long debits must fit remaining cash/BP
+    require_account_cash: bool = True  # when buying_power is None and live path enforces
+    min_cash_reserve: float = 25.0  # leave this much unspent
+    cash_buffer: float = 1.05  # inflate premium estimate
+    cash_metric: str = "cash_available"  # cash_available | buying_power | min
     # Systematic process gate (Komar steps 1–3) — default ON
     require_process_gate: bool = True
     process_min_step_score: float = 50.0
@@ -71,12 +76,49 @@ class PretradeConfig:
             not in ("0", "false", "no"),
             max_quote_age_seconds=_f("TRADING_AGENT_MAX_QUOTE_AGE_SEC", 0.0),
             min_buying_power=_f("TRADING_AGENT_MIN_BUYING_POWER", 0.0),
+            require_account_cash=_env_bool("TRADING_AGENT_REQUIRE_ACCOUNT_CASH", True),
+            min_cash_reserve=_f("TRADING_AGENT_MIN_CASH_RESERVE", 25.0),
+            cash_buffer=_f("TRADING_AGENT_CASH_BUFFER", 1.05),
+            cash_metric=os.getenv("TRADING_AGENT_CASH_METRIC", "cash_available").strip()
+            or "cash_available",
             require_process_gate=_env_bool("TRADING_AGENT_PROCESS_GATE", True),
             process_min_step_score=_f("TRADING_AGENT_PROCESS_MIN_STEP", 50.0),
             process_require_bias=_env_bool("TRADING_AGENT_PROCESS_REQUIRE_BIAS", True),
             process_block_on_cash=_env_bool("TRADING_AGENT_PROCESS_BLOCK_CASH", True),
             process_probe_desk=_env_bool("TRADING_AGENT_PROCESS_PROBE", True),
         )
+
+
+def estimate_order_cash_required(
+    order: Any,
+    *,
+    premium_dollars: Optional[float] = None,
+    buffer: float = 1.05,
+) -> float:
+    """Best-effort cash needed to open this order (debit dollars).
+
+    Prefer live option premium (already buffered by caller). Else fall back to
+    max_risk_dollars (package risk — often understates rich option premium) or
+    equity notional entry*qty.
+    """
+    qty = max(1, int(getattr(order, "quantity", 0) or 1))
+    instr = str(getattr(order, "instrument", "") or "").lower()
+    risk = float(getattr(order, "max_risk_dollars", 0) or 0)
+
+    if premium_dollars is not None and premium_dollars > 0:
+        return float(premium_dollars)
+
+    if instr in ("options", "option"):
+        # risk is research package risk — use as floor only; multiply buffer
+        # so we do not assume free premium when quote missing
+        base = max(risk, 1.0)
+        return round(base * max(1.0, float(buffer or 1.0)), 2)
+
+    # equity shares
+    entry = float(getattr(order, "entry", 0) or 0)
+    if entry > 0:
+        return round(entry * qty * max(1.0, float(buffer or 1.0)), 2)
+    return round(max(risk, 0.0) * max(1.0, float(buffer or 1.0)), 2)
 
 
 def evaluate_pretrade(
@@ -87,9 +129,13 @@ def evaluate_pretrade(
     submitted_this_run: int = 0,
     quote_age_seconds: Optional[float] = None,
     buying_power: Optional[float] = None,
+    cash_required: Optional[float] = None,
     process_detail: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
     """Return (ok, reason). Fail-closed on kill switch / day loss / heat / process gate.
+
+    ``buying_power`` is remaining tradable cash/BP after reserve (caller-maintained
+    across a consume run). ``cash_required`` is estimated debit for this order.
 
     If ``process_detail`` is a dict, process gate detail is written into it (mutated).
     """
@@ -167,17 +213,44 @@ def evaluate_pretrade(
         if quote_age_seconds > cfg.max_quote_age_seconds:
             return False, "stale_quote"
 
-    # Buying power: use live figure when provided; else skip unless floor set and 0 passed
+    # --- Cash / buying power ---
+    # ``buying_power`` = remaining tradable cash after reserve (caller-maintained).
+    # ``cash_required`` = estimated debit for this order (premium * 100 * qty).
+    # When neither is provided, skip cash gate (dry-run / unit tests).
+    if cash_required is not None:
+        need: Optional[float] = float(cash_required)
+    elif buying_power is not None:
+        need = estimate_order_cash_required(
+            order, buffer=float(cfg.cash_buffer or 1.05)
+        )
+    else:
+        need = None
+
     min_bp = float(cfg.min_buying_power or 0.0)
     if min_bp > 0 and buying_power is not None and buying_power < min_bp:
         return False, "insufficient_buying_power"
-    if buying_power is not None and risk > 0 and buying_power < risk:
-        return False, "buying_power_below_risk"
+
+    if buying_power is not None:
+        if buying_power <= 0:
+            return False, "no_tradable_cash"
+        if need is not None and need > 0 and buying_power < need:
+            return False, f"insufficient_cash:need={need:.2f}:have={buying_power:.2f}"
+        # Legacy: risk-only floor when no explicit cash_required path
+        if cash_required is None and risk > 0 and buying_power < risk:
+            return False, "buying_power_below_risk"
+    elif cfg.require_account_cash and cash_required is not None and cash_required > 0:
+        # LIVE path passed cash_required but could not load balances
+        return False, "account_cash_unavailable"
 
     return True, ""
 
 
-def pretrade_snapshot(store: OmsStore, config: Optional[PretradeConfig] = None) -> Dict[str, Any]:
+def pretrade_snapshot(
+    store: OmsStore,
+    config: Optional[PretradeConfig] = None,
+    *,
+    account_cash: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     cfg = config or PretradeConfig.from_env()
     process: Dict[str, Any] = {"enabled": bool(cfg.require_process_gate)}
     if cfg.require_process_gate:
@@ -198,7 +271,7 @@ def pretrade_snapshot(store: OmsStore, config: Optional[PretradeConfig] = None) 
             process["reason"] = f"process_gate_error:{exc}"
             process["error"] = str(exc)
 
-    return {
+    out: Dict[str, Any] = {
         "kill_switch": is_killed(),
         "open_lots": store.open_count(),
         "open_risk": store.open_risk_dollars(),
@@ -213,6 +286,14 @@ def pretrade_snapshot(store: OmsStore, config: Optional[PretradeConfig] = None) 
             "max_round_trips_per_day": cfg.max_round_trips_per_day,
             "require_process_gate": cfg.require_process_gate,
             "process_min_step_score": cfg.process_min_step_score,
+            "require_account_cash": cfg.require_account_cash,
+            "min_cash_reserve": cfg.min_cash_reserve,
+            "cash_buffer": cfg.cash_buffer,
+            "cash_metric": cfg.cash_metric,
+            "min_buying_power": cfg.min_buying_power,
         },
         "day_round_trips": store.day_round_trips_map(),
     }
+    if account_cash is not None:
+        out["account_cash"] = account_cash
+    return out
