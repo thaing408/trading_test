@@ -46,7 +46,12 @@ def _load_env_files() -> None:
                 k, v = k.strip(), v.strip().strip('"').strip("'")
                 if not k:
                     continue
-                if k.startswith("AUTO_TRADE_") or k.startswith("TRADING_AGENT_"):
+                if (
+                    k.startswith("AUTO_TRADE_")
+                    or k.startswith("TRADING_AGENT_")
+                    or k.startswith("DISCORD_")
+                ):
+                    # Always refresh trade + Discord credentials from disk
                     os.environ[k] = v
                 elif k not in os.environ:
                     os.environ[k] = v

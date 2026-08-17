@@ -366,12 +366,42 @@ def run_oms_consume(
                     cash_info["remaining_after_submits"] = remaining_cash
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                if effective_live:
+                    try:
+                        from trading_agent.ops.journal_notify import notify_order_activity
+
+                        notify_order_activity(order, live=True)
+                    except Exception as exc:  # noqa: BLE001 — fail-open
+                        append_audit(
+                            "journal_notify_error",
+                            payload={"order_id": order.order_id, "error": str(exc)},
+                        )
             else:
                 if order.status == "submitted":
                     order.status = "failed"
                     orders[i] = order
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                if effective_live:
+                    try:
+                        from trading_agent.ops.journal_notify import notify_order_activity
+
+                        notify_order_activity(orders[i], live=True)
+                    except Exception as exc:  # noqa: BLE001
+                        append_audit(
+                            "journal_notify_error",
+                            payload={"order_id": order.order_id, "error": str(exc)},
+                        )
+        elif order.status == "failed" and effective_live:
+            try:
+                from trading_agent.ops.journal_notify import notify_order_activity
+
+                notify_order_activity(order, live=True)
+            except Exception as exc:  # noqa: BLE001
+                append_audit(
+                    "journal_notify_error",
+                    payload={"order_id": order.order_id, "error": str(exc)},
+                )
         elif order.status in ("ready", "dry_run") and place_path in (
             "multi_leg_ready",
             "credit_ready",

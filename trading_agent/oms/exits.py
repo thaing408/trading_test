@@ -161,6 +161,16 @@ def close_lot(
                 "symbol_round_trips_today": trips,
             },
         )
+        if live:
+            try:
+                from trading_agent.ops.journal_notify import notify_exit_activity
+
+                notify_exit_activity(lot, reason=reason, live=True, pnl=pnl)
+            except Exception as exc:  # noqa: BLE001 — fail-open
+                append_audit(
+                    "journal_notify_error",
+                    payload={"lot_id": lot.lot_id, "error": str(exc)},
+                )
     elif not live:
         lot.status = LotStatus.EXITING.value
         lot.exit_reason = reason
