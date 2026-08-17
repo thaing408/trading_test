@@ -222,19 +222,32 @@ def run_oms_consume(
         )
 
         if order.status == "submitted":
-            submit_count += 1
-            submitted_ids.append(order.order_id)
+            from trading_agent.oms.lifecycle import broker_fill_confirmed
+
             lot = _lot_from_order(order, place_path)
             legs = extract_legs_from_broker_response(order.broker_response or {})
-            register_submitted_lot(
+            registered = register_submitted_lot(
                 oms,
                 lot,
                 broker_response=order.broker_response,
                 fill_entry=float(order.entry or 0),
                 legs=legs or None,
             )
-            if mark_processed:
-                oms.mark_processed(order.order_id)
+            # Only count true fills / working orders toward open-lot slots
+            if broker_fill_confirmed(order.broker_response or {}) and registered.status not in (
+                "failed",
+                "closed",
+            ):
+                submit_count += 1
+                submitted_ids.append(order.order_id)
+                if mark_processed:
+                    oms.mark_processed(order.order_id)
+            else:
+                if order.status == "submitted":
+                    order.status = "failed"
+                    orders[i] = order
+                if mark_processed:
+                    oms.mark_processed(order.order_id)
         elif order.status in ("ready", "dry_run") and place_path in (
             "multi_leg_ready",
             "credit_ready",
