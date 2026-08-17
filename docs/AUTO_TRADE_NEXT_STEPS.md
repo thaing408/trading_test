@@ -20,6 +20,7 @@ Paper stack on me-ai is **`trading_test`** (separate repo); this file is **Mac p
 | Process day bias auto-set from desk research/scanners | Avoids `process_bias_unset` |
 | Protect multi-method ENTERs from empty cash/discovery overwrite | `TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK=1` (default) |
 | **P1** Multi-method EXPORT → `auto_trade_book` **without CIO** | `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT=1` (default); desk scanners write ENTERs |
+| Dual-path DTE | **0DTE only SPY/QQQ/IWM**; all others **min DTE 3** (`option_dte_policy.py`) |
 | Desk UI + `desk-status` CLI | Optional `[desk-ui]` extra |
 
 ```bash

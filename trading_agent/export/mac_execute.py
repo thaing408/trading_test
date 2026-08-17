@@ -551,9 +551,10 @@ def _apply_place_response(order: ReadyOrder, resp: Dict[str, Any], *, occ: str =
 
 
 def option_contract_precheck(order: ReadyOrder) -> Tuple[bool, str, Dict[str, Any]]:
-    """Fail-closed structural qualify before Schwab place (P2.5).
+    """Fail-closed structural qualify before Schwab place (P2.5 + dual DTE).
 
-    Checks expiration parse, min DTE, single strike, CALL/PUT, OCC length.
+    Checks expiration parse, symbol-aware min DTE (0DTE only SPY/QQQ/IWM;
+    others DTE > 2 → min 3), single strike, CALL/PUT, OCC length.
     Does not call the broker for a live option-chain lookup (MCP place still
     returns errors if OCC unknown).
     """
@@ -561,19 +562,14 @@ def option_contract_precheck(order: ReadyOrder) -> Tuple[bool, str, Dict[str, An
     exp = parse_expiration_date(order.expiration)
     if not exp:
         return False, "bad_expiration", meta
-    today = datetime.now(ET).date()
-    dte = (exp - today).days
+    from trading_agent.export.option_dte_policy import dte_allowed, dte_policy_label
+
+    ok_dte, why_dte, dte = dte_allowed(order.symbol, exp)
     meta["dte"] = dte
     meta["expiration"] = exp.isoformat()
-    try:
-        min_dte = int(os.getenv("TRADING_AGENT_MIN_OPTION_DTE", "1") or 1)
-    except ValueError:
-        min_dte = 1
-    meta["min_dte"] = min_dte
-    if dte < min_dte:
-        return False, f"dte_too_short:{dte}<{min_dte}", meta
-    if dte > int(os.getenv("TRADING_AGENT_MAX_OPTION_DTE", "90") or 90):
-        return False, f"dte_too_long:{dte}", meta
+    meta["dte_policy"] = dte_policy_label(order.symbol)
+    if not ok_dte:
+        return False, why_dte, meta
     if not order.strike_prices or len(order.strike_prices) != 1:
         return False, "need_single_strike", meta
     cp = infer_call_put(order)

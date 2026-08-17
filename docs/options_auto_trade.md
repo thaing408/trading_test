@@ -93,6 +93,10 @@ At research (and evening) desk scanners, **export-eligible** multi-method PLAYs 
 | `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT` | `1` | Write multi-method ENTERs without CIO |
 | `TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK` | `1` | Discovery/cash empty books cannot wipe those ENTERs same day |
 | `TRADING_AGENT_MULTILEG_LIVE` | `0` | Spreads still need opt-in for LIVE place (single-leg debit OK when LIVE=1) |
+| `TRADING_AGENT_0DTE_SYMBOLS` | `SPY,QQQ,IWM` | Only these may export/place **0DTE** |
+| `TRADING_AGENT_NON_INDEX_MIN_DTE` | `3` | All other symbols need **DTE > 2** (min 3 calendar days) |
+
+**DTE dual-path:** multi-method export uses `option_dte_policy.py`. Index list → 0DTE on weekdays; everything else picks the next Friday (or first weekday) with DTE ≥ 3. Same rules at place-time (Schwab precheck / IBKR paper).
 
 Disable:
 
