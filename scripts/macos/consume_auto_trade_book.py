@@ -54,6 +54,62 @@ def _load_env_files() -> None:
             continue
 
 
+def _maybe_ops_alert(result: dict, *, live: bool) -> None:
+    """P2.2 — Discord when book empty, process gate fails, Schwab dead, kill switch."""
+    from trading_agent.ops.alerts import post_ops_alert
+
+    lines = []
+    if result.get("blocked"):
+        lines.append(f"🚨 **BLOCKED** `{result.get('reason')}` kill={result.get('kill_switch')}")
+    if result.get("schwab_block"):
+        lines.append(f"🚨 **Schwab health:** `{result.get('schwab_block')}` — LIVE place skipped")
+    pre = result.get("pretrade") or {}
+    gate = (pre.get("process_gate") or {}) if isinstance(pre, dict) else {}
+    if gate.get("ok") is False:
+        lines.append(
+            f"⚠️ **Process gate:** `{gate.get('reason')}` "
+            f"bias=`{gate.get('bias') or 'unset'}` score={gate.get('overall_score')}"
+        )
+    books = result.get("book_summary") or []
+    enter_total = 0
+    for b in books:
+        if isinstance(b, dict):
+            enter_total += int(b.get("enter_rows") or 0)
+    if not books:
+        lines.append("⚠️ **No local books found** — run desk / scanners first")
+    elif enter_total <= 0:
+        cash_bits = [
+            f"{b.get('name')}=cash:{b.get('stay_in_cash')}"
+            for b in books
+            if isinstance(b, dict)
+        ]
+        lines.append(
+            f"⚠️ **No ENTER rows** (enter_total=0). "
+            + ("; ".join(cash_bits[:4]) if cash_bits else "stay_in_cash / empty")
+        )
+    # Only alert on problems or first-cycle summary when LIVE and had entries
+    if not lines and live and enter_total > 0:
+        submitted = len(result.get("submitted_ids") or [])
+        orders = result.get("orders") or []
+        skipped = sum(1 for o in orders if isinstance(o, dict) and o.get("status") == "skipped")
+        failed = sum(1 for o in orders if isinstance(o, dict) and o.get("status") == "failed")
+        # Quiet success — optional one-liner when submits happen
+        if submitted or failed:
+            lines.append(
+                f"✅ Consumer cycle: ENTERs={enter_total} submitted={submitted} "
+                f"failed={failed} skipped={skipped} live={live}"
+            )
+            if books:
+                top = books[0] if isinstance(books[0], dict) else {}
+                lines.append(
+                    f"Top book: **{top.get('name')}** "
+                    f"syms={', '.join(str(s) for s in (top.get('symbols') or [])[:6])}"
+                )
+    if not lines:
+        return
+    post_ops_alert("\n".join(lines), title="Mac auto-trade ops")
+
+
 def _log_unified_universe() -> None:
     """Align consumer with scalp bot: log shared desk+movers universe if present."""
     import json
@@ -145,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(result["checklist"])
             if result.get("blocked"):
                 print(f"BLOCKED: {result.get('reason')} kill={result.get('kill_switch')}")
+            if result.get("schwab_block"):
+                print(f"SCHWAB_BLOCK: {result.get('schwab_block')}")
             if result.get("ready_orders_path"):
                 print(f"ready_orders: {result['ready_orders_path']}")
             if result.get("pretrade"):
@@ -156,6 +214,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("books:", ", ".join(books))
             else:
                 print("books: (none found — run local research/QT or pass a path)")
+            if result.get("book_summary"):
+                print("book_summary:", result["book_summary"])
+        # P2.2 — Discord ops alerts (fail-open)
+        try:
+            _maybe_ops_alert(result, live=live)
+        except Exception as alert_exc:  # noqa: BLE001
+            if not args.quiet:
+                print(f"[ops_alert] skip: {alert_exc}", flush=True)
         if result.get("blocked"):
             return 2
         if not result.get("books"):

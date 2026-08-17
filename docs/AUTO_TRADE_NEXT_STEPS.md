@@ -94,71 +94,67 @@ for o in (d.get('orders') or [])[:8]:
 
 ---
 
-## P2 — Ops reliability + execution quality (next code)
+## P2 — Ops reliability + execution quality
 
-Implement after Monday proof (or if P0 shows consumer dies / silent MCP fail).
-
-### P2.1 Mac consumer watchdog
-
-| | |
-|--|--|
-| **Gap** | Paper (`trading_test` me-ai) has `paper-consumer-watchdog`; Mac LaunchAgent only starts ~06:25 — if it fails, no auto restart |
-| **Done means** | LaunchAgent or cron-like interval Mon–Fri ~06:30–13:00 PT: if consumer not running and book has ENTERs (or always in window), restart + log |
-| **Ref** | `trading_test/scripts/me-ai/paper-consumer-watchdog.sh` |
-
-### P2.2 Discord ops alerts at open
-
-| | |
-|--|--|
-| **Gap** | Failures stay in local logs only |
-| **Done means** | Post to desk/auto-trade Discord channel when any of: consumer start fail, `process_bias_unset`, `entry_count=0` at 06:30 with scanners that claimed EXPORT, Schwab MCP / OAuth error, kill switch on |
-| **Keep short** | One message with reason + path to log |
-
-### P2.3 Schwab OAuth / MCP health
-
-| | |
-|--|--|
-| **Gap** | `LIVE=1` does nothing useful if token expired |
-| **Done means** | Morning check (existing `com.grok.morning-check` / schwab remind) explicitly fails consumer preflight; Discord if refresh needed before 06:25 |
-
-### P2.4 Mac awake for desk + consumer
-
-| | |
-|--|--|
-| **Gap** | Sleeping Mac skips 01:55 / 06:25 |
-| **Done means** | Confirm awake agents / power settings; document “desk host must be awake” in install script output |
-
-### P2.5 Schwab option contract qualify
-
-| | |
-|--|--|
-| **Gap** | Paper IBKR now qualifies contracts + min DTE; Schwab place path can still submit bad OCC / DTE / liquidity |
-| **Done means** | Pre-place: resolve option symbol, reject if missing, enforce min DTE/OI/spread; surface `skip_reason` on ready_orders |
-
-### P2.6 Book merge clarity
-
-| | |
-|--|--|
-| **Gap** | Consumer merges desk + QT + gap + session; Discord PLAY ≠ winning book |
-| **Done means** | Consumer log + optional Discord line: which book path produced ENTERs / stay_in_cash; desk-ui Overview shows source |
-
-### P2.7 Order caps (document / tune, not always “fix”)
-
-| | |
-|--|--|
-| **Default** | `TRADING_AGENT_MAX_ORDERS_PER_CONSUME=3` |
-| **Done means** | Ops knows rest are skipped by design; optional env bump only after risk review |
-
-### P2.8 Multileg LIVE (opt-in only)
-
-| | |
-|--|--|
-| **Gap** | Spreads/IC not auto-placed unless `TRADING_AGENT_MULTILEG_LIVE=1` |
-| **Done means** | Only enable after single-leg path proven; sequential wing-first + reverse on fail understood |
-| **Do not** | Turn on by default in code |
+**Status (2026-08-17):** implemented on `main` — re-run install for LaunchAgent:
 
 ```bash
-# optional — after P0 green and you accept multi-leg risk
+cd ~/trading_agent && git pull
+bash scripts/macos/install-auto-trade-launchd.sh
+```
+
+### P2.1 Mac consumer watchdog — **done**
+
+| | |
+|--|--|
+| **Script** | `scripts/macos/auto-trade-consumer-watchdog.sh` |
+| **LaunchAgent** | `com.grok.auto-trade-consumer-watchdog` (every 15m; no-op outside Mon–Fri 06:30–11:00 PT) |
+| **Behavior** | If `consume_auto_trade_book.py` not running → restart `--watch` + Discord |
+
+### P2.2 Discord ops alerts — **done**
+
+| | |
+|--|--|
+| **Module** | `trading_agent/ops/alerts.py` |
+| **Triggers** | kill switch, Schwab OAuth block, process gate fail, no books / zero ENTER rows, submit summary |
+| **Env** | `TRADING_AGENT_OPS_ALERTS=1` (default); channel `DISCORD_OPS_CHANNEL_ID` or `DISCORD_CHANNEL_ID` |
+
+### P2.3 Schwab OAuth / MCP health — **done**
+
+| | |
+|--|--|
+| **Module** | `trading_agent/ops/schwab_health.py` |
+| **Behavior** | LIVE place skipped with `skip_reason=schwab_oauth_expired` / `schwab_no_token` when refresh expired; still writes ready_orders |
+| **Env** | `TRADING_AGENT_SCHWAB_HEALTH_CHECK=1` (default) |
+
+### P2.4 Mac awake for desk + consumer — **documented**
+
+Install script prints awake reminder. Ensure power settings / existing awake LaunchAgents cover 01:55 + 06:25 PT.
+
+### P2.5 Schwab option contract precheck — **done**
+
+| | |
+|--|--|
+| **API** | `option_contract_precheck()` in `mac_execute.py` before `place_order` |
+| **Checks** | expiration, min/max DTE, single strike, CALL/PUT, OCC length 21 |
+| **Env** | `TRADING_AGENT_MIN_OPTION_DTE` (default `1`), `TRADING_AGENT_MAX_OPTION_DTE` (default `90`) |
+| **Note** | Structural precheck only (no full chain quote); bad OCC still fails at MCP |
+
+### P2.6 Book merge clarity — **done**
+
+| | |
+|--|--|
+| **API** | `summarize_books()`; checklist section **Books loaded**; `book_summary` on consume result + audit `books_loaded` |
+| **Discord** | Ops alert lists top book symbols when submits/fails |
+
+### P2.7 Order caps — **documented**
+
+Default `TRADING_AGENT_MAX_ORDERS_PER_CONSUME=3`. Rest skipped by design (`max_orders_per_consume`).
+
+### P2.8 Multileg LIVE (opt-in only) — **unchanged default OFF**
+
+```bash
+# optional — only after single-leg path proven
 # echo 'TRADING_AGENT_MULTILEG_LIVE=1' >> ~/.grok/trading-agent.env
 ```
 

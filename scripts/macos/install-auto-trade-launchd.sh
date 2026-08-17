@@ -16,6 +16,7 @@ chmod +x "$MACOS_DIR/trading-agent-positions.py" 2>/dev/null || true
 chmod +x "$MACOS_DIR/run-argv.py" 2>/dev/null || true
 chmod +x "$MACOS_DIR/consume_auto_trade_book.py"
 chmod +x "$MACOS_DIR/auto-trade-consumer.sh"
+chmod +x "$MACOS_DIR/auto-trade-consumer-watchdog.sh" 2>/dev/null || true
 chmod +x "$MACOS_DIR/qt-open-window.sh"
 chmod +x "$MACOS_DIR/desk-healthcheck.sh" 2>/dev/null || true
 chmod +x "$MACOS_DIR/install-trading-agent-launchd.sh" 2>/dev/null || true
@@ -68,6 +69,7 @@ fi
 
 install_plist "com.grok.qt-open-window"
 install_plist "com.grok.auto-trade-consumer"
+install_plist "com.grok.auto-trade-consumer-watchdog"
 
 # Researcher host pull (gap_screener_book + watchlist_playlist → local sync)
 chmod +x "$MACOS_DIR/pull-researcher-sync.sh" 2>/dev/null || true
@@ -88,13 +90,20 @@ echo ""
 echo "Mac auto-launch + auto-trade installed:"
 echo "  com.grok.trading-agent-desk   → Mon–Fri 01:55 PT (full desk + local book export)"
 echo "  com.grok.auto-trade-consumer  → Mon–Fri 06:25 PT (watch books → ready_orders)"
+echo "  com.grok.auto-trade-consumer-watchdog → every 15m (restart consumer if down; 06:30–11:00 PT)"
 echo "  com.grok.qt-open-window       → Mon–Fri 06:30 PT (QT 9:30–9:50 ET + consume)"
 echo "  com.grok.pull-researcher-sync → every 15m (gap + playlist; host via me-ai.local / DHCP cache)"
+echo ""
+echo "P2 ops: Discord alerts when book empty / process gate fail / Schwab OAuth dead"
+echo "  (TRADING_AGENT_OPS_ALERTS=1 default; channel DISCORD_CHANNEL_ID or DISCORD_OPS_CHANNEL_ID)"
+echo "Mac must stay awake for 01:55 desk + 06:25 consumer (power settings / caffeinate)."
 echo ""
 echo "Live order placement is OFF by default (fail-closed)."
 echo "To enable Schwab MCP live submits on this Mac only:"
 echo "  echo 'TRADING_AGENT_AUTO_TRADE_LIVE=1' >> ~/.grok/trading-agent.env"
+echo "Multileg LIVE stays OFF unless you set TRADING_AGENT_MULTILEG_LIVE=1 (opt-in)."
 echo ""
 echo "Logs: ~/.trading_agent/logs/"
 echo "Ready orders: ~/.trading_agent/ready_orders/"
 echo "Manual: python scripts/macos/consume_auto_trade_book.py --anytime"
+echo "Docs: docs/AUTO_TRADE_NEXT_STEPS.md"

@@ -64,6 +64,20 @@ def run_oms_consume(
     snapshot = pretrade_snapshot(oms, cfg)
     append_audit("consume_start", payload={"live": live, "pretrade": snapshot})
 
+    # P2.3 — block LIVE place if Schwab OAuth is fully expired / missing
+    schwab_block = ""
+    if live:
+        try:
+            from trading_agent.ops.schwab_health import (
+                schwab_live_blocked_reason,
+                schwab_oauth_status,
+            )
+
+            schwab_block = schwab_live_blocked_reason()
+            snapshot["schwab_oauth"] = schwab_oauth_status()
+        except Exception as exc:  # noqa: BLE001
+            snapshot["schwab_oauth_error"] = str(exc)
+
     if is_killed():
         append_audit("consume_blocked_kill_switch", payload=kill_switch_status())
         # Still run manage/flatten if requested
@@ -98,6 +112,9 @@ def run_oms_consume(
             books.append(book)
             found_paths.append(str(p))
 
+    book_summary = mx.summarize_books(books)
+    append_audit("books_loaded", payload={"books": book_summary})
+
     processed = oms.processed_ids() | mx.load_processed_ids(
         mx.default_state_dir() / "auto_trade_processed.json"
     )
@@ -105,6 +122,8 @@ def run_oms_consume(
 
     submitted_ids: List[str] = []
     submit_count = 0
+    # If LIVE but Schwab OAuth dead, force dry-run place path (still build ready_orders)
+    effective_live = bool(live) and not schwab_block
 
     for i, order in enumerate(orders):
         if order.status == "skipped":
@@ -138,12 +157,27 @@ def run_oms_consume(
             )
             continue
 
+        if schwab_block and live:
+            order.status = "skipped"
+            order.skip_reason = schwab_block
+            order.broker_response = {
+                "mode": "blocked",
+                "message": schwab_block,
+                "schwab": snapshot.get("schwab_oauth"),
+            }
+            orders[i] = order
+            append_audit(
+                "order_schwab_health_block",
+                payload={"order_id": order.order_id, "symbol": order.symbol, "reason": schwab_block},
+            )
+            continue
+
         # Multi-leg / credit: package always; LIVE sequential when MULTILEG_LIVE allowed
         if place_path in ("multi_leg_ready", "credit_ready"):
             if place_path == "multi_leg_ready" or (
                 place_path == "credit_ready" and len(order.strike_prices or []) >= 2
             ):
-                if live and multileg_live_allowed():
+                if effective_live and multileg_live_allowed():
                     orders[i] = try_sequential_submit(
                         order,
                         live=True,
@@ -151,10 +185,10 @@ def run_oms_consume(
                     )
                 else:
                     orders[i] = attach_package_to_order(order)
-                    orders[i].status = "dry_run" if not live else "ready"
+                    orders[i].status = "dry_run" if not effective_live else "ready"
                     orders[i].broker_response = {
                         **(orders[i].broker_response or {}),
-                        "mode": "dry_run" if not live else "ready_only",
+                        "mode": "dry_run" if not effective_live else "ready_only",
                         "place_path": place_path,
                         "message": (
                             "Multi-leg package ready; enable "
@@ -172,7 +206,7 @@ def run_oms_consume(
                     "message": "Credit/short-premium single-leg not auto-submitted",
                 }
         else:
-            orders[i] = mx.submit_order(order, live=live)
+            orders[i] = mx.submit_order(order, live=effective_live)
 
         order = orders[i]
         append_audit(
@@ -182,7 +216,7 @@ def run_oms_consume(
                 "symbol": order.symbol,
                 "status": order.status,
                 "place_path": place_path,
-                "live": live,
+                "live": effective_live,
                 "broker": order.broker_response,
             },
         )
@@ -223,13 +257,18 @@ def run_oms_consume(
 
     oms.save()
     out_path = mx.write_ready_orders(orders, live=live)
-    text = mx.format_checklist(orders, live=live)
+    text = mx.format_checklist(orders, live=live, book_summary=book_summary)
+    if schwab_block:
+        text = f"SCHWAB_HEALTH_BLOCK={schwab_block}\n" + text
     result = {
         "blocked": False,
         "books": found_paths,
+        "book_summary": book_summary,
+        "schwab_block": schwab_block or None,
         "orders": [o.to_dict() for o in orders],
         "ready_orders_path": str(out_path),
         "live": live,
+        "effective_live": effective_live,
         "checklist": text,
         "submitted_ids": submitted_ids,
         "pretrade": pretrade_snapshot(oms, cfg),
