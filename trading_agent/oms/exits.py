@@ -138,12 +138,17 @@ def close_lot(
         lot.closed_at = datetime.now(timezone.utc).isoformat()
         lot.exit_reason = reason
         lot.exit_price = float(exit_price or lot.fill_entry or lot.entry or 0)
-        # crude P/L proxy for equity; options use max_risk scale if needed
+        # P/L: equity shares = (exit-entry)*qty; option premium = (exit-entry)*qty*100
+        # when both prices look like option premiums (< $50).
         entry = float(lot.fill_entry or lot.entry or 0)
         exit_px = float(lot.exit_price or 0)
         pnl = 0.0
-        if entry and exit_px and (lot.instrument or "").lower() in ("equity", "underlying", "etf", "stock"):
-            pnl = (exit_px - entry) * int(lot.quantity or 0)
+        instr = (lot.instrument or "").lower()
+        if entry and exit_px:
+            if instr in ("equity", "underlying", "etf", "stock"):
+                pnl = (exit_px - entry) * int(lot.quantity or 0)
+            elif instr in ("options", "option") and entry < 50 and exit_px < 50:
+                pnl = (exit_px - entry) * int(lot.quantity or 1) * 100.0
         store.add_realized_pnl(pnl)
         try:
             trips = store.record_round_trip(lot.symbol)
@@ -165,7 +170,20 @@ def close_lot(
             try:
                 from trading_agent.ops.journal_notify import notify_exit_activity
 
-                notify_exit_activity(lot, reason=reason, live=True, pnl=pnl)
+                opt_mark = float(exit_price) if exit_price and exit_price < 50 else None
+                opt_entry = (
+                    float(lot.fill_entry)
+                    if lot.fill_entry and float(lot.fill_entry) < 50
+                    else None
+                )
+                notify_exit_activity(
+                    lot,
+                    reason=reason,
+                    live=True,
+                    pnl=pnl if pnl else None,
+                    option_mark=opt_mark,
+                    option_entry=opt_entry,
+                )
             except Exception as exc:  # noqa: BLE001 — fail-open
                 append_audit(
                     "journal_notify_error",
@@ -254,9 +272,14 @@ def manage_open_lots(
     underlying_marks: Optional[Dict[str, float]] = None,
     reconcile_first: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Evaluate open lots for stop/target or flatten kill."""
-    marks = marks or {}
-    underlying_marks = underlying_marks or {}
+    """Evaluate open lots for stop/target or flatten kill.
+
+    When marks are not supplied (normal consumer path), fetch live Schwab
+    underlying quotes + option marks from positions — same idea as QQQ scalp
+    manage cycle, applied to every multi-method lot.
+    """
+    marks = dict(marks or {})
+    underlying_marks = dict(underlying_marks or {})
     results: List[Dict[str, Any]] = []
 
     if reconcile_first and live:
@@ -277,37 +300,132 @@ def manage_open_lots(
         results.append({"action": "flatten_all", "detail": flat})
         return results
 
-    for lot in list(store.open_lots()):
-        if lot.status not in (
+    open_lots = [
+        lot
+        for lot in list(store.open_lots())
+        if lot.status
+        in (
             LotStatus.OPEN.value,
             LotStatus.PROTECTED.value,
             LotStatus.SUBMITTED.value,
             LotStatus.EXITING.value,
-        ):
-            continue
+        )
+    ]
 
+    # Auto-fetch live prices when caller did not supply marks (Mac consumer)
+    pos_index: Dict[str, Any] = {}
+    if live and open_lots and (not underlying_marks or not marks):
+        try:
+            from trading_agent.oms.broker import fetch_marks_for_lots, position_avg_price
+
+            live_marks = fetch_marks_for_lots(call_mcp, open_lots)
+            for k, v in (live_marks.get("underlying") or {}).items():
+                underlying_marks.setdefault(str(k).upper(), float(v))
+            for k, v in (live_marks.get("option") or {}).items():
+                marks.setdefault(str(k), float(v))
+            pos_index = live_marks.get("positions_index") or {}
+            append_audit(
+                "manage_marks_fetched",
+                payload={
+                    "underlying": underlying_marks,
+                    "option_n": len(live_marks.get("option") or {}),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            append_audit("manage_marks_error", payload={"error": str(exc)})
+
+    try:
+        opt_loss = float(os.getenv("TRADING_AGENT_OPTION_LOSS_PCT", "50") or 50)
+    except ValueError:
+        opt_loss = 50.0
+    try:
+        opt_profit = float(os.getenv("TRADING_AGENT_OPTION_PROFIT_PCT", "100") or 100)
+    except ValueError:
+        opt_profit = 100.0
+
+    for lot in open_lots:
         und = underlying_marks.get(lot.symbol.upper())
-        mark = marks.get(lot.occ_symbol or lot.symbol.upper(), und or 0.0)
-        should, reason = should_exit_lot(lot, mark_price=float(mark or 0), underlying_price=und)
+        occ_key = (lot.occ_symbol or "").strip()
+        opt_mark = marks.get(occ_key) or marks.get(occ_key.upper())
+        mark = float(opt_mark or und or 0.0)
+
+        # Option entry premium: broker avg → lot meta → small fill_entry
+        opt_entry: Optional[float] = None
+        if occ_key and pos_index:
+            row = pos_index.get(occ_key) or pos_index.get(occ_key.upper())
+            if isinstance(row, dict):
+                try:
+                    from trading_agent.oms.broker import position_avg_price
+
+                    avg = position_avg_price(row)
+                    if avg > 0 and avg < 50:
+                        opt_entry = avg
+                except Exception:
+                    pass
+        if opt_entry is None:
+            meta = lot.broker_meta or {}
+            for key in ("option_entry_premium", "entry_option_price", "option_mark_at_entry"):
+                try:
+                    v = float(meta.get(key) or 0)
+                except (TypeError, ValueError):
+                    v = 0.0
+                if 0 < v < 50:
+                    opt_entry = v
+                    break
+        # fill_entry only if it looks like option premium (not underlying spot)
+        if opt_entry is None:
+            fe = float(lot.fill_entry or 0)
+            if 0 < fe < 50:
+                opt_entry = fe
+
+        should, reason = should_exit_lot(
+            lot,
+            mark_price=float(mark or 0),
+            underlying_price=und,
+            option_mark=float(opt_mark) if opt_mark else None,
+            option_entry=opt_entry,
+            option_loss_pct=opt_loss,
+            option_profit_pct=opt_profit,
+        )
         if should:
-            close_lot(
+            # Prefer option mark for exit_price when available (P/L proxy)
+            exit_px = float(opt_mark or und or mark or 0)
+            closed = close_lot(
                 store,
                 lot,
                 live=live,
                 call_mcp=call_mcp,
                 reason=reason,
-                exit_price=float(und or mark or 0),
+                exit_price=exit_px,
             )
+            pnl_est = None
+            if opt_entry and opt_mark and opt_entry < 50:
+                pnl_est = (float(opt_mark) - float(opt_entry)) * int(lot.quantity or 1) * 100.0
             results.append(
                 {
                     "lot_id": lot.lot_id,
                     "action": "exit",
                     "reason": reason,
-                    "status": lot.status,
+                    "status": closed.status,
+                    "underlying": und,
+                    "option_mark": opt_mark,
+                    "option_entry": opt_entry,
+                    "pnl_est": pnl_est,
                 }
             )
         else:
-            results.append({"lot_id": lot.lot_id, "action": "hold", "status": lot.status})
+            results.append(
+                {
+                    "lot_id": lot.lot_id,
+                    "action": "hold",
+                    "status": lot.status,
+                    "underlying": und,
+                    "option_mark": opt_mark,
+                    "option_entry": opt_entry,
+                    "stop": lot.stop,
+                    "target": lot.target,
+                }
+            )
     store.save()
     return results
 

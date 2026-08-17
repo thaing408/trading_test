@@ -1,6 +1,9 @@
 """Post auto-trade activity to Discord #trading-journal with @mention.
 
-Uses bot API (not webhook) so user pings actually notify. Config from
+Prefer the same path as QQQ scalp:
+  ~/.grok/scripts/post-trade-event.sh --json {...}
+
+Falls back to bot API if the script is missing. Config from
 ~/.grok/discord.env (loaded by consumer):
 
   DISCORD_BOT_TOKEN / DISCORD_TOKEN
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -25,6 +29,7 @@ PT = ZoneInfo("America/Los_Angeles")
 
 DEFAULT_JOURNAL_CHANNEL = "1514644765797515426"
 DEFAULT_MENTION_USER = "493638750086365194"
+JOURNAL_SCRIPT = Path.home() / ".grok" / "scripts" / "post-trade-event.sh"
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -151,14 +156,46 @@ def post_journal_activity(
         return {"error": str(exc)}
 
 
+def _post_via_trade_event_script(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Same journal path as QQQ scalp (post-trade-event.sh → @mention journal)."""
+    if not JOURNAL_SCRIPT.is_file():
+        return {"error": "journal_script_missing", "path": str(JOURNAL_SCRIPT)}
+    try:
+        proc = subprocess.run(
+            [str(JOURNAL_SCRIPT), "--json", json.dumps(payload)],
+            check=False,
+            timeout=25,
+            capture_output=True,
+            text=True,
+        )
+        out = (proc.stdout or "").strip()
+        err = (proc.stderr or "").strip()
+        if proc.returncode == 0:
+            if out.startswith("skip duplicate"):
+                return {"skipped": True, "reason": "duplicate", "detail": out}
+            return {"ok": True, "via": "post-trade-event.sh", "detail": out[:200]}
+        return {
+            "error": "journal_script_failed",
+            "returncode": proc.returncode,
+            "stdout": out[:200],
+            "stderr": err[:200],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
 def notify_order_activity(order: Any, *, live: bool = True) -> Dict[str, Any]:
-    """Notify for a ReadyOrder-like object after place (submitted/failed)."""
+    """Notify for a ReadyOrder-like object after place (submitted/failed).
+
+    Matches QQQ scalp journal shape: event=entry, symbol=OCC, fill, setup, @mention.
+    """
     if not live:
         return {"skipped": True, "reason": "not_live"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
+        return {"skipped": True, "reason": "journal_alerts_disabled"}
 
     status = str(getattr(order, "status", "") or "").lower()
     if status not in ("submitted", "failed"):
-        # also accept dict shape from result["orders"]
         if isinstance(order, dict):
             status = str(order.get("status") or "").lower()
         if status not in ("submitted", "failed"):
@@ -171,53 +208,62 @@ def notify_order_activity(order: Any, *, live: bool = True) -> Dict[str, Any]:
 
     sym = str(_g("symbol") or "?").upper()
     strategy = str(_g("strategy") or _g("setup_id") or "")[:80]
-    side = str(_g("side") or "")
-    qty = _g("quantity") or 1
-    risk = _g("max_risk_dollars")
+    qty = int(_g("quantity") or 1)
     exp = _g("expiration") or ""
     strikes = _g("strike_prices") or []
-    skip = _g("skip_reason") or ""
     broker = _g("broker_response") or {}
     occ = ""
     if isinstance(broker, dict):
         occ = str(broker.get("occ_symbol") or broker.get("symbol") or "")
-
-    if status == "submitted":
-        emoji = "🟢"
-        head = "ENTRY SUBMITTED"
-    else:
-        emoji = "⚠️"
-        head = "ENTRY FAILED"
-
-    lines = [
-        f"{emoji} **{head}** **{sym}**",
-        f"Status: `{status}` · qty={qty} · side={side or '—'}",
-    ]
-    if strategy:
-        lines.append(f"Setup: {strategy}")
-    if strikes:
-        lines.append(f"Strikes: {strikes} exp={exp or '—'}")
-    if occ:
-        lines.append(f"OCC: `{occ}`")
-    if risk not in (None, "", 0, 0.0):
-        try:
-            lines.append(f"Risk$: {float(risk):.0f}")
-        except (TypeError, ValueError):
-            pass
-    if skip:
-        lines.append(f"Reason: {skip}")
-    if status == "failed" and isinstance(broker, dict):
-        msg = broker.get("message") or broker.get("error") or ""
-        if msg:
-            lines.append(f"Broker: {str(msg)[:160]}")
-
     order_id = str(_g("order_id") or "")
-    dedupe = f"{status}:{order_id or sym}:{occ or exp}"
+    und_px = _g("entry")
+    try:
+        und_px_f = float(und_px) if und_px not in (None, "") else None
+    except (TypeError, ValueError):
+        und_px_f = None
+
+    if status == "failed":
+        # Failures still go journal so you see rejected places
+        msg = ""
+        if isinstance(broker, dict):
+            msg = str(broker.get("message") or broker.get("error") or "")[:160]
+        return post_journal_activity(
+            f"⚠️ **ENTRY FAILED** **{sym}** qty={qty}\n"
+            f"Setup: {strategy or '—'}\n"
+            f"OCC: `{occ or '—'}`\n"
+            f"Broker: {msg or _g('skip_reason') or 'failed'}",
+            title="Mac LIVE auto-trade",
+            mention=True,
+            dedupe_key=f"failed:{order_id or sym}:{occ or exp}",
+        )
+
+    # submitted — same payload style as QQQ scalp
+    payload = {
+        "event": "entry",
+        "side": "entry",
+        "symbol": occ or sym,
+        "description": f"{sym} {occ or ''}".strip(),
+        "setup": strategy or "multi_method",
+        "underlying": sym,
+        "qqq_price": und_px_f,  # field name historical; means underlying spot/entry
+        "fill_price": None,  # option premium unknown until reconcile
+        "quantity": qty,
+        "reason": f"Mac multi-method LIVE · strikes={strikes} exp={exp}",
+        "order_id": order_id or None,
+        "dedupe_key": order_id or f"entry:{sym}:{occ}:{exp}",
+        "time_pt": datetime.now(PT).strftime("%Y-%m-%d %H:%M %Z"),
+    }
+    out = _post_via_trade_event_script(payload)
+    if out.get("ok") or out.get("skipped"):
+        if payload.get("dedupe_key"):
+            _mark_posted(str(payload["dedupe_key"]))
+        return out
+    # Fallback bot path
     return post_journal_activity(
-        "\n".join(lines),
+        f"🟢 **ENTRY** **{sym}** `{occ or '—'}` qty={qty}\nSetup: {strategy or '—'}",
         title="Mac LIVE auto-trade",
         mention=True,
-        dedupe_key=dedupe,
+        dedupe_key=str(payload.get("dedupe_key") or ""),
     )
 
 
@@ -227,10 +273,14 @@ def notify_exit_activity(
     reason: str = "",
     live: bool = True,
     pnl: Optional[float] = None,
+    option_mark: Optional[float] = None,
+    option_entry: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Notify when OMS closes a lot."""
+    """Notify when OMS closes a lot — QQQ-style exit journal event."""
     if not live:
         return {"skipped": True, "reason": "not_live"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
+        return {"skipped": True, "reason": "journal_alerts_disabled"}
 
     def _g(key: str, default: Any = "") -> Any:
         if isinstance(lot, dict):
@@ -239,27 +289,52 @@ def notify_exit_activity(
 
     sym = str(_g("symbol") or "?").upper()
     occ = str(_g("occ_symbol") or "")
-    qty = _g("quantity") or 1
+    qty = int(_g("quantity") or 1)
     lot_id = str(_g("lot_id") or "")
     strategy = str(_g("strategy") or "")[:80]
+    exit_px = option_mark if option_mark is not None else _g("exit_price")
+    entry_opt = option_entry
+    if entry_opt is None:
+        fe = float(_g("fill_entry") or 0)
+        if 0 < fe < 50:
+            entry_opt = fe
+    if pnl is None and entry_opt is not None and exit_px not in (None, ""):
+        try:
+            pnl = (float(exit_px) - float(entry_opt)) * qty * 100.0
+        except (TypeError, ValueError):
+            pnl = None
 
-    lines = [
-        f"🔴 **EXIT** **{sym}**",
-        f"qty={qty} · reason=`{reason or 'manage'}`",
-    ]
-    if strategy:
-        lines.append(f"Setup: {strategy}")
-    if occ:
-        lines.append(f"OCC: `{occ}`")
+    payload = {
+        "event": "exit",
+        "side": "exit",
+        "symbol": occ or sym,
+        "description": f"{sym} {occ or ''}".strip(),
+        "setup": strategy or "multi_method",
+        "underlying": sym,
+        "fill_price": float(exit_px) if exit_px not in (None, "") else None,
+        "entry_price": float(entry_opt) if entry_opt is not None else None,
+        "quantity": qty,
+        "reason": reason or "manage",
+        "order_id": lot_id or None,
+        "pnl": round(float(pnl), 2) if pnl is not None else None,
+        "dedupe_key": f"exit:{lot_id or sym}:{reason}",
+        "time_pt": datetime.now(PT).strftime("%Y-%m-%d %H:%M %Z"),
+    }
+    out = _post_via_trade_event_script(payload)
+    if out.get("ok") or out.get("skipped"):
+        if payload.get("dedupe_key"):
+            _mark_posted(str(payload["dedupe_key"]))
+        return out
+    sign = ""
+    pnl_s = ""
     if pnl is not None:
         sign = "+" if pnl >= 0 else ""
-        lines.append(f"Est. P/L: **{sign}${pnl:.2f}**")
-
+        pnl_s = f"\nEst. P/L: **{sign}${pnl:.2f}**"
     return post_journal_activity(
-        "\n".join(lines),
+        f"🔴 **EXIT** **{sym}** `{occ or '—'}` qty={qty}\nReason: `{reason or 'manage'}`{pnl_s}",
         title="Mac LIVE auto-trade",
         mention=True,
-        dedupe_key=f"exit:{lot_id or sym}:{reason}",
+        dedupe_key=str(payload.get("dedupe_key") or ""),
     )
 
 

@@ -120,6 +120,39 @@ def parse_tradable_cash(
     return bp
 
 
+def quote_last_price(call_mcp: McpCaller, symbol: str) -> Optional[float]:
+    """Last/mark/mid for a stock or OCC via get_quote."""
+    if not symbol:
+        return None
+    try:
+        resp = call_mcp("get_quote", {"symbol": symbol})
+    except Exception:
+        return None
+    if not isinstance(resp, dict) or resp.get("error"):
+        return None
+    # unwrap nested quote envelope if present
+    data = resp.get(symbol) if isinstance(resp.get(symbol), dict) else resp
+    if isinstance(data, dict) and isinstance(data.get("quote"), dict):
+        data = data["quote"]
+    if not isinstance(data, dict):
+        return None
+    for key in (
+        "last_price",
+        "lastPrice",
+        "mark",
+        "markPrice",
+        "ask",
+        "askPrice",
+        "bid",
+        "bidPrice",
+        "last",
+    ):
+        px = _as_float(data.get(key))
+        if px is not None and px > 0:
+            return px
+    return None
+
+
 def quote_debit_premium(
     call_mcp: McpCaller,
     *,
@@ -139,9 +172,14 @@ def quote_debit_premium(
         return None
     if not isinstance(resp, dict) or resp.get("error"):
         return None
+    data = resp.get(occ) if isinstance(resp.get(occ), dict) else resp
+    if isinstance(data, dict) and isinstance(data.get("quote"), dict):
+        data = data["quote"]
+    if not isinstance(data, dict):
+        data = resp if isinstance(resp, dict) else {}
     px = None
-    for key in ("ask", "mark", "last_price", "last", "bid"):
-        px = _as_float(resp.get(key))
+    for key in ("ask", "askPrice", "mark", "markPrice", "last_price", "lastPrice", "last", "bid"):
+        px = _as_float(data.get(key))
         if px is not None and px > 0:
             break
     if px is None or px <= 0:
@@ -149,6 +187,74 @@ def quote_debit_premium(
     qty = max(1, int(quantity or 1))
     buf = max(1.0, float(buffer or 1.0))
     return round(px * 100.0 * qty * buf, 2)
+
+
+def option_mark_from_position_row(row: Dict[str, Any]) -> Optional[float]:
+    """Per-contract mark from position market_value / (qty*100)."""
+    qty = abs(position_qty(row))
+    if qty < 1e-9:
+        return None
+    for key in ("market_value", "marketValue", "currentMarketValue"):
+        mv = _as_float(row.get(key))
+        if mv is not None:
+            return abs(mv) / (qty * 100.0)
+    return None
+
+
+def fetch_marks_for_lots(
+    call_mcp: McpCaller,
+    lots: List[Any],
+) -> Dict[str, Any]:
+    """Live underlying + option marks for OMS manage loop.
+
+    Returns:
+      {
+        underlying: {SYM: last},
+        option: {OCC: mark},
+        positions_index: {symbol: row},
+      }
+    """
+    underlying: Dict[str, float] = {}
+    option: Dict[str, float] = {}
+    syms: List[str] = []
+    occs: List[str] = []
+    for lot in lots:
+        sym = str(getattr(lot, "symbol", "") or "").upper().strip()
+        occ = str(getattr(lot, "occ_symbol", "") or "").strip()
+        if sym and sym not in syms:
+            syms.append(sym)
+        if occ and occ not in occs:
+            occs.append(occ)
+
+    # Prefer positions for option marks (no extra quote call)
+    pos_resp = fetch_positions(call_mcp)
+    pos_index = index_positions_by_symbol(pos_resp) if not pos_resp.get("error") else {}
+    for occ, row in pos_index.items():
+        mark = option_mark_from_position_row(row)
+        if mark is not None and mark > 0:
+            option[occ.upper()] = mark
+            option[occ] = mark
+
+    for sym in syms:
+        px = quote_last_price(call_mcp, sym)
+        if px is not None:
+            underlying[sym] = px
+
+    for occ in occs:
+        key = occ.upper()
+        if key in option or occ in option:
+            continue
+        px = quote_last_price(call_mcp, occ)
+        if px is not None:
+            option[occ] = px
+            option[key] = px
+
+    return {
+        "underlying": underlying,
+        "option": option,
+        "positions_index": pos_index,
+        "positions_error": pos_resp.get("error"),
+    }
 
 
 def positions_list(resp: Dict[str, Any]) -> List[Dict[str, Any]]:

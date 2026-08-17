@@ -360,6 +360,24 @@ def run_oms_consume(
             ):
                 submit_count += 1
                 submitted_ids.append(order.order_id)
+                # Store option entry premium for QQQ-style % exits (positions often lack avg)
+                try:
+                    occ = str((order.broker_response or {}).get("occ_symbol") or registered.occ_symbol or "")
+                    if occ and (registered.instrument or "").lower() in ("options", "option"):
+                        from trading_agent.oms.broker import quote_last_price
+
+                        prem = quote_last_price(mcp, occ)
+                        if prem is not None and 0 < prem < 50:
+                            registered.fill_entry = float(prem)
+                            meta = dict(registered.broker_meta or {})
+                            meta["option_entry_premium"] = float(prem)
+                            registered.broker_meta = meta
+                            oms.upsert_lot(registered)
+                except Exception as exc:  # noqa: BLE001
+                    append_audit(
+                        "option_premium_capture_error",
+                        payload={"order_id": order.order_id, "error": str(exc)},
+                    )
                 # Debit local cash ledger so next orders see reduced BP
                 if remaining_cash is not None and cash_need is not None:
                     remaining_cash = max(0.0, float(remaining_cash) - float(cash_need))

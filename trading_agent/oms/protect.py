@@ -59,14 +59,30 @@ def should_exit_lot(
     *,
     mark_price: float,
     underlying_price: Optional[float] = None,
+    option_mark: Optional[float] = None,
+    option_entry: Optional[float] = None,
+    option_loss_pct: float = 50.0,
+    option_profit_pct: float = 100.0,
 ) -> Tuple[bool, str]:
     """Software stop/target check.
 
-    For options packages, prefer underlying_price for directional stops when set;
-    else use mark_price vs entry-based thresholds when available.
+    Primary (multi-method book): underlying stop/target vs live spot.
+    Secondary (QQQ-style): option premium ±% vs entry premium when both known.
     """
     if lot.status in (LotStatus.CLOSED.value, LotStatus.FAILED.value, LotStatus.SKIPPED.value):
         return False, ""
+
+    # --- Option premium hard rails (same idea as QQQ scalp) ---
+    opt_entry = float(option_entry or 0)
+    opt_mark = float(option_mark or 0)
+    if opt_entry > 0 and opt_mark > 0 and opt_entry < 50:
+        # entry premium under $50/contract is a real option mark (not underlying)
+        pnl_pct = (opt_mark - opt_entry) / opt_entry * 100.0
+        if option_loss_pct > 0 and pnl_pct <= -abs(option_loss_pct):
+            return True, f"option_stop_{pnl_pct:.0f}pct"
+        if option_profit_pct > 0 and pnl_pct >= abs(option_profit_pct):
+            return True, f"option_target_{pnl_pct:.0f}pct"
+
     px = float(underlying_price if underlying_price is not None else mark_price)
     if px <= 0:
         return False, ""
