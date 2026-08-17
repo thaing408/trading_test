@@ -39,12 +39,12 @@ def _default_risk_dollars(entry: float, stop: float) -> float:
 
 
 def _nearest_option_expiration(from_day: date | None = None, *, max_dte: int = 5) -> date:
-    """Prefer 0DTE when session is open day; else next Fri within max_dte, else next Fri."""
+    """Legacy helper — prefer dual-path ``pick_option_expiration(symbol)``."""
     day = from_day or datetime.now(ET).date()
-    # 0DTE / same-day if weekday
+    _ = max_dte
+    # Keep for call sites without a symbol: next session day (not forced 0DTE)
     if day.weekday() < 5:
         return day
-    # weekend → next Monday (or Friday if max_dte allows)
     d = day
     for _ in range(10):
         d += timedelta(days=1)
@@ -151,15 +151,22 @@ def entry_from_multi_eval(
             method_tags.append(t)
 
     # Options package: single-leg debit around structure entry
+    # Dual-path DTE: SPY/QQQ/IWM may be 0DTE; all others min DTE > 2 (default 3)
+    from trading_agent.export.option_dte_policy import (
+        dte_policy_label,
+        pick_option_expiration,
+    )
+
     strike = _option_strike(entry, contract_side)
-    exp_day = _nearest_option_expiration()
+    exp_day = pick_option_expiration(str(result.symbol or ""))
     exp_iso = exp_day.isoformat()
     dte = max(0, (exp_day - datetime.now(ET).date()).days)
+    dte_policy = dte_policy_label(str(result.symbol or ""))
 
     thesis = (
         f"multi-method PLAY agg={result.aggregate_score:.0f}; "
         f"best={result.best_method} {contract_side}; methods={','.join(methods)}; "
-        f"debit 1x {exp_iso} {strike}{contract_side[0]}"
+        f"debit 1x {exp_iso} {strike}{contract_side[0]} dte={dte} policy={dte_policy}"
     )
     notes = "; ".join(result.reasons[:3])[:240]
 
@@ -194,6 +201,7 @@ def entry_from_multi_eval(
         "defined_risk": True,
         "options_strategy_class": f"long_{contract_side.lower()}",
         "dte": dte,
+        "dte_policy": dte_policy,
         "mtf_note": "",
         "thesis": thesis[:400],
         "expires_at": expires_at,

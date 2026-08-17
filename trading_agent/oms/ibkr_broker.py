@@ -236,16 +236,31 @@ def place_option_market(
                 "broker": "ibkr",
             }
         exp_d = _dt.strptime(ymd, "%Y%m%d").date()
-        min_dte = int(os.getenv("IBKR_MIN_OPTION_DTE", "1") or 1)
-        dte = (exp_d - _date.today()).days
-        if dte < min_dte:
-            return {
-                "error": "dte_too_short",
-                "message": f"DTE {dte} < min {min_dte} for {underlying} {ymd}",
-                "broker": "ibkr",
-                "dte": dte,
-                "min_dte": min_dte,
-            }
+        # Dual-path DTE: SPY/QQQ/IWM may be 0DTE; others min DTE > 2 (default 3)
+        try:
+            from trading_agent.export.option_dte_policy import dte_allowed, min_dte_for_symbol
+
+            ok_dte, why_dte, dte = dte_allowed(underlying, exp_d)
+            min_dte = min_dte_for_symbol(underlying)
+            if not ok_dte:
+                return {
+                    "error": why_dte.split(":")[0] if why_dte else "dte_too_short",
+                    "message": f"{why_dte} for {underlying} {ymd}",
+                    "broker": "ibkr",
+                    "dte": dte,
+                    "min_dte": min_dte,
+                }
+        except Exception:
+            min_dte = int(os.getenv("IBKR_MIN_OPTION_DTE", "1") or 1)
+            dte = (exp_d - _date.today()).days
+            if dte < min_dte:
+                return {
+                    "error": "dte_too_short",
+                    "message": f"DTE {dte} < min {min_dte} for {underlying} {ymd}",
+                    "broker": "ibkr",
+                    "dte": dte,
+                    "min_dte": min_dte,
+                }
 
         cp = "C" if str(right).upper().startswith("C") else "P"
         side = "BUY" if str(instruction).upper().startswith("BUY") else "SELL"
