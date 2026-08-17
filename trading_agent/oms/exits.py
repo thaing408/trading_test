@@ -251,8 +251,13 @@ def manage_open_lots(
 
     if reconcile_first and live:
         try:
-            from trading_agent.oms.lifecycle import reconcile_open_lots
+            from trading_agent.oms.lifecycle import prune_ghost_lots_ibkr, reconcile_open_lots
 
+            # Paper IBKR: drop ghost lots not in portfolio (fixes max_open_lots deadlock)
+            try:
+                prune_ghost_lots_ibkr(store)
+            except Exception as prune_exc:  # noqa: BLE001
+                append_audit("prune_exception", payload={"error": str(prune_exc)})
             reconcile_open_lots(store, call_mcp)
         except Exception as exc:
             append_audit("reconcile_exception", payload={"error": str(exc)})
