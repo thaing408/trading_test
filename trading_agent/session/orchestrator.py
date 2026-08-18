@@ -341,6 +341,26 @@ def run_session(
                             )
                         except Exception as bias_exc:  # noqa: BLE001
                             _log(log, f"[warn] process bias after scanners: {bias_exc}")
+                        # Optional TradingAgents firm sleeve (P0 — empty reports when flag on)
+                        try:
+                            from trading_agent.firm import maybe_run_firm_after_research
+
+                            firm_res = maybe_run_firm_after_research(
+                                watch_symbols,
+                                session_dir=session_dir,
+                            )
+                            if not firm_res.get("skipped"):
+                                _log(
+                                    log,
+                                    f"[firm] sleeve symbols={firm_res.get('symbols')} "
+                                    f"index={firm_res.get('index_path')}",
+                                )
+                                phase_messages["firm_sleeve"] = (
+                                    f"Firm sleeve (P0): {len(firm_res.get('symbols') or [])} "
+                                    f"symbols → {firm_res.get('index_path')}"
+                                )
+                        except Exception as firm_exc:  # noqa: BLE001
+                            _log(log, f"[warn] firm sleeve failed: {firm_exc}")
                     except Exception as scan_exc:  # noqa: BLE001
                         _log(log, f"[warn] Research scanners failed: {scan_exc}")
                         _log(log, traceback.format_exc())

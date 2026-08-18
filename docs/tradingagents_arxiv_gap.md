@@ -1,7 +1,9 @@
 # Plan: TradingAgents (arXiv 2412.20138) vs `trading_agent`
 
 **Paper:** Xiao, Sun, Luo, Wang — *TradingAgents: Multi-Agents LLM Financial Trading Framework* (arXiv:2412.20138v7, 3 Jun 2025). Code: https://github.com/TauricResearch/TradingAgents  
-**Ours:** phase desk (intelligence → research → CIO → preopen → intraday → performance → evening scan), options/PA/multi-method books, rule CIO + risk gates, Discord/OMS. **This plan is analysis only; implement later.**
+**Ours:** phase desk (intelligence → research → CIO → preopen → intraday → performance → evening scan), options/PA/multi-method books, rule CIO + risk gates, Discord/OMS.
+
+**Implementation status:** **P0 shipped** (2026-08-17) — schemas/roles/empty reports/ReAct stubs + `TRADING_AGENT_FIRM` flag (default off). P1+ still later.
 
 ---
 
@@ -48,18 +50,23 @@ A simulated **trading firm** of specialized LLM agents, not a single prompt.
 
 ## Gaps (missing vs paper) — implement later
 
-### P0 — Firm graph + structured state (foundation)
+### P0 — Firm graph + structured state (foundation) — **DONE**
 
-1. **Agent role contracts**  
-   Each role: name, goal, constraints, allowed tools, input/output schema. Persist one **global run state** per symbol/date (like MetaGPT-style structured comms).  
-   Suggested path: `trading_agent/firm/` (or `agents/`) — `state.py`, `roles.py`, `protocol.py`.
+Package: `trading_agent/firm/` (`roles`, `reports`, `protocol`, `state`, `tools`, `react`, `runner`).
 
-2. **Structured reports, not chat dumps**  
-   Typed docs: `FundamentalReport`, `SentimentReport`, `NewsReport`, `TechnicalReport`, `DebateVerdict`, `TraderProposal`, `RiskAdjustment`, `ManagerDecision`.  
-   Write under `~/.trading_agent/sessions/{date}/firm/{symbol}/`. Downstream CIO/book **reads fields**, not free text.
+1. **Agent role contracts** — `roles.py` (`FIRM_ROLES`)  
+2. **Structured empty reports** — under `~/.trading_agent/sessions/{date}/firm/{symbol}/`  
+3. **ReAct stub loop** — tool registry stubs + thought/tool/observation log  
 
-3. **ReAct tool loop per analyst**  
-   Shared tool registry: OHLCV, TA bundle, news, fundamentals, insider, social (when added). Log thought / tool / observation for Discord/debug.
+```bash
+# Dry-run write (even with flag off)
+python -m trading_agent firm --symbol AAPL --force
+
+# Enable on desk (after research scanners, before CIO) — still empty reports until P1
+echo 'TRADING_AGENT_FIRM=1' >> ~/.grok/trading-agent.env
+```
+
+Flag off → orchestrator hook is a no-op (bit-identical book).
 
 ### P1 — Analyst team (four missing LLM specialists)
 

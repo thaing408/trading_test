@@ -1014,6 +1014,38 @@ def _run_cio(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_firm(args: argparse.Namespace) -> int:
+    """P0 TradingAgents firm sleeve — empty structured reports under sessions/firm/."""
+    import json
+    from pathlib import Path
+
+    from trading_agent.firm.runner import run_firm_sleeve
+    from trading_agent.firm.state import firm_enabled
+
+    symbols = list(getattr(args, "symbol", None) or [])
+    force = bool(getattr(args, "force", False))
+    if not symbols:
+        symbols = ["AAPL"]
+        force = True
+    session_root = getattr(args, "session_root", None)
+    root = Path(session_root).expanduser() if session_root else None
+    result = run_firm_sleeve(
+        symbols,
+        trading_date=getattr(args, "date", None),
+        session_root=root,
+        force=force,
+    )
+    print(json.dumps(result, indent=2))
+    if result.get("skipped") and not force:
+        print(
+            "\n(firm skipped — set TRADING_AGENT_FIRM=1 or pass --force)",
+            file=sys.stderr,
+        )
+    elif result.get("ok"):
+        print(f"\nfirm_enabled={firm_enabled()} paths under sessions/{{date}}/firm/")
+    return 0 if result.get("ok") else 1
+
+
 def _run_process(args: argparse.Namespace) -> int:
     """Komar-style 5-step systematic process runbook."""
     from datetime import date as date_type
@@ -1799,6 +1831,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Positions JSON path (never refreshes brokerage)",
     )
 
+    firm = subparsers.add_parser(
+        "firm",
+        help="TradingAgents-style firm sleeve (P0: empty reports; TRADING_AGENT_FIRM=1 to enable on desk)",
+    )
+    firm.add_argument(
+        "--symbol",
+        action="append",
+        default=[],
+        help="Symbol (repeatable). Default: AAPL fixture when none given with --force",
+    )
+    firm.add_argument("--date", default=None, help="YYYY-MM-DD (default: today ET)")
+    firm.add_argument(
+        "--force",
+        action="store_true",
+        help="Write artifacts even when TRADING_AGENT_FIRM=0",
+    )
+    firm.add_argument(
+        "--session-root",
+        default=None,
+        help="Override sessions root (default ~/.trading_agent/sessions)",
+    )
+
     process = subparsers.add_parser(
         "process",
         help="Systematic 5-step process runbook (regime → select → prepare → execute → review)",
@@ -1867,6 +1921,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oms(args)
     if args.command == "research":
         return _run_research(args)
+    if args.command == "firm":
+        return _run_firm(args)
     if args.command == "process":
         return _run_process(args)
     if args.command == "desk-ui":
