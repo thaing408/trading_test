@@ -297,6 +297,10 @@ def test_cli_desk_status_runs(capsys):
     assert "CASH" in out or "stay_in_cash" in out
     assert "2026-08-13" in out
     assert "QQQ" in out or "rejections" in out.lower() or "Rejection" in out
+    assert "## Execute (Mac)" in out
+    assert "tradable_after_reserve=$11500" in out or "11500" in out
+    assert "## Firm" in out
+    assert "AAPL" in out
 
 
 def test_cli_json(capsys):
@@ -312,6 +316,54 @@ def test_cli_json(capsys):
     assert data["stay_in_cash"] is True
     assert data["trading_date"] == "2026-08-13"
     assert len(data["rejections"]) == 4
+    assert data["account_cash"].get("cash_available") == 12500.5
+    assert data["ready_orders"]["counts"]["submitted"] == 1
+    assert data["firm"]["enabled_artifacts"] is True
+
+
+def test_load_account_cash_from_audit():
+    from trading_agent.desk_ui.readers.execute_health import load_account_cash
+
+    ac = load_account_cash(state=FIXTURE_ROOT)
+    assert ac["fetched"] is True
+    assert ac["cash_available"] == 12500.5
+    assert ac["tradable_after_reserve"] == 11500.5
+    assert str(ac["source"]).startswith("audit:")
+
+
+def test_load_ready_orders_counts():
+    from trading_agent.desk_ui.readers.execute_health import load_ready_orders
+
+    ro = load_ready_orders(trading_date="2026-08-13", state=FIXTURE_ROOT)
+    assert ro["exists"] is True
+    assert ro["counts"]["submitted"] == 1
+    assert ro["counts"]["skipped"] == 1
+    assert ro["orders"][0]["symbol"] == "QQQ"
+
+
+def test_load_firm_view_cards():
+    from trading_agent.desk_ui.readers.firm_view import load_firm_view
+
+    firm = load_firm_view(trading_date="2026-08-13", state=FIXTURE_ROOT)
+    assert firm["enabled_artifacts"] is True
+    assert "AAPL" in firm["symbols"]
+    assert firm["eval"]["n_buy"] == 1
+    assert firm["cards"][0]["trader"]["action"] == "BUY"
+
+
+def test_assemble_snapshot_execute_panels():
+    now = datetime(2026, 8, 13, 10, 0, tzinfo=PT)
+    snap = assemble_snapshot(
+        now=now,
+        trading_date=TD,
+        state=FIXTURE_ROOT,
+        platform="darwin",
+        env={},
+    )
+    assert snap.account_cash.get("cash_available") == 12500.5
+    assert snap.ready_orders.get("counts", {}).get("submitted") == 1
+    assert snap.firm.get("enabled_artifacts") is True
+    assert "AAPL" in (snap.firm.get("symbols") or [])
 
 
 def test_main_module_desk_status():

@@ -26,14 +26,15 @@ from trading_agent.desk_ui.snapshot import assemble_snapshot
 
 logger = logging.getLogger("trading_agent.desk_ui")
 
-# Nav for templates (PR2: Overview + Book live; others stubbed)
+# Nav — Overview/Book/Manage/OMS/Firm live; others stubbed
 NAV_ITEMS = (
     ("/", "Overview"),
     ("/book", "Book"),
-    ("/rejections", "Rejections"),
-    ("/discovery", "Discovery"),
     ("/manage", "Manage"),
     ("/oms", "OMS"),
+    ("/firm", "Firm"),
+    ("/rejections", "Rejections"),
+    ("/discovery", "Discovery"),
     ("/session", "Session"),
     ("/settings", "Settings"),
 )
@@ -194,6 +195,27 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
             templates, request, "book.html", _base_ctx(request, snap, "/book")
         )
 
+    @app.get("/manage", response_class=HTMLResponse)
+    async def manage(request: FastAPIRequest):
+        snap = get_snapshot()
+        return _template_response(
+            templates, request, "manage.html", _base_ctx(request, snap, "/manage")
+        )
+
+    @app.get("/oms", response_class=HTMLResponse)
+    async def oms(request: FastAPIRequest):
+        snap = get_snapshot()
+        return _template_response(
+            templates, request, "oms.html", _base_ctx(request, snap, "/oms")
+        )
+
+    @app.get("/firm", response_class=HTMLResponse)
+    async def firm(request: FastAPIRequest):
+        snap = get_snapshot()
+        return _template_response(
+            templates, request, "firm.html", _base_ctx(request, snap, "/firm")
+        )
+
     async def _stub(request: FastAPIRequest):
         snap = get_snapshot()
         path = request.url.path
@@ -205,9 +227,8 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
                 **_base_ctx(request, snap, path),
                 "page_title": path.strip("/").title() or "Page",
                 "stub_message": (
-                    "This panel ships in a later PR (rejections/discovery/manage "
-                    "in PR3; OMS/session in PR4). Use Overview, Book, or "
-                    "desk-status /api/v1/snapshot for data today."
+                    "This panel is stubbed. Use Overview, Book, Manage, OMS, Firm, "
+                    "or desk-status /api/v1/snapshot for live execute data."
                 ),
             },
         )
@@ -215,8 +236,6 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
     for stub_path in (
         "/rejections",
         "/discovery",
-        "/manage",
-        "/oms",
         "/session",
         "/settings",
     ):

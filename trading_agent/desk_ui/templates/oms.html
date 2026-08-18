@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}OMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>OMS</h1>
+  <p class="lede">Kill switch, open risk, ready-order outcomes.</p>
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="k">Kill switch</div><div class="v">{% if snap.kill_switch.get('active') %}<span class="text-cash">ON</span>{% else %}<span class="text-armed">off</span>{% endif %}</div></div>
+    <div class="kpi-card"><div class="k">Open lots</div><div class="v">{{ snap.oms_summary.get('open_lots', 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Open risk $</div><div class="v">{{ '%.0f'|format(snap.oms_summary.get('open_risk') or 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Submitted today</div><div class="v">{{ snap.ready_orders.get('counts', {}).get('submitted', 0) }}</div></div>
+  </div>
+  {% if snap.kill_switch.get('file') %}
+  <p class="muted">kill file: {{ snap.kill_switch.get('file') }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Ready orders ({{ snap.trading_date }})</h2>
+  {% if snap.ready_orders.get('orders') %}
+  <table class="data">
+    <thead>
+      <tr><th>Symbol</th><th>Action</th><th>Status</th><th>Skip reason</th><th>Side</th><th>Exp</th><th>Qty</th><th>Risk$</th><th>Strategy</th></tr>
+    </thead>
+    <tbody>
+      {% for o in snap.ready_orders.orders %}
+      <tr class="{% if o.get('status')=='failed' %}row-fail{% elif o.get('status')=='submitted' %}row-ok{% endif %}">
+        <td><strong>{{ o.get('symbol') }}</strong></td>
+        <td>{{ o.get('action') }}</td>
+        <td>{{ o.get('status') }}</td>
+        <td class="muted">{{ o.get('skip_reason') or '—' }}</td>
+        <td>{{ o.get('side') }}</td>
+        <td>{{ o.get('expiration') or '—' }}</td>
+        <td>{{ o.get('quantity') }}</td>
+        <td>{{ o.get('max_risk_dollars') }}</td>
+        <td class="muted">{{ o.get('strategy') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">{{ snap.ready_orders.get('path') }}</p>
+  {% else %}
+  <p class="muted">No ready_orders file for today yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Consumer</h2>
+  <ul class="plain">
+    <li>alive: <strong>{{ snap.consumer_health.get('alive') }}</strong></li>
+    <li>pids: {{ snap.consumer_health.get('pids') }}</li>
+    {% if snap.consumer_health.get('last_log_line') %}
+    <li class="muted">last log: {{ snap.consumer_health.last_log_line[:200] }}</li>
+    {% endif %}
+  </ul>
+</section>
+{% endblock %}

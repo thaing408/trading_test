@@ -1,0 +1,1 @@
+{"event":"consume_start","ts":"2026-08-13T14:00:00Z","payload":{"pretrade":{"account_cash":{"fetched":true,"cash_available":12500.5,"buying_power":25000.0,"tradable_after_reserve":11500.5,"reserve":1000.0,"metric":"cash_available"}}}}

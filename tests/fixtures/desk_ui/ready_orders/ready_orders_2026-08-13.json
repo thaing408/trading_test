@@ -1,0 +1,7 @@
+{
+  "live": true,
+  "orders": [
+    {"symbol": "QQQ", "status": "submitted", "side": "long", "action": "BUY_TO_OPEN", "expiration": "2026-08-13", "quantity": 1, "max_risk_dollars": 150, "strategy": "0DTE scalp"},
+    {"symbol": "IWM", "status": "skipped", "skip_reason": "insufficient_cash", "side": "long", "action": "BUY_TO_OPEN", "expiration": "2026-08-13", "quantity": 1, "max_risk_dollars": 200, "strategy": "MULTI"}
+  ]
+}

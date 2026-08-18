@@ -157,6 +157,9 @@ table.data th, table.data td {
   vertical-align: top;
 }
 table.data th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+table.data.compact th, table.data.compact td { padding: 0.28rem 0.4rem; font-size: 12px; }
+tr.row-ok td { color: var(--armed); }
+tr.row-fail td { color: #f07178; }
 table.market-table tbody th {
   width: 9.5rem;
   color: var(--muted);

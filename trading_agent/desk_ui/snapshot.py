@@ -188,6 +188,33 @@ def assemble_snapshot(
         state_root=Path(state) if state else state_root(),
     )
 
+    # Execute + firm panels (best-effort; never fail snapshot)
+    account_cash: dict[str, Any] = {}
+    ready_orders: dict[str, Any] = {}
+    consumer_health: dict[str, Any] = {}
+    oms_summary: dict[str, Any] = {}
+    firm: dict[str, Any] = {}
+    try:
+        from trading_agent.desk_ui.readers.execute_health import (
+            load_account_cash,
+            load_consumer_health,
+            load_oms_summary,
+            load_ready_orders,
+        )
+        from trading_agent.desk_ui.readers.firm_view import load_firm_view
+
+        account_cash = load_account_cash(state=state)
+        ready_orders = load_ready_orders(trading_date=td_s, state=state)
+        consumer_health = load_consumer_health(state=state)
+        oms_summary = load_oms_summary(state=state)
+        # Prefer enriched lots from summary when available
+        if oms_summary.get("lots"):
+            oms_lots = list(oms_summary["lots"])
+        firm = load_firm_view(trading_date=td_s, state=state)
+    except Exception as exc:  # noqa: BLE001
+        parse_failures += 1
+        panel_errors["execute"] = str(exc)
+
     generated = datetime.now(timezone.utc).isoformat()
 
     return DeskSnapshot(
@@ -221,6 +248,11 @@ def assemble_snapshot(
         platform=platform or sys.platform,
         parse_failures=parse_failures,
         panel_errors=panel_errors,
+        account_cash=account_cash,
+        ready_orders=ready_orders,
+        consumer_health=consumer_health,
+        oms_summary=oms_summary,
+        firm=firm,
     )
 
 

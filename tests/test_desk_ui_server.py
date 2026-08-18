@@ -160,10 +160,40 @@ def test_templates_dir_exists():
     assert (templates_dir() / "base.html").is_file()
     assert (templates_dir() / "overview.html").is_file()
     assert (templates_dir() / "book.html").is_file()
+    assert (templates_dir() / "manage.html").is_file()
+    assert (templates_dir() / "oms.html").is_file()
+    assert (templates_dir() / "firm.html").is_file()
     assert (static_dir() / "desk.css").is_file()
+
+
+def test_overview_shows_execute_cash(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.text
+    assert "Execute (Mac)" in body
+    assert "Tradable cash" in body or "tradable" in body.lower()
+    assert "11500" in body or "12,500" in body or "12500" in body
+
+
+def test_manage_oms_firm_routes(client):
+    for path, needle in (
+        ("/manage", "Manage"),
+        ("/oms", "Ready orders"),
+        ("/firm", "Firm sleeve"),
+    ):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert needle in r.text
+
+
+def test_firm_page_shows_aapl(client):
+    r = client.get("/firm")
+    assert r.status_code == 200
+    assert "AAPL" in r.text
+    assert "BUY" in r.text
 
 
 def test_stub_routes(client):
     r = client.get("/rejections")
     assert r.status_code == 200
-    assert "later PR" in r.text or "PR3" in r.text
+    assert "stubbed" in r.text.lower() or "Snapshot" in r.text or "desk-status" in r.text
