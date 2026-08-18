@@ -169,13 +169,38 @@ def close_lot(
         if live:
             try:
                 from trading_agent.ops.journal_notify import notify_exit_activity
+                from trading_agent.oms.broker import quote_last_price
+                from trading_agent.export import mac_execute as mx
 
-                opt_mark = float(exit_price) if exit_price and exit_price < 50 else None
-                opt_entry = (
-                    float(lot.fill_entry)
-                    if lot.fill_entry and float(lot.fill_entry) < 50
-                    else None
-                )
+                opt_mark = float(exit_price) if exit_price and float(exit_price) < 50 else None
+                opt_entry = None
+                meta = lot.broker_meta or {}
+                for key in ("option_entry_premium", "entry_option_price"):
+                    try:
+                        v = float(meta.get(key) or 0)
+                    except (TypeError, ValueError):
+                        v = 0.0
+                    if 0 < v < 50:
+                        opt_entry = v
+                        break
+                if opt_entry is None and lot.fill_entry and float(lot.fill_entry) < 50:
+                    opt_entry = float(lot.fill_entry)
+
+                spot = None
+                try:
+                    spot = quote_last_price(lambda t, p: mx.call_schwab_mcp(t, p), lot.symbol)
+                except Exception:
+                    spot = None
+
+                close_oid = ""
+                close = (lot.broker_meta or {}).get("close") or {}
+                if isinstance(close, dict):
+                    from trading_agent.ops.journal_notify import _schwab_order_id
+
+                    close_oid = _schwab_order_id(close) or _schwab_order_id(
+                        close.get("response") if isinstance(close.get("response"), dict) else close
+                    )
+
                 notify_exit_activity(
                     lot,
                     reason=reason,
@@ -183,6 +208,8 @@ def close_lot(
                     pnl=pnl if pnl else None,
                     option_mark=opt_mark,
                     option_entry=opt_entry,
+                    spot_price=spot,
+                    order_id=close_oid,
                 )
             except Exception as exc:  # noqa: BLE001 — fail-open
                 append_audit(

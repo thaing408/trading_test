@@ -84,3 +84,72 @@ def test_post_disabled(monkeypatch):
     monkeypatch.setenv("TRADING_AGENT_JOURNAL_ALERTS", "0")
     out = jn.post_journal_activity("hello")
     assert out.get("skipped")
+
+
+def test_notify_exit_matches_qqq_layout(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADING_AGENT_JOURNAL_ALERTS", "1")
+    monkeypatch.setenv("TRADING_AGENT_JOURNAL_DEDUPE_FILE", str(tmp_path / "dedupe.json"))
+    monkeypatch.setenv("TRADING_AGENT_OPTION_PROFIT_PCT", "25")
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+
+        class P:
+            returncode = 0
+            stdout = "Posted via bot: HTTP 200"
+            stderr = ""
+
+        return P()
+
+    monkeypatch.setattr(jn.subprocess, "run", fake_run)
+    monkeypatch.setattr(jn, "JOURNAL_SCRIPT", tmp_path / "post-trade-event.sh")
+    (tmp_path / "post-trade-event.sh").write_text("#!/bin/bash\n")
+
+    class Lot:
+        symbol = "QQQ"
+        occ_symbol = "QQQ   260812C00725000"
+        quantity = 1
+        lot_id = "lot1"
+        setup_id = "bull_breakout"
+        strategy = "scalp"
+        fill_entry = 0.61
+        entry = 723.77
+        exit_price = 0.82
+        broker_meta = {"option_entry_premium": 0.61}
+        exit_reason = "option_target_38pct"
+
+    out = jn.notify_exit_activity(
+        Lot(),
+        reason="option_target_37pct",
+        live=True,
+        option_mark=0.82,
+        option_entry=0.61,
+        spot_price=724.79,
+        order_id="1007567425260",
+    )
+    assert out.get("ok") is True
+    payload = json.loads(captured["cmd"][2])
+    assert payload["label"] == "MULTI AUTO"
+    assert payload["event"] == "exit"
+    assert payload["setup"] == "bull_breakout"
+    assert payload["qqq_price"] == 724.79
+    assert payload["fill_price"] == 0.82
+    assert payload["pnl"] == 21.0  # (0.82-0.61)*100
+    assert payload["order_id"] == "1007567425260"
+    assert "HARD TARGET" in payload["reason"]
+    assert "entry $0.61 → $0.82" in payload["reason"]
+    assert "entry_price" not in payload or payload.get("entry_price") is None
+
+
+def test_format_exit_reason_hard_target():
+    text = jn._format_exit_reason(
+        raw_reason="option_target_38pct",
+        entry_opt=0.61,
+        exit_opt=0.84,
+        profit_pct_limit=25,
+    )
+    assert text.startswith("HARD TARGET")
+    assert "entry $0.61 → $0.84" in text
+    assert "limit +25%" in text

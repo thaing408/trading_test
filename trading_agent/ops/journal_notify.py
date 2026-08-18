@@ -352,6 +352,54 @@ def notify_order_activity(
     )
 
 
+def _format_exit_reason(
+    *,
+    raw_reason: str,
+    entry_opt: Optional[float],
+    exit_opt: Optional[float],
+    profit_pct_limit: float = 100.0,
+    loss_pct_limit: float = 50.0,
+) -> str:
+    """QQQ-style reason: HARD TARGET +37.7% on option bid (entry $0.61 → $0.84, limit +25%)."""
+    reason = (raw_reason or "manage").strip()
+    pnl_pct: Optional[float] = None
+    if entry_opt and exit_opt and entry_opt > 0:
+        pnl_pct = (exit_opt - entry_opt) / entry_opt * 100.0
+
+    # Map internal manage reasons → QQQ phrasing
+    low = reason.lower()
+    if pnl_pct is not None and (
+        "option_target" in low or reason.startswith("option_target")
+    ):
+        return (
+            f"HARD TARGET {pnl_pct:+.1f}% on option mark "
+            f"(entry ${entry_opt:.2f} → ${exit_opt:.2f}, limit +{profit_pct_limit:.0f}%)"
+        )
+    if pnl_pct is not None and (
+        "option_stop" in low or reason.startswith("option_stop")
+    ):
+        return (
+            f"HARD STOP {pnl_pct:+.1f}% on option mark "
+            f"(entry ${entry_opt:.2f} → ${exit_opt:.2f}, limit -{loss_pct_limit:.0f}%)"
+        )
+    if reason in ("profit_target", "stop_loss", "range_high_break", "range_low_break"):
+        label = {
+            "profit_target": "UNDERLYING TARGET",
+            "stop_loss": "UNDERLYING STOP",
+            "range_high_break": "RANGE HIGH BREAK",
+            "range_low_break": "RANGE LOW BREAK",
+        }.get(reason, reason.upper())
+        if entry_opt is not None and exit_opt is not None and pnl_pct is not None:
+            return (
+                f"{label} — option {pnl_pct:+.1f}% "
+                f"(entry ${entry_opt:.2f} → ${exit_opt:.2f})"
+            )
+        return label
+    if entry_opt is not None and exit_opt is not None and pnl_pct is not None:
+        return f"{reason} — option {pnl_pct:+.1f}% (entry ${entry_opt:.2f} → ${exit_opt:.2f})"
+    return reason
+
+
 def notify_exit_activity(
     lot: Any,
     *,
@@ -360,8 +408,23 @@ def notify_exit_activity(
     pnl: Optional[float] = None,
     option_mark: Optional[float] = None,
     option_entry: Optional[float] = None,
+    spot_price: Optional[float] = None,
+    order_id: str = "",
 ) -> Dict[str, Any]:
-    """Notify when OMS closes a lot — QQQ-style exit journal event."""
+    """Notify when OMS closes a lot — same #trading-journal layout as QQQ EXIT.
+
+      @Thai
+      🔴 MULTI AUTO — EXIT
+      QQQ QQQ   260812C00725000
+      2026-08-12 09:49 PDT
+      Setup: bull_breakout
+      Underlying: QQQ
+      Spot: $724.79
+      Fill: $0.82 × 1
+      Est. P/L: +$21.50
+      Reason: HARD TARGET +37.7% on option bid (entry $0.61 → $0.84, limit +25%)
+      Order: 1007567425260
+    """
     if not live:
         return {"skipped": True, "reason": "not_live"}
     if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
@@ -373,36 +436,90 @@ def notify_exit_activity(
         return getattr(lot, key, default)
 
     sym = str(_g("symbol") or "?").upper()
-    occ = str(_g("occ_symbol") or "")
+    occ = str(_g("occ_symbol") or "").strip()
     qty = int(_g("quantity") or 1)
     lot_id = str(_g("lot_id") or "")
-    strategy = str(_g("strategy") or "")[:80]
-    exit_px = option_mark if option_mark is not None else _g("exit_price")
+    setup_id = str(_g("setup_id") or "").strip()
+    strategy = str(_g("strategy") or "").strip()
+    setup = setup_id or strategy or "multi_method"
+
+    # Option premiums
+    exit_opt = option_mark
+    if exit_opt is None:
+        exit_opt = _as_opt_float(_g("exit_price"))
+        if exit_opt is not None and exit_opt >= 50:
+            exit_opt = None  # underlying, not premium
     entry_opt = option_entry
     if entry_opt is None:
-        fe = float(_g("fill_entry") or 0)
-        if 0 < fe < 50:
+        meta = _g("broker_meta") or {}
+        if isinstance(meta, dict):
+            for key in ("option_entry_premium", "entry_option_price", "option_mark_at_entry"):
+                entry_opt = _as_opt_float(meta.get(key))
+                if entry_opt is not None:
+                    break
+    if entry_opt is None:
+        fe = _as_opt_float(_g("fill_entry"))
+        if fe is not None and 0 < fe < 50:
             entry_opt = fe
-    if pnl is None and entry_opt is not None and exit_px not in (None, ""):
-        try:
-            pnl = (float(exit_px) - float(entry_opt)) * qty * 100.0
-        except (TypeError, ValueError):
-            pnl = None
+
+    if pnl is None and entry_opt is not None and exit_opt is not None:
+        pnl = (float(exit_opt) - float(entry_opt)) * qty * 100.0
+
+    try:
+        loss_lim = float(os.getenv("TRADING_AGENT_OPTION_LOSS_PCT", "50") or 50)
+    except ValueError:
+        loss_lim = 50.0
+    try:
+        profit_lim = float(os.getenv("TRADING_AGENT_OPTION_PROFIT_PCT", "100") or 100)
+    except ValueError:
+        profit_lim = 100.0
+
+    reason_text = _format_exit_reason(
+        raw_reason=reason or str(_g("exit_reason") or "manage"),
+        entry_opt=entry_opt,
+        exit_opt=exit_opt,
+        profit_pct_limit=profit_lim,
+        loss_pct_limit=loss_lim,
+    )
+
+    # Close order id from broker close response if present
+    schwab_oid = (order_id or "").strip()
+    if not schwab_oid:
+        meta = _g("broker_meta") or {}
+        if isinstance(meta, dict):
+            close = meta.get("close") or {}
+            if isinstance(close, dict):
+                schwab_oid = _schwab_order_id(close) or _schwab_order_id(
+                    close.get("response") if isinstance(close.get("response"), dict) else {}
+                )
+            if not schwab_oid:
+                schwab_oid = _schwab_order_id(meta.get("broker_response") or {})
+    if not schwab_oid:
+        schwab_oid = lot_id
+
+    spot = spot_price
+    if spot is None:
+        # underlying structure entry is better than nothing for Spot line
+        und_entry = _as_opt_float(_g("entry"))
+        if und_entry is not None and und_entry >= 50:
+            spot = und_entry
 
     payload = {
         "event": "exit",
         "side": "exit",
+        "label": "MULTI AUTO",
         "symbol": occ or sym,
-        "description": f"{sym} {occ or ''}".strip(),
-        "setup": strategy or "multi_method",
+        "description": f"{sym} {occ}".strip() if occ else sym,
+        "setup": setup,
         "underlying": sym,
-        "fill_price": float(exit_px) if exit_px not in (None, "") else None,
-        "entry_price": float(entry_opt) if entry_opt is not None else None,
+        "qqq_price": spot,  # Spot: $X.XX
+        "fill_price": float(exit_opt) if exit_opt is not None else None,  # Fill exit premium
+        # Do not set entry_price — QQQ embeds entry→exit in Reason (no separate Entry line)
         "quantity": qty,
-        "reason": reason or "manage",
-        "order_id": lot_id or None,
+        "reason": reason_text,
+        "order_id": schwab_oid or None,
         "pnl": round(float(pnl), 2) if pnl is not None else None,
-        "dedupe_key": f"exit:{lot_id or sym}:{reason}",
+        "dedupe_key": f"exit:{lot_id or sym}:{reason or 'manage'}",
         "time_pt": datetime.now(PT).strftime("%Y-%m-%d %H:%M %Z"),
     }
     out = _post_via_trade_event_script(payload)
@@ -410,13 +527,26 @@ def notify_exit_activity(
         if payload.get("dedupe_key"):
             _mark_posted(str(payload["dedupe_key"]))
         return out
-    sign = ""
-    pnl_s = ""
+
+    lines = [
+        "🔴 **MULTI AUTO — EXIT**",
+        f"**{payload['description']}**",
+        f"`{payload['time_pt']}`",
+        f"Setup: **{setup}**",
+        f"Underlying: **{sym}**",
+    ]
+    if spot is not None:
+        lines.append(f"Spot: **${float(spot):.2f}**")
+    if exit_opt is not None:
+        lines.append(f"Fill: **${float(exit_opt):.2f}** × {qty}")
     if pnl is not None:
         sign = "+" if pnl >= 0 else ""
-        pnl_s = f"\nEst. P/L: **{sign}${pnl:.2f}**"
+        lines.append(f"Est. P/L: **{sign}${float(pnl):.2f}**")
+    lines.append(f"Reason: {reason_text}")
+    if schwab_oid:
+        lines.append(f"Order: `{schwab_oid}`")
     return post_journal_activity(
-        f"🔴 **EXIT** **{sym}** `{occ or '—'}` qty={qty}\nReason: `{reason or 'manage'}`{pnl_s}",
+        "\n".join(lines),
         title="Mac LIVE auto-trade",
         mention=True,
         dedupe_key=str(payload.get("dedupe_key") or ""),
