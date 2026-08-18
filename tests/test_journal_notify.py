@@ -63,14 +63,21 @@ def test_notify_order_uses_trade_event_script(monkeypatch, tmp_path):
         status="submitted",
         broker_response={"occ_symbol": "TLT   260821P00080000"},
     )
-    out = jn.notify_order_activity(order, live=True)
+    out = jn.notify_order_activity(
+        order, live=True, fill_price=0.59, spot_price=81.76
+    )
     assert out.get("ok") is True
     assert "post-trade-event.sh" in str(captured["cmd"][0])
     assert "--json" in captured["cmd"]
     payload = json.loads(captured["cmd"][2])
     assert payload["event"] == "entry"
+    assert payload["label"] == "MULTI AUTO"
     assert payload["underlying"] == "TLT"
+    assert payload["setup"] == "multi_fvg"
+    assert payload["fill_price"] == 0.59
+    assert payload["qqq_price"] == 81.76
     assert "TLT" in payload["symbol"]
+    assert payload["description"].startswith("TLT")
 
 
 def test_post_disabled(monkeypatch):

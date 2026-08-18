@@ -184,10 +184,58 @@ def _post_via_trade_event_script(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": str(exc)}
 
 
-def notify_order_activity(order: Any, *, live: bool = True) -> Dict[str, Any]:
+def _schwab_order_id(broker: Any) -> str:
+    """Extract Schwab order id from place_order response (same as QQQ scalp)."""
+    if not isinstance(broker, dict):
+        return ""
+    for key in ("order_id", "orderId", "broker_order_id"):
+        v = broker.get(key)
+        if v:
+            return str(v)
+    loc = ""
+    resp = broker.get("response")
+    if isinstance(resp, dict):
+        loc = str(resp.get("location") or "")
+        for key in ("order_id", "orderId"):
+            if resp.get(key):
+                return str(resp[key])
+    if not loc:
+        loc = str(broker.get("location") or "")
+    if "/orders/" in loc:
+        return loc.rsplit("/orders/", 1)[-1].strip()
+    return ""
+
+
+def _as_opt_float(value: Any) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def notify_order_activity(
+    order: Any,
+    *,
+    live: bool = True,
+    fill_price: Optional[float] = None,
+    spot_price: Optional[float] = None,
+) -> Dict[str, Any]:
     """Notify for a ReadyOrder-like object after place (submitted/failed).
 
-    Matches QQQ scalp journal shape: event=entry, symbol=OCC, fill, setup, @mention.
+    Matches QQQ scalp #trading-journal format exactly via post-trade-event.sh:
+
+      @Thai
+      🟢 MULTI AUTO — ENTRY
+      AMD AMD   260821C00515000
+      2026-08-17 09:08 PDT
+      Setup: multi_swing_daily
+      Underlying: AMD
+      Spot: $511.46
+      Fill: $3.40 × 1
+      Reason: ...
+      Order: 1007566550639
     """
     if not live:
         return {"skipped": True, "reason": "not_live"}
@@ -207,50 +255,73 @@ def notify_order_activity(order: Any, *, live: bool = True) -> Dict[str, Any]:
         return getattr(order, key, default)
 
     sym = str(_g("symbol") or "?").upper()
-    strategy = str(_g("strategy") or _g("setup_id") or "")[:80]
+    setup_id = str(_g("setup_id") or "").strip()
+    strategy = str(_g("strategy") or "").strip()
+    # Prefer short setup id like QQQ's bull_breakout
+    setup = setup_id or strategy or "multi_method"
+    if setup.lower().startswith("multi-method"):
+        setup = setup_id or "multi_method"
     qty = int(_g("quantity") or 1)
     exp = _g("expiration") or ""
     strikes = _g("strike_prices") or []
+    notes = str(_g("notes") or "")[:200]
     broker = _g("broker_response") or {}
-    occ = ""
-    if isinstance(broker, dict):
-        occ = str(broker.get("occ_symbol") or broker.get("symbol") or "")
-    order_id = str(_g("order_id") or "")
-    und_px = _g("entry")
-    try:
-        und_px_f = float(und_px) if und_px not in (None, "") else None
-    except (TypeError, ValueError):
-        und_px_f = None
+    if not isinstance(broker, dict):
+        broker = {}
+    occ = str(broker.get("occ_symbol") or broker.get("symbol") or "").strip()
+    fingerprint = str(_g("order_id") or "")
+    schwab_oid = _schwab_order_id(broker) or fingerprint
+
+    # Spot: live override → structure entry
+    und_px_f = spot_price if spot_price is not None else _as_opt_float(_g("entry"))
+
+    # Fill: explicit premium → broker meta → none
+    fill_f = fill_price
+    if fill_f is None:
+        fill_f = _as_opt_float(broker.get("option_entry_premium"))
+    if fill_f is None:
+        fill_f = _as_opt_float(broker.get("fill_price"))
 
     if status == "failed":
-        # Failures still go journal so you see rejected places
-        msg = ""
-        if isinstance(broker, dict):
-            msg = str(broker.get("message") or broker.get("error") or "")[:160]
+        msg = str(broker.get("message") or broker.get("error") or _g("skip_reason") or "failed")[:160]
         return post_journal_activity(
-            f"⚠️ **ENTRY FAILED** **{sym}** qty={qty}\n"
-            f"Setup: {strategy or '—'}\n"
-            f"OCC: `{occ or '—'}`\n"
-            f"Broker: {msg or _g('skip_reason') or 'failed'}",
+            f"⚠️ **MULTI AUTO — ENTRY FAILED**\n"
+            f"**{sym} {occ or ''}**\n"
+            f"Setup: **{setup}**\n"
+            f"Broker: {msg}",
             title="Mac LIVE auto-trade",
             mention=True,
-            dedupe_key=f"failed:{order_id or sym}:{occ or exp}",
+            dedupe_key=f"failed:{schwab_oid or sym}:{occ or exp}",
         )
 
-    # submitted — same payload style as QQQ scalp
+    # Reason line — mirror QQQ prose style
+    strike_s = ""
+    if strikes:
+        try:
+            strike_s = ",".join(str(float(s)) for s in strikes[:3])
+        except (TypeError, ValueError):
+            strike_s = str(strikes)
+    reason = notes or (
+        f"{sym} multi-method LIVE · {setup}"
+        + (f" · strike {strike_s}" if strike_s else "")
+        + (f" · exp {exp}" if exp else "")
+    )
+
+    # Exact same payload keys QQQ scalp uses → same Discord layout
     payload = {
         "event": "entry",
         "side": "entry",
+        "label": "MULTI AUTO",
         "symbol": occ or sym,
-        "description": f"{sym} {occ or ''}".strip(),
-        "setup": strategy or "multi_method",
+        "description": f"{sym} {occ}".strip() if occ else sym,
+        "setup": setup,
         "underlying": sym,
-        "qqq_price": und_px_f,  # field name historical; means underlying spot/entry
-        "fill_price": None,  # option premium unknown until reconcile
+        "qqq_price": und_px_f,  # rendered as Spot: $X.XX
+        "fill_price": fill_f,  # rendered as Fill: $X.XX × qty
         "quantity": qty,
-        "reason": f"Mac multi-method LIVE · strikes={strikes} exp={exp}",
-        "order_id": order_id or None,
-        "dedupe_key": order_id or f"entry:{sym}:{occ}:{exp}",
+        "reason": reason,
+        "order_id": schwab_oid or None,
+        "dedupe_key": schwab_oid or f"entry:{sym}:{occ}:{exp}",
         "time_pt": datetime.now(PT).strftime("%Y-%m-%d %H:%M %Z"),
     }
     out = _post_via_trade_event_script(payload)
@@ -258,9 +329,23 @@ def notify_order_activity(order: Any, *, live: bool = True) -> Dict[str, Any]:
         if payload.get("dedupe_key"):
             _mark_posted(str(payload["dedupe_key"]))
         return out
-    # Fallback bot path
+    # Fallback — still mirror QQQ line layout
+    lines = [
+        "🟢 **MULTI AUTO — ENTRY**",
+        f"**{payload['description']}**",
+        f"`{payload['time_pt']}`",
+        f"Setup: **{setup}**",
+        f"Underlying: **{sym}**",
+    ]
+    if und_px_f is not None:
+        lines.append(f"Spot: **${und_px_f:.2f}**")
+    if fill_f is not None:
+        lines.append(f"Fill: **${fill_f:.2f}** × {qty}")
+    lines.append(f"Reason: {reason}")
+    if schwab_oid:
+        lines.append(f"Order: `{schwab_oid}`")
     return post_journal_activity(
-        f"🟢 **ENTRY** **{sym}** `{occ or '—'}` qty={qty}\nSetup: {strategy or '—'}",
+        "\n".join(lines),
         title="Mac LIVE auto-trade",
         mention=True,
         dedupe_key=str(payload.get("dedupe_key") or ""),

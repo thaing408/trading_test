@@ -360,12 +360,19 @@ def run_oms_consume(
             ):
                 submit_count += 1
                 submitted_ids.append(order.order_id)
-                # Store option entry premium for QQQ-style % exits (positions often lack avg)
+                # Store option entry premium for QQQ-style % exits + journal Fill:
+                prem: Optional[float] = None
+                spot: Optional[float] = None
                 try:
-                    occ = str((order.broker_response or {}).get("occ_symbol") or registered.occ_symbol or "")
-                    if occ and (registered.instrument or "").lower() in ("options", "option"):
-                        from trading_agent.oms.broker import quote_last_price
+                    from trading_agent.oms.broker import quote_last_price
 
+                    occ = str(
+                        (order.broker_response or {}).get("occ_symbol")
+                        or registered.occ_symbol
+                        or ""
+                    )
+                    spot = quote_last_price(mcp, order.symbol)
+                    if occ and (registered.instrument or "").lower() in ("options", "option"):
                         prem = quote_last_price(mcp, occ)
                         if prem is not None and 0 < prem < 50:
                             registered.fill_entry = float(prem)
@@ -373,6 +380,10 @@ def run_oms_consume(
                             meta["option_entry_premium"] = float(prem)
                             registered.broker_meta = meta
                             oms.upsert_lot(registered)
+                            br = dict(order.broker_response or {})
+                            br["option_entry_premium"] = float(prem)
+                            order.broker_response = br
+                            orders[i] = order
                 except Exception as exc:  # noqa: BLE001
                     append_audit(
                         "option_premium_capture_error",
@@ -388,7 +399,12 @@ def run_oms_consume(
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
 
-                        notify_order_activity(order, live=True)
+                        notify_order_activity(
+                            order,
+                            live=True,
+                            fill_price=prem,
+                            spot_price=spot,
+                        )
                     except Exception as exc:  # noqa: BLE001 — fail-open
                         append_audit(
                             "journal_notify_error",
