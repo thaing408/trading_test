@@ -163,7 +163,7 @@ def _ready(**overrides) -> ReadyOrder:
         target=520.0,
         max_risk_dollars=100.0,
         strike_prices=[500.0],
-        expiration="2026-08-15",
+        expiration="2026-08-21",  # future vs "today" in dual-DTE precheck
         quantity=1,
         defined_risk=True,
         confidence=70.0,
@@ -280,6 +280,7 @@ def test_submit_order_live_equity_buy(monkeypatch):
         return {"status": "submitted", "dry_run": False}
 
     monkeypatch.setattr("trading_agent.export.mac_execute.call_schwab_mcp", fake_mcp)
+    monkeypatch.setenv("TRADING_AGENT_OPTIONS_ONLY", "0")
     o = _ready(
         instrument="underlying",
         strategy="ORB long",

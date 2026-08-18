@@ -177,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from trading_agent.export.mac_execute import (
         in_consumer_window,
+        in_watch_window,
         live_enabled,
         run_consume,
     )
@@ -189,16 +190,26 @@ def main(argv: list[str] | None = None) -> int:
 
     def once(*, allow_outside: bool = False) -> int:
         outside = not in_consumer_window()
-        if outside and not (args.anytime or allow_outside or os.getenv(
-            "TRADING_AGENT_AUTO_TRADE_ANYTIME", ""
-        ).strip()):
+        # After entry window but still in manage/watch window → still run (manage lots)
+        in_watch = in_watch_window()
+        if (
+            outside
+            and not in_watch
+            and not (
+                args.anytime
+                or allow_outside
+                or os.getenv("TRADING_AGENT_AUTO_TRADE_ANYTIME", "").strip()
+            )
+        ):
             if not args.quiet:
-                print("Outside consumer window (9:25–11:00 ET) — use --anytime to force")
+                print(
+                    "Outside watch/manage window (default 9:25–16:00 ET) — use --anytime to force"
+                )
             return 0
         result = run_consume(
             paths=paths,
             live=live,
-            force_outside_window=bool(args.anytime or allow_outside),
+            force_outside_window=bool(args.anytime or allow_outside or outside),
             mark_processed=True,
         )
         if not args.quiet:
@@ -247,22 +258,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.watch:
         return once()
 
-    # Watch loop: process while in consumer window (or forever with --anytime)
+    # Watch loop: entry window + manage-until (default through 16:00 ET)
     code = 0
     last_sig = ""
+    last_manage = 0.0
     # If launchd starts slightly early, wait until window opens (max ~30 min)
     wait_deadline = time.time() + 30 * 60
-    while not in_consumer_window() and not args.anytime:
+    while not in_watch_window() and not args.anytime:
         if time.time() > wait_deadline:
             if not args.quiet:
-                print("Timed out waiting for consumer window")
+                print("Timed out waiting for watch/manage window")
             return 0
         time.sleep(15)
 
     while True:
-        if not args.anytime and not in_consumer_window():
+        if not args.anytime and not in_watch_window():
             if not args.quiet:
-                print("Consumer window ended — exiting watch")
+                print("Watch/manage window ended — exiting watch")
             break
         from trading_agent.export.mac_execute import book_candidates
 
@@ -276,8 +288,12 @@ def main(argv: list[str] | None = None) -> int:
                 except OSError:
                     pass
         sig = "|".join(sig_parts)
-        if sig != last_sig or not last_sig:
+        # Always re-run periodically so open lots get managed even if book mtime static
+        manage_poll = max(30, int(args.poll_seconds))
+        due_manage = (time.time() - last_manage) >= manage_poll
+        if sig != last_sig or not last_sig or due_manage:
             last_sig = sig
+            last_manage = time.time()
             code = once(allow_outside=bool(args.anytime))
         time.sleep(max(5, int(args.poll_seconds)))
     return code

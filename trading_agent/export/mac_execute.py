@@ -833,7 +833,7 @@ def in_qt_window(now: Optional[datetime] = None) -> bool:
 
 
 def in_consumer_window(now: Optional[datetime] = None) -> bool:
-    """Active consumer window: 9:25–11:00 ET weekdays (covers QT + early desk)."""
+    """Active *entry* consumer window: 9:25–11:00 ET weekdays (QT + early desk)."""
     ts = now or datetime.now(ET)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
@@ -843,6 +843,29 @@ def in_consumer_window(now: Optional[datetime] = None) -> bool:
         return False
     t = ts.time()
     return time(9, 25) <= t <= time(11, 0)
+
+
+def in_watch_window(now: Optional[datetime] = None) -> bool:
+    """Watch loop window: entry hours + manage-until (default through 16:00 ET).
+
+    After 11:00 ET the consumer still polls so multi-day / 0DTE lots get managed
+    (trail, EOD flatten, min-premium wipe). New-entry gating stays soft in OMS.
+    """
+    try:
+        from trading_agent.oms.manage_rules import in_manage_window
+
+        return in_manage_window(now)
+    except Exception:
+        # Fallback: extend classic window to 16:00 ET
+        ts = now or datetime.now(ET)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
+        else:
+            ts = ts.astimezone(ET)
+        if ts.weekday() >= 5:
+            return False
+        t = ts.time()
+        return time(9, 25) <= t <= time(16, 0)
 
 
 def run_consume(

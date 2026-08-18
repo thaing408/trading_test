@@ -50,9 +50,22 @@ log "=== auto-trade consumer start ==="
 log "python=$PYTHON live=${TRADING_AGENT_AUTO_TRADE_LIVE:-0} poll=$POLL"
 
 cd "$REPO"
-# Watch stays inside 9:25–11:00 ET (exits when window ends). One-shot uses --anytime for manual runs.
+
+# Keep Mac awake while consumer/manage runs (idle sleep would skip trail / 0DTE flatten).
+# TRADING_AGENT_CAFFEINATE=0 to disable.
+CAFFEINE_BIN="$(command -v caffeinate || true)"
+run_py() {
+  if [ "${TRADING_AGENT_CAFFEINATE:-1}" != "0" ] && [ -n "$CAFFEINE_BIN" ]; then
+    log "caffeinate on (idle sleep prevented while consumer runs)"
+    exec "$CAFFEINE_BIN" -dims -- "$PYTHON" "$@"
+  fi
+  exec "$PYTHON" "$@"
+}
+
+# Watch: entry 9:25–11:00 ET + manage through TRADING_AGENT_MANAGE_UNTIL_ET (default 16:00 ET).
+# One-shot uses --anytime for manual runs.
 if [ "$WATCH" = "--watch" ] || [ "${TRADING_AGENT_AUTO_TRADE_WATCH:-0}" = "1" ]; then
-  exec "$PYTHON" "$MACOS_DIR/consume_auto_trade_book.py" --watch --poll-seconds "$POLL"
+  run_py "$MACOS_DIR/consume_auto_trade_book.py" --watch --poll-seconds "$POLL"
 else
-  exec "$PYTHON" "$MACOS_DIR/consume_auto_trade_book.py" --anytime
+  run_py "$MACOS_DIR/consume_auto_trade_book.py" --anytime
 fi

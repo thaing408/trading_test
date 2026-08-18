@@ -1,7 +1,7 @@
 # Auto-trade next steps (Mac `trading_agent`)
 
-**Last updated:** 2026-08-15  
-**Audience:** continue Monday after multi-method no-CIO export (P1) and process-bias / book-protect land on `main`.
+**Last updated:** 2026-08-17  
+**Audience:** Mac production desk ops + continue from multi-day manage hardening.
 
 Related:
 
@@ -22,6 +22,11 @@ Paper stack on me-ai is **`trading_test`** (separate repo); this file is **Mac p
 | **P1** Multi-method EXPORT → `auto_trade_book` **without CIO** | `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT=1` (default); desk scanners write ENTERs |
 | Dual-path DTE | **0DTE only SPY/QQQ/IWM**; all others **min DTE 3** (`option_dte_policy.py`) |
 | Desk UI + `desk-status` CLI | Optional `[desk-ui]` extra |
+| **Cash gate** | LIVE `get_account` cash_available; skip if premium doesn’t fit; reserve |
+| **Journal parity** | MULTI AUTO entry/exit via `post-trade-event.sh` (same layout as SCALP, @mention) |
+| **Manage v2** | Live marks; und stop/target; option ±%; **trail**; **EOD 0DTE flatten**; **min-premium wipe** |
+| **Watch through manage-until** | Default **9:25–16:00 ET** (entries still soft-gated early; manage all day) |
+| **Caffeinate** | `auto-trade-consumer.sh` wraps with `caffeinate -dims` (set `TRADING_AGENT_CAFFEINATE=0` to disable) |
 
 ```bash
 cd ~/trading_agent && git pull   # expect 8b9bb48+ (or later)
@@ -212,6 +217,19 @@ Track against [`quant_institution_roadmap.md`](quant_institution_roadmap.md). Pr
 |----------|---------|------|
 | `TRADING_AGENT_AUTO_TRADE_LIVE` | `1` | Allow place via Schwab MCP |
 | `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT` | `1` | Multi-method ENTERs without CIO |
+| `TRADING_AGENT_REQUIRE_ACCOUNT_CASH` | `1` | Fail closed if LIVE balances missing |
+| `TRADING_AGENT_MIN_CASH_RESERVE` | `25` | Leave unspent |
+| `TRADING_AGENT_OPTION_LOSS_PCT` / `_PROFIT_PCT` | `50` / `100` | Option premium hard rails |
+| `TRADING_AGENT_TRAIL_ENABLED` | `1` | Underlying trail after +0.5R |
+| `TRADING_AGENT_TRAIL_BE_R` | `0.5` | R-multiple to move stop to breakeven |
+| `TRADING_AGENT_TRAIL_LOCK_PCT` | `50` | Lock % of favorable excursion |
+| `TRADING_AGENT_EOD_0DTE_FLATTEN` | `1` | Flatten 0DTE after cutoff |
+| `TRADING_AGENT_EOD_0DTE_CUTOFF_ET` | `15:45` | ET clock for 0DTE flatten |
+| `TRADING_AGENT_MIN_PREMIUM_WIPE` | `1` | Close dirt-cheap marks |
+| `TRADING_AGENT_MIN_OPTION_PREMIUM` | `0.05` | Wipe floor ($/contract) |
+| `TRADING_AGENT_MANAGE_UNTIL_ET` | `16:00` | Watch/manage end |
+| `TRADING_AGENT_CAFFEINATE` | `1` | Prevent Mac idle sleep during watch |
+| `TRADING_AGENT_JOURNAL_ALERTS` | `1` | @mention #trading-journal on entry/exit |
 | `TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK` | `1` | Block empty overwrite of ENTERs |
 | `TRADING_AGENT_PROCESS_GATE` | default on | Process Steps 1–3 |
 | `TRADING_AGENT_MULTILEG_LIVE` | `0` | Spreads LIVE place |

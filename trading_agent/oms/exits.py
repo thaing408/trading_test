@@ -370,6 +370,12 @@ def manage_open_lots(
     except ValueError:
         opt_profit = 100.0
 
+    from trading_agent.oms.manage_rules import (
+        capture_option_premium,
+        early_exit_reasons,
+        update_trail_stop,
+    )
+
     for lot in open_lots:
         und = underlying_marks.get(lot.symbol.upper())
         occ_key = (lot.occ_symbol or "").strip()
@@ -387,6 +393,7 @@ def manage_open_lots(
                     avg = position_avg_price(row)
                     if avg > 0 and avg < 50:
                         opt_entry = avg
+                        capture_option_premium(lot, premium=avg, source="broker_avg")
                 except Exception:
                     pass
         if opt_entry is None:
@@ -405,15 +412,43 @@ def manage_open_lots(
             if 0 < fe < 50:
                 opt_entry = fe
 
-        should, reason = should_exit_lot(
+        # Trail stop update (mutates lot.stop) before exit check
+        trail_info: Dict[str, Any] = {}
+        if und and und > 0:
+            try:
+                trail_info = update_trail_stop(lot, underlying_price=float(und))
+                if trail_info.get("trailed"):
+                    store.upsert_lot(lot)
+                    append_audit(
+                        "trail_stop_updated",
+                        payload={
+                            "lot_id": lot.lot_id,
+                            "symbol": lot.symbol,
+                            **trail_info,
+                        },
+                    )
+            except Exception as trail_exc:  # noqa: BLE001
+                append_audit(
+                    "trail_stop_error",
+                    payload={"lot_id": lot.lot_id, "error": str(trail_exc)},
+                )
+
+        # Priority: EOD 0DTE / expired / min-premium wipe
+        should, reason = early_exit_reasons(
             lot,
-            mark_price=float(mark or 0),
-            underlying_price=und,
             option_mark=float(opt_mark) if opt_mark else None,
             option_entry=opt_entry,
-            option_loss_pct=opt_loss,
-            option_profit_pct=opt_profit,
         )
+        if not should:
+            should, reason = should_exit_lot(
+                lot,
+                mark_price=float(mark or 0),
+                underlying_price=und,
+                option_mark=float(opt_mark) if opt_mark else None,
+                option_entry=opt_entry,
+                option_loss_pct=opt_loss,
+                option_profit_pct=opt_profit,
+            )
         if should:
             # Prefer option mark for exit_price when available (P/L proxy)
             exit_px = float(opt_mark or und or mark or 0)
@@ -425,6 +460,23 @@ def manage_open_lots(
                 reason=reason,
                 exit_price=exit_px,
             )
+            # Expired / EOD / wipe: if broker close fails, still clear OMS lot
+            if closed.status not in (
+                LotStatus.CLOSED.value,
+            ) and reason.startswith(
+                ("expired_option", "eod_0dte", "min_premium_wipe")
+            ):
+                try:
+                    from trading_agent.oms.lifecycle import close_lot_as_orphan
+
+                    closed = close_lot_as_orphan(
+                        store, lot, reason=f"{reason}:broker_close_failed"
+                    )
+                except Exception as orphan_exc:  # noqa: BLE001
+                    append_audit(
+                        "orphan_after_exit_fail",
+                        payload={"lot_id": lot.lot_id, "error": str(orphan_exc)},
+                    )
             pnl_est = None
             if opt_entry and opt_mark and opt_entry < 50:
                 pnl_est = (float(opt_mark) - float(opt_entry)) * int(lot.quantity or 1) * 100.0
@@ -451,6 +503,7 @@ def manage_open_lots(
                     "option_entry": opt_entry,
                     "stop": lot.stop,
                     "target": lot.target,
+                    "trail": trail_info or None,
                 }
             )
     store.save()

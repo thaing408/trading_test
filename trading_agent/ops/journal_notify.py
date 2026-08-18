@@ -395,6 +395,18 @@ def _format_exit_reason(
                 f"(entry ${entry_opt:.2f} → ${exit_opt:.2f})"
             )
         return label
+    if reason.startswith("eod_0dte") or reason == "expired_option_flatten":
+        base = "EOD 0DTE FLATTEN" if "eod" in low else "EXPIRED OPTION FLATTEN"
+        if entry_opt is not None and exit_opt is not None and pnl_pct is not None:
+            return f"{base} — option {pnl_pct:+.1f}% (entry ${entry_opt:.2f} → ${exit_opt:.2f})"
+        return base
+    if reason.startswith("min_premium_wipe"):
+        if entry_opt is not None and exit_opt is not None:
+            return (
+                f"MIN PREMIUM WIPE — mark ${exit_opt:.3f} "
+                f"(entry ${entry_opt:.2f})"
+            )
+        return f"MIN PREMIUM WIPE — {reason}"
     if entry_opt is not None and exit_opt is not None and pnl_pct is not None:
         return f"{reason} — option {pnl_pct:+.1f}% (entry ${entry_opt:.2f} → ${exit_opt:.2f})"
     return reason
