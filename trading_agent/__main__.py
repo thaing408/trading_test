@@ -766,6 +766,26 @@ def _run_research(args: argparse.Namespace) -> int:
             with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(text)
         return 0
+    if cmd == "scalp-halt":
+        from trading_agent.scalp.pulse_halt import main as pulse_halt_main
+
+        extra: list[str] = []
+        if getattr(args, "record", False):
+            extra.append("--record")
+        if getattr(args, "symbol", None):
+            extra.extend(["--symbol", str(args.symbol)])
+        if getattr(args, "side", None):
+            extra.extend(["--side", str(args.side)])
+        if getattr(args, "pnl", None) is not None and getattr(args, "record", False):
+            extra.extend(["--pnl", str(args.pnl)])
+        if getattr(args, "setup", None):
+            extra.extend(["--setup", str(args.setup)])
+        extra.append("--card")
+        if getattr(args, "discord", False):
+            extra.append("--post")
+        if getattr(args, "ledger", None):
+            extra.extend(["--ledger", str(args.ledger)])
+        return pulse_halt_main(extra)
     if cmd == "scalp-universe":
         from trading_agent.scalp.universe_card import (
             format_scalp_universe_card,
@@ -807,7 +827,7 @@ def _run_research(args: argparse.Namespace) -> int:
         return 0
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
-        "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
+        "features | manage-summary | scalp-backtest | scalp-halt | scalp-universe | methods-backtest | "
         "soulz | soulz-backtest | multi-method | multi-method-backtest | swing-scan",
         file=sys.stderr,
     )
@@ -1522,6 +1542,21 @@ def main(argv: list[str] | None = None) -> int:
         "--day",
         default=None,
         help="YYYY-MM-DD (default: today UTC)",
+    )
+    scalp_halt = research_sub.add_parser(
+        "scalp-halt",
+        help="Named Scalp Pulse halt card (which tickers lost; sleeve 2-loss halt)",
+    )
+    scalp_halt.add_argument("--record", action="store_true", help="Append a closed scalp")
+    scalp_halt.add_argument("--symbol", default="")
+    scalp_halt.add_argument("--side", default="", help="CALL or PUT")
+    scalp_halt.add_argument("--pnl", type=float, default=0.0)
+    scalp_halt.add_argument("--setup", default="")
+    scalp_halt.add_argument("--ledger", default="")
+    scalp_halt.add_argument(
+        "--discord",
+        action="store_true",
+        help="Post halt card once if sleeve loss cap is hit",
     )
     scalp_uni = research_sub.add_parser(
         "scalp-universe",
