@@ -262,6 +262,7 @@ def build_opportunities(
         check_discipline_rails,
         session_state_from_risk_config,
     )
+    from trading_agent.discipline.classic_ta_books import apply_classic_ta_book_gates
     from trading_agent.discipline.smb_books import apply_smb_book_gates
     from trading_agent.discipline.ta_books import apply_investopedia_ta_gates
     from trading_agent.models import RejectedSetup
@@ -275,6 +276,7 @@ def build_opportunities(
     enforce_rails = bool(getattr(risk_config, "enforce_discipline_rails", True))
     enforce_smb = bool(getattr(risk_config, "enforce_smb_book_gates", True))
     enforce_ta = bool(getattr(risk_config, "enforce_ta_book_gates", True))
+    enforce_classic = bool(getattr(risk_config, "enforce_classic_ta_book_gates", True))
     enforce_methods = bool(getattr(risk_config, "enforce_web_methods", True))
 
     # Always apply RiskConfig limits on the auto-trade path (not optional).
@@ -489,6 +491,43 @@ def build_opportunities(
                     RejectedSetup(
                         symbol=candidate.symbol,
                         reason=ta.summary,
+                    )
+                )
+            continue
+
+        # Classic TA top-ten newly wired books (Minervini, Weinstein, Elder, Carter, Grimes)
+        classic_ctx = {
+            **ta_ctx,
+            "timeframe_trends": getattr(technical, "timeframe_trends", None) or {},
+            "timeframe_alignment": getattr(technical, "timeframe_alignment", None),
+            "ema_50": getattr(technical, "ema_50", None),
+            "ema_200": getattr(technical, "ema_200", None),
+            "atr": getattr(technical, "atr", None),
+            "pattern_height": params.get("pattern_height"),
+            "structure_rr": params.get("structure_rr"),
+            "maximum_risk": params.get("maximum_risk"),
+            "maximum_reward": params.get("maximum_reward"),
+            "stop_basis": params.get("stop_basis"),
+            "geometry_source": params.get("geometry_source"),
+            "volume_profile_bias": getattr(technical, "volume_profile_bias", None),
+            "vwap_relation": getattr(technical, "vwap_relation", None),
+        }
+        classic = apply_classic_ta_book_gates(
+            classic_ctx,
+            min_rvol=float(getattr(risk_config, "classic_min_rvol", 1.5) or 1.5),
+            min_rs=float(getattr(risk_config, "classic_min_rs", 1.0) or 0.0),
+            min_rr=float(getattr(risk_config, "classic_min_rr", 1.5) or 1.5),
+            max_risk_per_trade_pct=float(risk_config.max_risk_per_trade_pct),
+            min_confluence=int(getattr(risk_config, "ta_min_indicator_confluence", 2) or 2),
+            require_named_setup=require_pb,
+            enabled=enforce_classic,
+        )
+        if enforce_classic and not classic.ok:
+            if rail_rejections is not None:
+                rail_rejections.append(
+                    RejectedSetup(
+                        symbol=candidate.symbol,
+                        reason=classic.summary,
                     )
                 )
             continue

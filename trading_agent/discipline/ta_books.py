@@ -125,12 +125,13 @@ class TaBooksResult:
     ok: bool
     results: List[TaGateResult] = field(default_factory=list)
     blocked_by: List[str] = field(default_factory=list)
+    label: str = "Investopedia TA book gates"
 
     @property
     def summary(self) -> str:
         if self.ok:
-            return "Investopedia TA book gates: all passed"
-        return "Investopedia TA book gates blocked: " + "; ".join(self.blocked_by)
+            return f"{self.label}: all passed"
+        return f"{self.label} blocked: " + "; ".join(self.blocked_by)
 
 
 def _f(ctx: Mapping[str, Any], key: str, default: float = 0.0) -> float:

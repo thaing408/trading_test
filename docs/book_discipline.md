@@ -39,6 +39,23 @@ list (Bellafiore, 2014) plus Shannon MTF from the prior desk goal.
 | **Brian Shannon — Multiple Timeframes** | HTF bias gate; conflict → F | `discipline/mtf_gate.py` |
 | **All** | Max concurrent, aggregate risk, post-stop cool-down + `record_open` | `discipline/rails.py` |
 
+## Classic TA top ten (ranked)
+
+Desk ranking for foundational TA / breakout / stage / risk books. Ranks 1, 2, 5, 8, 10 were already wired via SMB / Investopedia / MTF; ranks **3, 4, 6, 7, 9** are new soft gates in `discipline/classic_ta_books.py` (fail-open when stage/MTF/ATR/RR inputs are missing).
+
+| # | Book | Author | Best for | Mechanism | Module | Status |
+|---|------|--------|----------|-----------|--------|--------|
+| 1 | Technical Analysis of the Financial Markets | John J. Murphy | Complete TA foundation | `murphy_indicator_confluence` | `ta_books.py` | existing |
+| 2 | How to Make Money in Stocks | William J. O'Neil | Breakouts, momentum & growth | `oneil_can_slim_proxy` | `smb_books.py` | existing |
+| 3 | Trade Like a Stock Market Wizard | Mark Minervini | High-quality breakout trading | `minervini_vcp_breakout` | `classic_ta_books.py` | **new** |
+| 4 | Stan Weinstein's Secrets for Profiting in Bull and Bear Markets | Stan Weinstein | Market stages & trend following | `weinstein_stage_proxy` | `classic_ta_books.py` | **new** |
+| 5 | How to Trade in Stocks | Jesse Livermore | Price action, timing & speculation | `livermore_tape_and_cut` | `smb_books.py` (via Reminiscences) | existing |
+| 6 | The New Trading for a Living | Alexander Elder | Trading system + risk management | `elder_triple_screen` | `classic_ta_books.py` | **new** |
+| 7 | Mastering the Trade | John F. Carter | Practical setups & trade execution | `carter_setup_r_multiple` | `classic_ta_books.py` | **new** |
+| 8 | Japanese Candlestick Charting Techniques | Steve Nison | Candlesticks & price action | `nison_candle_alignment` | `ta_books.py` | existing |
+| 9 | The Art and Science of Technical Analysis | Adam Grimes | Systematic technical trading | `grimes_systematic_edge` | `classic_ta_books.py` | **new** |
+| 10 | Technical Analysis Using Multiple Timeframes | Brian Shannon | Multi-timeframe analysis | `shannon_mtf_gate` | `mtf_gate.py` | existing |
+
 ## Seed playbook IDs
 
 - `trend_pullback_long`
@@ -52,11 +69,13 @@ list (Bellafiore, 2014) plus Shannon MTF from the prior desk goal.
 - `enforce_discipline_rails` / `max_concurrent_plays` / `max_aggregate_risk_pct` / `stop_cooldown_minutes`
 - `enforce_smb_book_gates` (default True)
 - `oneil_min_rvol` (default 1.5) / `oneil_min_rs` (default 0 = off)
+- `enforce_classic_ta_book_gates` (default True) — Minervini / Weinstein / Elder / Carter / Grimes
+- `classic_min_rvol` (1.5) / `classic_min_rs` (1.0; 0 = off) / `classic_min_rr` (1.5)
 
 ## Production wire
 
 1. `pipeline.run_pipeline` → `build_session_risk_state` + `build_opportunities`
-2. Per candidate: playbook → edge → **SMB book gates** → grade-sort → rails + `record_open`
+2. Per candidate: playbook → edge → **SMB book gates** → **Investopedia TA gates** → **classic TA gates** → rails + `record_open`
 3. Intraday stop Exit → stopout book for cool-down
 
 ## Investopedia top TA books → code
@@ -78,5 +97,9 @@ Flags: `enforce_ta_book_gates`, `ta_min_indicator_confluence`, `ta_pring_min_rvo
 ```python
 from trading_agent.discipline.smb_books import apply_smb_book_gates, SMB_TOP_TEN
 from trading_agent.discipline.ta_books import apply_investopedia_ta_gates, INVESTOPEDIA_TA_BOOKS
+from trading_agent.discipline.classic_ta_books import (
+    apply_classic_ta_book_gates,
+    CLASSIC_TA_TOP_TEN,
+)
 from trading_agent.ranking.ranker import build_opportunities
 ```
