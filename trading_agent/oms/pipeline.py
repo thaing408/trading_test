@@ -170,6 +170,7 @@ def run_oms_consume(
     orders = mx.build_ready_orders(books, processed=processed)
 
     submitted_ids: List[str] = []
+    processed_now: List[str] = []  # submitted + terminal fails/skips → no poll retry
     submit_count = 0
     # If LIVE but Schwab OAuth dead, force dry-run place path (still build ready_orders)
     effective_live = bool(live) and not schwab_block
@@ -395,6 +396,7 @@ def run_oms_consume(
                     cash_info["remaining_after_submits"] = remaining_cash
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                    processed_now.append(order.order_id)
                 if effective_live:
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
@@ -416,6 +418,7 @@ def run_oms_consume(
                     orders[i] = order
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                    processed_now.append(order.order_id)
                 if effective_live:
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
@@ -426,26 +429,38 @@ def run_oms_consume(
                             "journal_notify_error",
                             payload={"order_id": order.order_id, "error": str(exc)},
                         )
-        elif order.status == "failed" and effective_live:
-            try:
-                from trading_agent.ops.journal_notify import notify_order_activity
+        elif order.status == "failed":
+            # Terminal place failures must not retry every poll (was Discord spam).
+            if mark_processed:
+                oms.mark_processed(order.order_id)
+                processed_now.append(order.order_id)
+            if effective_live:
+                try:
+                    from trading_agent.ops.journal_notify import notify_order_activity
 
-                notify_order_activity(order, live=True)
-            except Exception as exc:  # noqa: BLE001
-                append_audit(
-                    "journal_notify_error",
-                    payload={"order_id": order.order_id, "error": str(exc)},
-                )
+                    notify_order_activity(order, live=True)
+                except Exception as exc:  # noqa: BLE001
+                    append_audit(
+                        "journal_notify_error",
+                        payload={"order_id": order.order_id, "error": str(exc)},
+                    )
+        elif order.status == "skipped" and order.skip_reason in (
+            "occ_not_listed",
+            "broker_reject_terminal",
+        ):
+            if mark_processed:
+                oms.mark_processed(order.order_id)
+                processed_now.append(order.order_id)
         elif order.status in ("ready", "dry_run") and place_path in (
             "multi_leg_ready",
             "credit_ready",
         ):
             orders[i] = attach_package_to_order(order)
 
-    if mark_processed and submitted_ids:
-        # keep legacy file in sync for older tools
+    if mark_processed and processed_now:
+        # keep legacy file in sync for older tools (includes terminal fails)
         legacy = mx.default_state_dir() / "auto_trade_processed.json"
-        legacy_ids = mx.load_processed_ids(legacy) | set(submitted_ids)
+        legacy_ids = mx.load_processed_ids(legacy) | set(processed_now)
         mx.save_processed_ids(legacy, legacy_ids)
 
     manage_results = []

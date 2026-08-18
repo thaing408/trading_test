@@ -54,12 +54,21 @@ def _nearest_option_expiration(from_day: date | None = None, *, max_dte: int = 5
 
 
 def _option_strike(spot: float, side: str, *, otm: float = 1.0) -> float:
-    """1-point (or 1%) OTM strike for CALL/PUT; round to sensible increment."""
+    """Slightly OTM strike on common listed increments.
+
+    Heuristic only — LIVE place path snaps to a Schwab-quoted OCC. Prefer
+    increments that actually list (avoid inventing V 357 / GE 372 / ZS 183):
+      < $50 → $0.50 | $50–$200 → $2.50 | $200–$500 → $5 | ≥ $500 → $5
+    """
     px = max(float(spot), 0.01)
     side_u = (side or "CALL").upper()
-    # Increment: $1 under $200, $5 for mega-priced names
-    inc = 5.0 if px >= 500 else (1.0 if px >= 50 else 0.5)
-    otm_pts = max(otm, inc) if px < 200 else max(otm, px * 0.005)
+    if px >= 200:
+        inc = 5.0
+    elif px >= 50:
+        inc = 2.5
+    else:
+        inc = 0.5
+    otm_pts = max(float(otm), inc) if px < 200 else max(float(otm), px * 0.005, inc)
 
     def _round_down(x: float) -> float:
         return inc * int(x / inc)
@@ -69,9 +78,9 @@ def _option_strike(spot: float, side: str, *, otm: float = 1.0) -> float:
 
     if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
         # long put slightly OTM
-        return float(_round_down(px - otm_pts))
+        return float(round(_round_down(px - otm_pts), 4))
     # long call slightly OTM
-    return float(_round_up(px + otm_pts))
+    return float(round(_round_up(px + otm_pts), 4))
 
 
 def entry_from_multi_eval(

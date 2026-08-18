@@ -429,6 +429,141 @@ def format_occ_symbol(underlying: str, expiration: date, call_put: str, strike: 
     return f"{root}{yymmdd}{cp}{strike_int:08d}"
 
 
+def strike_grid_candidates(preferred: float, *, spot: float | None = None) -> List[float]:
+    """Nearby strikes on common listed increments ($0.5 / $1 / $2.5 / $5).
+
+    Multi-method previously invented $1 strikes (e.g. ZS 183, V 357, GE 372)
+    that Schwab rejects with HTTP 400 / Symbol not found.
+    """
+    pref = float(preferred)
+    px = float(spot) if spot and spot > 0 else pref
+    increments = (0.5, 1.0, 2.5, 5.0)
+    if px >= 500:
+        increments = (5.0, 10.0, 1.0, 2.5)
+    elif px >= 200:
+        increments = (5.0, 2.5, 1.0, 0.5)
+    elif px >= 50:
+        increments = (2.5, 5.0, 1.0, 0.5)
+    out: List[float] = []
+    seen: set[float] = set()
+
+    def _add(x: float) -> None:
+        if x <= 0:
+            return
+        # Normalize half-dollar floats
+        key = round(x, 4)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(float(key))
+
+    _add(pref)
+    for inc in increments:
+        base = round(pref / inc) * inc
+        for k in range(-6, 7):
+            _add(round(base + k * inc, 4))
+    # Prefer closer to preferred first
+    out.sort(key=lambda s: (abs(s - pref), s))
+    return out[:40]
+
+
+def _quote_row_ok(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    if row.get("error"):
+        return False
+    if str(row.get("asset_type") or "").upper() == "OPTION":
+        return True
+    # Some MCP shapes nest under quote /
+    if any(k in row for k in ("bid", "ask", "last_price", "lastPrice", "mark")):
+        return True
+    return False
+
+
+def resolve_listed_option_strike(
+    underlying: str,
+    expiration: date,
+    call_put: str,
+    preferred_strike: float,
+    *,
+    spot: float | None = None,
+    call_mcp: Any = None,
+) -> Tuple[Optional[float], Optional[str], Dict[str, Any]]:
+    """Snap preferred strike to a Schwab-listed OCC via get_quotes.
+
+    Returns (strike, occ, meta). strike/occ None when no candidate quotes.
+    """
+    mcp = call_mcp or call_schwab_mcp
+    meta: Dict[str, Any] = {
+        "preferred_strike": float(preferred_strike),
+        "snap": True,
+    }
+    cands = strike_grid_candidates(preferred_strike, spot=spot)
+    meta["candidates_n"] = len(cands)
+    occs = [format_occ_symbol(underlying, expiration, call_put, s) for s in cands]
+    # Batch in chunks of 10 (Schwab quote limits)
+    listed: List[Tuple[float, str]] = []
+    for i in range(0, len(occs), 10):
+        chunk = occs[i : i + 10]
+        chunk_strikes = cands[i : i + 10]
+        resp = mcp("get_quotes", {"symbols": chunk})
+        if not isinstance(resp, dict) or resp.get("error"):
+            meta["quote_error"] = (resp or {}).get("error") or (resp or {}).get("message")
+            continue
+        rows = resp.get("quotes")
+        by_sym: Dict[str, Any] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("symbol"):
+                    by_sym[str(row["symbol"])] = row
+        elif isinstance(rows, dict):
+            by_sym = {str(k): v for k, v in rows.items()}
+        else:
+            # flat map symbol -> quote
+            by_sym = {
+                str(k): v
+                for k, v in resp.items()
+                if isinstance(v, dict) and k not in ("error", "quotes")
+            }
+        for strike, occ in zip(chunk_strikes, chunk):
+            row = by_sym.get(occ) or by_sym.get(occ.strip())
+            if _quote_row_ok(row):
+                listed.append((float(strike), occ))
+    if not listed:
+        meta["reason"] = "occ_not_listed"
+        return None, None, meta
+    # Nearest to preferred
+    listed.sort(key=lambda t: (abs(t[0] - float(preferred_strike)), t[0]))
+    strike, occ = listed[0]
+    meta["listed_n"] = len(listed)
+    meta["snapped_strike"] = strike
+    meta["occ_symbol"] = occ
+    if abs(strike - float(preferred_strike)) > 1e-6:
+        meta["strike_snapped_from"] = float(preferred_strike)
+    return strike, occ, meta
+
+
+def is_terminal_broker_reject(resp: Dict[str, Any] | None) -> bool:
+    """True when retrying the same OCC is pointless (missing contract / hard 400)."""
+    if not isinstance(resp, dict):
+        return False
+    blob = " ".join(
+        str(resp.get(k) or "")
+        for k in ("message", "error", "stderr", "stdout", "error_type")
+    ).lower()
+    markers = (
+        "400 bad request",
+        "symbol not found",
+        "not found",
+        "invalid symbol",
+        "unknown symbol",
+        "does not exist",
+        "no such contract",
+        "occ_not_listed",
+    )
+    return any(m in blob for m in markers)
+
+
 def _blob(order: ReadyOrder) -> str:
     return " ".join(
         [
@@ -550,13 +685,19 @@ def _apply_place_response(order: ReadyOrder, resp: Dict[str, Any], *, occ: str =
     return order
 
 
-def option_contract_precheck(order: ReadyOrder) -> Tuple[bool, str, Dict[str, Any]]:
+def option_contract_precheck(
+    order: ReadyOrder,
+    *,
+    resolve_listed: bool = False,
+    call_mcp: Any = None,
+) -> Tuple[bool, str, Dict[str, Any]]:
     """Fail-closed structural qualify before Schwab place (P2.5 + dual DTE).
 
     Checks expiration parse, symbol-aware min DTE (0DTE only SPY/QQQ/IWM;
     others DTE > 2 → min 3), single strike, CALL/PUT, OCC length.
-    Does not call the broker for a live option-chain lookup (MCP place still
-    returns errors if OCC unknown).
+
+    When ``resolve_listed=True`` (LIVE path), snap strike to a Schwab-quoted
+    OCC via get_quotes so invented increments (183 / 357 / 372) never place.
     """
     meta: Dict[str, Any] = {}
     exp = parse_expiration_date(order.expiration)
@@ -584,12 +725,36 @@ def option_contract_precheck(order: ReadyOrder) -> Tuple[bool, str, Dict[str, An
     # OCC root(6)+yymmdd(6)+C/P(1)+strike(8) = 21
     if len(occ) != 21:
         return False, f"bad_occ_len:{len(occ)}", meta
+
+    if resolve_listed:
+        spot = float(order.entry) if order.entry and order.entry > 0 else None
+        snapped, snapped_occ, snap_meta = resolve_listed_option_strike(
+            order.symbol,
+            exp,
+            cp,
+            strike,
+            spot=spot,
+            call_mcp=call_mcp,
+        )
+        meta.update(snap_meta)
+        if snapped is None or not snapped_occ:
+            return False, "occ_not_listed", meta
+        strike = float(snapped)
+        occ = str(snapped_occ)
+        meta["occ_symbol"] = occ
+        meta["call_put"] = cp
+        # Persist snapped strike on the order for audit / OMS
+        order.strike_prices = [strike]
     return True, "", meta
 
 
 def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
     """BUY_TO_OPEN one OCC contract via schwab-mcp place_order."""
-    ok_q, reason_q, meta = option_contract_precheck(order)
+    ok_q, reason_q, meta = option_contract_precheck(
+        order,
+        resolve_listed=bool(live),
+        call_mcp=call_schwab_mcp,
+    )
     if not ok_q:
         order.status = "skipped"
         order.skip_reason = reason_q
@@ -624,7 +789,10 @@ def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
     }
     resp = call_schwab_mcp("place_order", payload)
     resp = {**meta, **resp}
-    return _apply_place_response(order, resp, occ=occ)
+    out = _apply_place_response(order, resp, occ=occ)
+    if out.status == "failed" and is_terminal_broker_reject(out.broker_response):
+        out.skip_reason = out.skip_reason or "broker_reject_terminal"
+    return out
 
 
 def submit_equity_buy(order: ReadyOrder, *, live: bool) -> ReadyOrder:
