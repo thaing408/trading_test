@@ -3,7 +3,9 @@
 **Paper:** Xiao, Sun, Luo, Wang — *TradingAgents: Multi-Agents LLM Financial Trading Framework* (arXiv:2412.20138v7, 3 Jun 2025). Code: https://github.com/TauricResearch/TradingAgents  
 **Ours:** phase desk (intelligence → research → CIO → preopen → intraday → performance → evening scan), options/PA/multi-method books, rule CIO + risk gates, Discord/OMS.
 
-**Implementation status:** **P0 shipped** (2026-08-17) — schemas/roles/empty reports/ReAct stubs + `TRADING_AGENT_FIRM` flag (default off). P1+ still later.
+**Implementation status:**  
+- **P0 shipped** — schemas/roles/empty reports/ReAct + `TRADING_AGENT_FIRM` (default off).  
+- **P1 shipped** (2026-08-17) — four analysts with live gathers + heuristic reports; optional xAI (`XAI_API_KEY`) enrichment. P2+ still later.
 
 ---
 
@@ -68,16 +70,27 @@ echo 'TRADING_AGENT_FIRM=1' >> ~/.grok/trading-agent.env
 
 Flag off → orchestrator hook is a no-op (bit-identical book).
 
-### P1 — Analyst team (four missing LLM specialists)
+### P1 — Analyst team — **DONE (heuristics + optional LLM)**
 
-| Agent | Missing today | Implement later |
-|-------|----------------|-----------------|
-| **Fundamental analyst** | Score helper only; no 10-K/earnings narrative, no insider-as-thesis; score often 0 | LLM (or LLM-on-snapshot) report: valuation, quality, leverage, earnings risk, long-horizon view. Fill `fundamental_score` + reasons. |
-| **Sentiment analyst** | **No Reddit/X/social scores** | Ingest + aux sentiment scores; peaks, engagement, short-horizon tilt. Optional: start with news-tone proxy if social APIs are blocked. |
-| **News analyst** | Keyword categories + headlines | LLM: macro + name-level catalysts, surprise vs consensus, “what moves tomorrow.” Replace raw highlight lists as the CIO news input. |
-| **Technical analyst** | Indicators exist; no “select indicators + forecast” write-up | LLM on our existing TA/PA/60-indicator pack: regime, entry/exit timing, conflict among methods. |
+| Agent | Implementation |
+|-------|----------------|
+| **Fundamental** | `gather_fundamentals` (yfinance score) → `FundamentalReport`; LLM narrative if `XAI_API_KEY` |
+| **Sentiment** | News-tone proxy (`gather_social`) until X/Reddit; optional LLM polish |
+| **News** | `collect_news_catalysts` → name/macro lists; optional LLM “what moves next” |
+| **Technical** | OHLCV + `analysis.technical` bundle → regime/bias/timing; optional LLM write-up |
 
-**LLM routing (paper §4.3):** cheap/fast model for fetch + table→text; deep model for reports. Do not put 11 LLM calls on every scanner name — **only CIO shortlist / firm-sleeve universe**.
+```bash
+# Heuristics only (no LLM)
+TRADING_AGENT_FIRM_LLM=0 python -m trading_agent firm --symbol AAPL --force
+
+# Heuristics + SpaceXAI/xAI enrichment
+export XAI_API_KEY=...
+TRADING_AGENT_FIRM=1   # optional: enable on desk shortlist
+python -m trading_agent firm --symbol AAPL --force
+```
+
+Env: `TRADING_AGENT_FIRM_LLM` (default 1), `TRADING_AGENT_FIRM_LLM_MODEL` (default `grok-4.5`).  
+Still **only shortlist** (`TRADING_AGENT_FIRM_MAX_SYMBOLS`, default 5). Debate/trader/risk remain P2–P4 stubs.
 
 ### P2 — Researcher debate (fully missing)
 

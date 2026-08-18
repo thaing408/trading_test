@@ -1029,11 +1029,15 @@ def _run_firm(args: argparse.Namespace) -> int:
         force = True
     session_root = getattr(args, "session_root", None)
     root = Path(session_root).expanduser() if session_root else None
+    use_llm = None
+    if getattr(args, "no_llm", False):
+        use_llm = False
     result = run_firm_sleeve(
         symbols,
         trading_date=getattr(args, "date", None),
         session_root=root,
         force=force,
+        use_llm=use_llm,
     )
     print(json.dumps(result, indent=2))
     if result.get("skipped") and not force:
@@ -1846,6 +1850,11 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="Write artifacts even when TRADING_AGENT_FIRM=0",
+    )
+    firm.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Heuristics only (skip xAI even if XAI_API_KEY is set)",
     )
     firm.add_argument(
         "--session-root",

@@ -1,9 +1,11 @@
-"""Shared firm tool registry (P0 stubs — real collectors wired in P1+)."""
+"""Shared firm tool registry — P1 live gathers with stub fallback."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
+
+from trading_agent.firm import gather as g
 
 
 @dataclass
@@ -20,7 +22,7 @@ class ToolResult:
     ok: bool
     data: Dict[str, Any] = field(default_factory=dict)
     error: str = ""
-    stub: bool = True
+    stub: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,38 +34,28 @@ class ToolResult:
         }
 
 
-def _stub(tool: str, **kwargs: Any) -> Dict[str, Any]:
-    return {
-        "status": "stub",
-        "tool": tool,
-        "args": {k: v for k, v in kwargs.items() if k != "symbol"},
-        "symbol": kwargs.get("symbol"),
-        "message": f"P0 stub tool `{tool}` — no live fetch",
-    }
-
-
 def tool_ohlcv(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("ohlcv", symbol=symbol, **kwargs)
+    return g.gather_ohlcv(symbol, period=str(kwargs.get("period") or "6mo"))
 
 
 def tool_ta_bundle(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("ta_bundle", symbol=symbol, **kwargs)
+    return g.gather_ta_bundle(symbol)
 
 
 def tool_news(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("news", symbol=symbol, **kwargs)
+    return g.gather_news(symbol, limit=int(kwargs.get("limit") or 12))
 
 
 def tool_fundamentals(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("fundamentals", symbol=symbol, **kwargs)
+    return g.gather_fundamentals(symbol)
 
 
 def tool_insider(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("insider", symbol=symbol, **kwargs)
+    return g.gather_insider(symbol)
 
 
 def tool_social(symbol: str, **kwargs: Any) -> Dict[str, Any]:
-    return _stub("social", symbol=symbol, **kwargs)
+    return g.gather_social(symbol)
 
 
 TOOL_REGISTRY: Dict[str, ToolSpec] = {
@@ -72,7 +64,7 @@ TOOL_REGISTRY: Dict[str, ToolSpec] = {
     "news": ToolSpec("news", "News headlines / catalysts", tool_news),
     "fundamentals": ToolSpec("fundamentals", "Fundamentals snapshot", tool_fundamentals),
     "insider": ToolSpec("insider", "Insider / Form-4 style series", tool_insider),
-    "social": ToolSpec("social", "Social / X / Reddit sentiment", tool_social),
+    "social": ToolSpec("social", "Social / news-tone sentiment proxy", tool_social),
 }
 
 
@@ -84,7 +76,11 @@ def call_tool(name: str, *, symbol: str, **kwargs: Any) -> ToolResult:
         return ToolResult(tool=name, ok=False, error="tool_disabled", stub=True)
     try:
         data = spec.handler(symbol=symbol, **kwargs)
-        return ToolResult(tool=name, ok=True, data=data if isinstance(data, dict) else {"raw": data})
+        if not isinstance(data, dict):
+            data = {"raw": data}
+        ok = data.get("status") not in ("error",)
+        stub = data.get("status") == "stub" or data.get("source") == "stub"
+        return ToolResult(tool=name, ok=ok, data=data, stub=bool(stub), error=str(data.get("error") or ""))
     except Exception as exc:  # noqa: BLE001
         return ToolResult(tool=name, ok=False, error=str(exc), stub=True)
 
