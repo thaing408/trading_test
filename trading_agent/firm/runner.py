@@ -1,0 +1,524 @@
+"""Firm sleeve runner.
+
+P0: empty schemas when forced without analysts.
+P1: live gathers + heuristic analyst reports (+ optional xAI LLM).
+
+TRADING_AGENT_FIRM=0 (default): desk no-op.
+CIO / auto_trade_book unchanged.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
+
+from trading_agent.firm.analysts import (
+    build_fundamental_report,
+    build_news_report,
+    build_sentiment_report,
+    build_technical_report,
+)
+from trading_agent.firm.debate import run_debate
+from trading_agent.firm.protocol import FirmCard, FirmMessage
+from trading_agent.firm.reports import (
+    ManagerDecision,
+    RiskAdjustment,
+)
+from trading_agent.firm.discord_card import firm_discord_enabled, load_firm_card, post_firm_cards
+from trading_agent.firm.eval import evaluate_firm_day, write_eval_report
+from trading_agent.firm.gather import gather_breadth, gather_calendar
+from trading_agent.firm.manager import build_manager_decision
+from trading_agent.firm.risk_debate import apply_risk_to_proposal, run_risk_debate
+from trading_agent.firm.trader import (
+    book_merge_enabled,
+    build_trader_proposal,
+    load_book_geometry,
+    maybe_merge_proposal_into_book,
+)
+from trading_agent.firm.roles import FIRM_ROLES
+from trading_agent.firm.state import (
+    FirmSymbolState,
+    append_message,
+    firm_enabled,
+    persist_symbol_run,
+    write_json,
+)
+from trading_agent.firm.tools import call_tool
+
+ET = ZoneInfo("America/New_York")
+
+
+def _trading_date(d: Optional[date] = None) -> str:
+    if d is not None:
+        return d.isoformat()
+    return datetime.now(ET).date().isoformat()
+
+
+def _max_symbols() -> int:
+    try:
+        return max(1, int(os.getenv("TRADING_AGENT_FIRM_MAX_SYMBOLS", "5") or 5))
+    except ValueError:
+        return 5
+
+
+def _use_llm() -> bool:
+    raw = os.getenv("TRADING_AGENT_FIRM_LLM", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _bullet(text: str, n: int = 90) -> str:
+    t = (text or "").strip().replace("\n", " ")
+    return (t[: n - 1] + "…") if len(t) > n else t
+
+
+def run_firm_for_symbol(
+    symbol: str,
+    *,
+    trading_date: Optional[str] = None,
+    session_root: Optional[Path] = None,
+    force: bool = False,
+    use_llm: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Run P1 analysts for one symbol (heuristics always; LLM if enabled)."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "error": "empty_symbol"}
+    day = trading_date or _trading_date()
+    enabled = firm_enabled()
+    if not enabled and not force:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "TRADING_AGENT_FIRM=0",
+            "symbol": sym,
+            "trading_date": day,
+        }
+
+    llm = _use_llm() if use_llm is None else bool(use_llm)
+
+    state = FirmSymbolState(
+        symbol=sym,
+        trading_date=day,
+        status="running",
+        flag_enabled=enabled or force,
+        roles={name: role.to_dict() for name, role in FIRM_ROLES.items()},
+    )
+
+    # --- ReAct gather (real tools) ---
+    tool_cache: Dict[str, Any] = {}
+    for role_name in (
+        "fundamental_analyst",
+        "sentiment_analyst",
+        "news_analyst",
+        "technical_analyst",
+    ):
+        role = FIRM_ROLES[role_name]
+        for tool in role.allowed_tools:
+            if tool in tool_cache:
+                # still log reuse
+                state.react_log.append(
+                    {
+                        "role": role_name,
+                        "thought": f"reuse cached `{tool}` for {sym}",
+                        "tool": tool,
+                        "tool_args": {},
+                        "observation": {"cached": True, "tool": tool},
+                    }
+                )
+                continue
+            from trading_agent.firm.react import react_call
+
+            step = react_call(
+                role_name,
+                symbol=sym,
+                thought=f"P1: gather `{tool}` for {sym}",
+                tool=tool,
+                log=state.react_log,
+            )
+            tool_cache[tool] = (step.observation or {}).get("data") or {}
+        append_message(
+            state,
+            FirmMessage(
+                kind="react",
+                role=role_name,
+                symbol=sym,
+                trading_date=day,
+                payload={"tools": list(role.allowed_tools), "mode": "p1_live"},
+            ),
+        )
+
+    ohlcv = tool_cache.get("ohlcv") or call_tool("ohlcv", symbol=sym).data
+    ta = tool_cache.get("ta_bundle") or call_tool("ta_bundle", symbol=sym).data
+    news = tool_cache.get("news") or call_tool("news", symbol=sym).data
+    fund = tool_cache.get("fundamentals") or call_tool("fundamentals", symbol=sym).data
+    insider = tool_cache.get("insider") or call_tool("insider", symbol=sym).data
+    social = tool_cache.get("social") or call_tool("social", symbol=sym).data
+
+    # --- Analyst reports (P1) ---
+    tech_r = build_technical_report(sym, day, ta, use_llm=llm)
+    news_r = build_news_report(sym, day, news, use_llm=llm)
+    fund_r = build_fundamental_report(sym, day, fund, insider, use_llm=llm)
+    sent_r = build_sentiment_report(sym, day, social, use_llm=llm)
+
+    # --- Researcher debate (P2) ---
+    debate, debate_transcript = run_debate(
+        symbol=sym,
+        trading_date=day,
+        tech=tech_r,
+        news=news_r,
+        fund=fund_r,
+        sent=sent_r,
+        use_llm=llm,
+    )
+    state.react_log.append(
+        {
+            "role": "debate_facilitator",
+            "thought": "P2 bull/bear debate on analyst reports",
+            "tool": "",
+            "observation": {
+                "winner": debate.winner,
+                "confidence": debate.confidence,
+                "rounds": debate.rounds,
+            },
+        }
+    )
+    append_message(
+        state,
+        FirmMessage(
+            kind="debate",
+            role="debate_facilitator",
+            symbol=sym,
+            trading_date=day,
+            payload={"transcript": debate_transcript[-6:], "verdict": debate.to_dict()},
+        ),
+    )
+    # --- Trader (P3) ---
+    geometry = load_book_geometry(sym)
+    trader = build_trader_proposal(
+        symbol=sym,
+        trading_date=day,
+        tech=tech_r,
+        news=news_r,
+        fund=fund_r,
+        sent=sent_r,
+        debate=debate,
+        geometry=geometry,
+        use_llm=llm,
+    )
+    # Attach fundamental score into book hints for merge
+    trader.book_hints["fundamental_score"] = fund_r.fundamental_score
+    state.react_log.append(
+        {
+            "role": "trader",
+            "thought": "P3 synthesize BUY/SELL/HOLD from debate + reports",
+            "tool": "",
+            "observation": {
+                "action": trader.action,
+                "confidence": trader.confidence,
+                "size_hint": trader.size_hint,
+            },
+        }
+    )
+    append_message(
+        state,
+        FirmMessage(
+            kind="proposal",
+            role="trader",
+            symbol=sym,
+            trading_date=day,
+            payload=trader.to_dict(),
+        ),
+    )
+
+    # --- Risk + manager (P4) ---
+    risk = run_risk_debate(
+        symbol=sym,
+        trading_date=day,
+        prop=trader,
+        tech=tech_r,
+        fund=fund_r,
+        debate=debate,
+        use_llm=llm,
+    )
+    trader = apply_risk_to_proposal(trader, risk)
+    manager = build_manager_decision(
+        symbol=sym,
+        trading_date=day,
+        prop=trader,
+        risk=risk,
+        debate=debate,
+        use_llm=llm,
+    )
+    # P7 eligibility: reject/defer never auto-eligible
+    if manager.decision in ("reject", "defer") or risk.recommendation == "veto":
+        trader.book_hints["mapped_action"] = "SKIP"
+        trader.book_hints["oms_eligible"] = False
+    else:
+        trader.book_hints["oms_eligible"] = trader.action in ("BUY", "SELL")
+        trader.book_hints["dte_policy_required"] = True
+
+    state.react_log.append(
+        {
+            "role": "risk_facilitator",
+            "thought": "P4 risk trio vs trader proposal + OMS exposure",
+            "observation": {
+                "recommendation": risk.recommendation,
+                "size_mult": risk.size_mult,
+                "votes": risk.persona_votes,
+            },
+        }
+    )
+    state.react_log.append(
+        {
+            "role": "fund_manager",
+            "thought": "P4 manager overlay for CIO handoff",
+            "observation": {
+                "decision": manager.decision,
+                "size_mult": manager.size_mult,
+            },
+        }
+    )
+
+    reports = {
+        "fundamental": fund_r.to_dict(),
+        "sentiment": sent_r.to_dict(),
+        "news": news_r.to_dict(),
+        "technical": tech_r.to_dict(),
+        "debate": debate.to_dict(),
+        "trader": trader.to_dict(),
+        "risk": risk.to_dict(),
+        "manager": manager.to_dict(),
+    }
+
+    card = FirmCard(
+        symbol=sym,
+        trading_date=day,
+        fundamental_bullet=_bullet(
+            f"score={fund_r.fundamental_score:.0f} {fund_r.reasons[0] if fund_r.reasons else ''}"
+        ),
+        sentiment_bullet=_bullet(f"{sent_r.tilt} ({sent_r.score:+.0f})"),
+        news_bullet=_bullet(
+            (news_r.name_catalysts[0] if news_r.name_catalysts else "")
+            or (news_r.headlines[0] if news_r.headlines else "no headlines")
+        ),
+        technical_bullet=_bullet(f"{tech_r.bias}/{tech_r.regime}"),
+        debate_winner=debate.winner,
+        debate_confidence=float(debate.confidence or 0),
+        trader_action=trader.action,
+        risk_adjustment=risk.recommendation,
+        manager_decision=manager.decision,
+        status="p4_manager",
+    )
+    state.card = card.to_dict()
+    state.status = "complete"
+    out_dir = persist_symbol_run(state, reports, session_root=session_root)
+    write_json(
+        Path(out_dir) / "debate_transcript.json",
+        {
+            "symbol": sym,
+            "trading_date": day,
+            "rounds": debate.rounds,
+            "winner": debate.winner,
+            "confidence": debate.confidence,
+            "transcript": debate_transcript,
+        },
+    )
+    write_json(Path(out_dir) / "trader_proposal.json", trader.to_dict())
+    # P5 side artifacts
+    write_json(
+        Path(out_dir) / "data_pack.json",
+        {
+            "indicator_pack": (ta or {}).get("indicator_pack"),
+            "calendar": gather_calendar(sym),
+            "breadth": gather_breadth(),
+        },
+    )
+
+    merge_result: Dict[str, Any] = {"skipped": True}
+    if book_merge_enabled() and trader.book_hints.get("oms_eligible"):
+        merge_result = maybe_merge_proposal_into_book(trader)
+    elif book_merge_enabled() and not trader.book_hints.get("oms_eligible"):
+        # Still allow HOLD soft-block
+        if trader.action == "HOLD" or manager.decision in ("reject", "defer"):
+            merge_result = maybe_merge_proposal_into_book(trader)
+        else:
+            merge_result = {
+                "skipped": True,
+                "reason": "oms_eligible_false",
+                "manager": manager.decision,
+                "risk": risk.recommendation,
+            }
+
+    return {
+        "ok": True,
+        "skipped": False,
+        "symbol": sym,
+        "trading_date": day,
+        "path": str(out_dir),
+        "status": state.status,
+        "react_steps": len(state.react_log),
+        "llm": llm,
+        "analyst_status": {
+            "technical": tech_r.meta.status,
+            "news": news_r.meta.status,
+            "fundamental": fund_r.meta.status,
+            "sentiment": sent_r.meta.status,
+            "fundamental_score": fund_r.fundamental_score,
+            "indicator_count": int((ta or {}).get("indicator_count") or 0),
+        },
+        "debate": {
+            "winner": debate.winner,
+            "confidence": debate.confidence,
+            "rounds": debate.rounds,
+            "status": debate.meta.status,
+        },
+        "trader": {
+            "action": trader.action,
+            "side": trader.side,
+            "confidence": trader.confidence,
+            "size_hint": trader.size_hint,
+            "timing": trader.timing,
+            "status": trader.meta.status,
+            "oms_eligible": trader.book_hints.get("oms_eligible"),
+        },
+        "risk": {
+            "recommendation": risk.recommendation,
+            "size_mult": risk.size_mult,
+            "votes": risk.persona_votes,
+            "status": risk.meta.status,
+        },
+        "manager": {
+            "decision": manager.decision,
+            "size_mult": manager.size_mult,
+            "status": manager.meta.status,
+            "cio_handoff": manager.cio_handoff,
+        },
+        "book_merge": merge_result,
+        "card": state.card,
+    }
+
+
+def run_firm_sleeve(
+    symbols: Sequence[str],
+    *,
+    trading_date: Optional[str] = None,
+    session_root: Optional[Path] = None,
+    force: bool = False,
+    use_llm: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Run firm P1 for a shortlist (capped)."""
+    enabled = firm_enabled()
+    day = trading_date or _trading_date()
+    if not enabled and not force:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "TRADING_AGENT_FIRM=0",
+            "trading_date": day,
+            "symbols": [],
+            "results": [],
+        }
+
+    capped: List[str] = []
+    seen = set()
+    for s in symbols:
+        u = str(s or "").strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        capped.append(u)
+        if len(capped) >= _max_symbols():
+            break
+
+    results = [
+        run_firm_for_symbol(
+            sym,
+            trading_date=day,
+            session_root=session_root,
+            force=True,
+            use_llm=use_llm,
+        )
+        for sym in capped
+    ]
+    root = Path(session_root) if session_root else Path.home() / ".trading_agent" / "sessions"
+    index_dir = root / day / "firm"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    index = {
+        "schema_version": "firm_day_index_v1",
+        "trading_date": day,
+        "enabled": enabled or force,
+        "phase": "P4_manager",
+        "symbols": capped,
+        "results": [
+            {
+                "symbol": r.get("symbol"),
+                "path": r.get("path"),
+                "status": r.get("status"),
+                "analyst_status": r.get("analyst_status"),
+                "trader": r.get("trader"),
+                "risk": r.get("risk"),
+                "manager": r.get("manager"),
+            }
+            for r in results
+            if r.get("ok") and not r.get("skipped")
+        ],
+    }
+    write_json(index_dir / "index.json", index)
+
+    # P6 eval report for the day
+    eval_rep = evaluate_firm_day(day, session_root=root)
+    eval_path = write_eval_report(eval_rep, session_root=root)
+
+    # P7 Discord firm cards (optional)
+    discord_res: Dict[str, Any] = {"skipped": True}
+    if firm_discord_enabled() and (enabled or force):
+        cards = []
+        for r in results:
+            p = r.get("path")
+            if p:
+                c = load_firm_card(Path(p) / "firm_card.json")
+                if c:
+                    cards.append(c)
+        discord_res = post_firm_cards(cards, title=f"Firm sleeve {day}")
+
+    return {
+        "ok": True,
+        "skipped": False,
+        "trading_date": day,
+        "symbols": capped,
+        "results": results,
+        "index_path": str(index_dir / "index.json"),
+        "eval_path": str(eval_path),
+        "eval": {
+            "n_symbols": eval_rep.n_symbols,
+            "n_buy": eval_rep.n_buy,
+            "n_hold": eval_rep.n_hold,
+            "n_veto": eval_rep.n_veto,
+            "agreement_rate": eval_rep.agreement_rate,
+        },
+        "discord": discord_res,
+    }
+
+
+def maybe_run_firm_after_research(
+    symbols: Sequence[str],
+    *,
+    session_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Orchestrator hook — safe no-op when flag off."""
+    if not firm_enabled():
+        return {"ok": True, "skipped": True, "reason": "TRADING_AGENT_FIRM=0"}
+    session_root = None
+    trading_date = None
+    if session_dir is not None:
+        trading_date = session_dir.name
+        session_root = session_dir.parent
+    return run_firm_sleeve(
+        symbols,
+        trading_date=trading_date,
+        session_root=session_root,
+        force=False,
+    )

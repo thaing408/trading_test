@@ -47,10 +47,14 @@ def _load_env_files() -> None:
                 k, v = k.strip(), v.strip().strip('"').strip("'")
                 if not k:
                     continue
-                # trading_test env always overrides
+                # trading_test env always overrides; also refresh trade/Discord keys
                 if "trading_test" in str(p) or "trading-test" in str(p):
                     os.environ[k] = v
-                elif k.startswith("AUTO_TRADE_") or k.startswith("TRADING_AGENT_"):
+                elif (
+                    k.startswith("AUTO_TRADE_")
+                    or k.startswith("TRADING_AGENT_")
+                    or k.startswith("DISCORD_")
+                ):
                     os.environ[k] = v
                 elif k not in os.environ:
                     os.environ[k] = v
@@ -68,6 +72,62 @@ def _load_env_files() -> None:
     # Prefer bot token alias
     if not os.environ.get("DISCORD_TOKEN") and os.environ.get("DISCORD_BOT_TOKEN"):
         os.environ["DISCORD_TOKEN"] = os.environ["DISCORD_BOT_TOKEN"]
+
+
+def _maybe_ops_alert(result: dict, *, live: bool) -> None:
+    """P2.2 — Discord when book empty, process gate fails, Schwab dead, kill switch."""
+    from trading_agent.ops.alerts import post_ops_alert
+
+    lines = []
+    if result.get("blocked"):
+        lines.append(f"🚨 **BLOCKED** `{result.get('reason')}` kill={result.get('kill_switch')}")
+    if result.get("schwab_block"):
+        lines.append(f"🚨 **Schwab health:** `{result.get('schwab_block')}` — LIVE place skipped")
+    pre = result.get("pretrade") or {}
+    gate = (pre.get("process_gate") or {}) if isinstance(pre, dict) else {}
+    if gate.get("ok") is False:
+        lines.append(
+            f"⚠️ **Process gate:** `{gate.get('reason')}` "
+            f"bias=`{gate.get('bias') or 'unset'}` score={gate.get('overall_score')}"
+        )
+    books = result.get("book_summary") or []
+    enter_total = 0
+    for b in books:
+        if isinstance(b, dict):
+            enter_total += int(b.get("enter_rows") or 0)
+    if not books:
+        lines.append("⚠️ **No local books found** — run desk / scanners first")
+    elif enter_total <= 0:
+        cash_bits = [
+            f"{b.get('name')}=cash:{b.get('stay_in_cash')}"
+            for b in books
+            if isinstance(b, dict)
+        ]
+        lines.append(
+            f"⚠️ **No ENTER rows** (enter_total=0). "
+            + ("; ".join(cash_bits[:4]) if cash_bits else "stay_in_cash / empty")
+        )
+    # Only alert on problems or first-cycle summary when LIVE and had entries
+    if not lines and live and enter_total > 0:
+        submitted = len(result.get("submitted_ids") or [])
+        orders = result.get("orders") or []
+        skipped = sum(1 for o in orders if isinstance(o, dict) and o.get("status") == "skipped")
+        failed = sum(1 for o in orders if isinstance(o, dict) and o.get("status") == "failed")
+        # Quiet success — optional one-liner when submits happen
+        if submitted or failed:
+            lines.append(
+                f"✅ Consumer cycle: ENTERs={enter_total} submitted={submitted} "
+                f"failed={failed} skipped={skipped} live={live}"
+            )
+            if books:
+                top = books[0] if isinstance(books[0], dict) else {}
+                lines.append(
+                    f"Top book: **{top.get('name')}** "
+                    f"syms={', '.join(str(s) for s in (top.get('symbols') or [])[:6])}"
+                )
+    if not lines:
+        return
+    post_ops_alert("\n".join(lines), title="Mac auto-trade ops")
 
 
 def _log_unified_universe() -> None:
@@ -132,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from trading_agent.export.mac_execute import (
         in_consumer_window,
+        in_watch_window,
         live_enabled,
         run_consume,
     )
@@ -144,16 +205,26 @@ def main(argv: list[str] | None = None) -> int:
 
     def once(*, allow_outside: bool = False) -> int:
         outside = not in_consumer_window()
-        if outside and not (args.anytime or allow_outside or os.getenv(
-            "TRADING_AGENT_AUTO_TRADE_ANYTIME", ""
-        ).strip()):
+        # After entry window but still in manage/watch window → still run (manage lots)
+        in_watch = in_watch_window()
+        if (
+            outside
+            and not in_watch
+            and not (
+                args.anytime
+                or allow_outside
+                or os.getenv("TRADING_AGENT_AUTO_TRADE_ANYTIME", "").strip()
+            )
+        ):
             if not args.quiet:
-                print("Outside consumer window (9:25–11:00 ET) — use --anytime to force")
+                print(
+                    "Outside watch/manage window (default 9:25–16:00 ET) — use --anytime to force"
+                )
             return 0
         result = run_consume(
             paths=paths,
             live=live,
-            force_outside_window=bool(args.anytime or allow_outside),
+            force_outside_window=bool(args.anytime or allow_outside or outside),
             mark_processed=True,
         )
         if not args.quiet:
@@ -161,10 +232,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(result["checklist"])
             if result.get("blocked"):
                 print(f"BLOCKED: {result.get('reason')} kill={result.get('kill_switch')}")
+            if result.get("schwab_block"):
+                print(f"SCHWAB_BLOCK: {result.get('schwab_block')}")
             if result.get("ready_orders_path"):
                 print(f"ready_orders: {result['ready_orders_path']}")
             if result.get("pretrade"):
                 print(f"pretrade: {result['pretrade']}")
+            ac = result.get("account_cash") or (result.get("pretrade") or {}).get("account_cash")
+            if ac:
+                print(
+                    "account_cash: "
+                    f"fetched={ac.get('fetched')} "
+                    f"available={ac.get('cash_available')} "
+                    f"bp={ac.get('buying_power')} "
+                    f"tradable={ac.get('tradable_after_reserve')} "
+                    f"remaining={ac.get('remaining_after_submits', ac.get('tradable_after_reserve'))} "
+                    f"err={ac.get('error')}"
+                )
             if result.get("manage"):
                 print(f"manage: {result['manage']}")
             books = result.get("books") or []
@@ -172,11 +256,12 @@ def main(argv: list[str] | None = None) -> int:
                 print("books:", ", ".join(books))
             else:
                 print("books: (none found — run local research/QT or pass a path)")
+            if result.get("book_summary"):
+                print("book_summary:", result["book_summary"])
 
         # Discord: paper channel — entries / exits / cycle summary / positions
         try:
             from trading_agent.discord.paper_activity import (
-                post_activity,
                 post_order_event,
                 post_orders_batch,
                 post_positions,
@@ -214,12 +299,18 @@ def main(argv: list[str] | None = None) -> int:
                     or [{"action": "note", "symbol": "?", "reason": str(manage)[:120]}]
                 )
 
-            # Snapshot positions after activity
             if orders_objs or manage:
                 post_positions(source="IBKR paper")
         except Exception as disc_exc:  # noqa: BLE001
             if not args.quiet:
                 print(f"[discord paper] skip: {disc_exc}", flush=True)
+
+        # Ops alerts (fail-open) — useful on Mac paper consumer too
+        try:
+            _maybe_ops_alert(result, live=live)
+        except Exception as alert_exc:  # noqa: BLE001
+            if not args.quiet:
+                print(f"[ops_alert] skip: {alert_exc}", flush=True)
 
         if result.get("blocked"):
             return 2
@@ -230,22 +321,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.watch:
         return once()
 
-    # Watch loop: process while in consumer window (or forever with --anytime)
+    # Watch loop: entry window + manage-until (default through 16:00 ET)
     code = 0
     last_sig = ""
+    last_manage = 0.0
     # If launchd starts slightly early, wait until window opens (max ~30 min)
     wait_deadline = time.time() + 30 * 60
-    while not in_consumer_window() and not args.anytime:
+    while not in_watch_window() and not args.anytime:
         if time.time() > wait_deadline:
             if not args.quiet:
-                print("Timed out waiting for consumer window")
+                print("Timed out waiting for watch/manage window")
             return 0
         time.sleep(15)
 
     while True:
-        if not args.anytime and not in_consumer_window():
+        if not args.anytime and not in_watch_window():
             if not args.quiet:
-                print("Consumer window ended — exiting watch")
+                print("Watch/manage window ended — exiting watch")
             break
         from trading_agent.export.mac_execute import book_candidates
 
@@ -259,8 +351,12 @@ def main(argv: list[str] | None = None) -> int:
                 except OSError:
                     pass
         sig = "|".join(sig_parts)
-        if sig != last_sig or not last_sig:
+        # Always re-run periodically so open lots get managed even if book mtime static
+        manage_poll = max(30, int(args.poll_seconds))
+        due_manage = (time.time() - last_manage) >= manage_poll
+        if sig != last_sig or not last_sig or due_manage:
             last_sig = sig
+            last_manage = time.time()
             code = once(allow_outside=bool(args.anytime))
         time.sleep(max(5, int(args.poll_seconds)))
     return code

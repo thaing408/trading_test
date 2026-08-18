@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.grok.auto-trade-consumer-watchdog</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>__HOME__/trading_agent/scripts/macos/auto-trade-consumer-watchdog.sh</string>
+	</array>
+	<!-- Every 15 minutes; script no-ops outside Mon–Fri 06:30–11:00 PT -->
+	<key>StartInterval</key>
+	<integer>900</integer>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.trading_agent/logs/launchd-auto-trade-watchdog.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.trading_agent/logs/launchd-auto-trade-watchdog.err.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>TZ</key>
+		<string>America/Los_Angeles</string>
+	</dict>
+</dict>
+</plist>

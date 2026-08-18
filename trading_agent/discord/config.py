@@ -34,3 +34,30 @@ class DiscordConfig:
         if self.bot_token and self.channel_id:
             return "bot_channel"
         return "none"
+
+    def with_channel(self, channel_id: str | None) -> "DiscordConfig":
+        """Copy config pointing at a different bot channel (webhook unchanged)."""
+        cid = (channel_id or "").strip() or self.channel_id
+        return DiscordConfig(
+            webhook_url=self.webhook_url if not cid else None,
+            bot_token=self.bot_token,
+            channel_id=cid,
+        )
+
+    @classmethod
+    def income_channel_from_env(cls) -> "DiscordConfig | None":
+        """Bot config for income plays, or None if DISCORD_INCOME_CHANNEL_ID unset."""
+        load_project_env()
+        channel = (
+            os.getenv("DISCORD_INCOME_CHANNEL_ID")
+            or os.getenv("DISCORD_INCOME_PLAYS_CHANNEL_ID")
+            or ""
+        ).strip()
+        if not channel:
+            return None
+        base = cls.from_env()
+        token = base.bot_token or os.getenv("DISCORD_BOT_TOKEN") or None
+        if not token:
+            return None
+        # Force bot channel (do not use production webhook for income)
+        return DiscordConfig(webhook_url=None, bot_token=token, channel_id=channel)

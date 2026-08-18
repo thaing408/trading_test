@@ -20,6 +20,243 @@ def fetch_positions(call_mcp: McpCaller) -> Dict[str, Any]:
     return resp
 
 
+def fetch_account_balances(call_mcp: McpCaller, *, retries: int = 2) -> Dict[str, Any]:
+    """Return get_account balances (fail-closed dict with error key).
+
+    Expected shape from schwab-mcp-server:
+      {account_id, account_type, balances: {cash_available, cash_balance,
+       market_value, total_value, buying_power}}
+
+    Retries briefly on Schwab 5xx (common transient).
+    """
+    last: Dict[str, Any] = {"error": "get_account_empty"}
+    attempts = max(1, int(retries) + 1)
+    for attempt in range(attempts):
+        try:
+            resp = call_mcp("get_account", {})
+        except Exception as exc:
+            last = {"error": "get_account_exception", "message": str(exc)}
+            continue
+        if not isinstance(resp, dict):
+            last = {"error": "get_account_bad_shape", "raw": str(resp)[:200]}
+            continue
+        # schwab-mcp may return {"error": true, "message": "...500..."}
+        if resp.get("error"):
+            last = {
+                "error": "get_account_api_error",
+                "message": str(resp.get("message") or resp.get("error_type") or resp)[:400],
+                "raw": resp,
+            }
+            # only retry obvious server errors
+            msg = str(last.get("message") or "").lower()
+            if attempt + 1 < attempts and ("500" in msg or "503" in msg or "timeout" in msg):
+                continue
+            return last
+        balances = resp.get("balances")
+        if not isinstance(balances, dict):
+            # tolerate raw Schwab securitiesAccount payload
+            acct = resp.get("securitiesAccount") or resp
+            if isinstance(acct, dict):
+                raw = acct.get("currentBalances") or acct.get("initialBalances") or {}
+                if isinstance(raw, dict) and raw:
+                    balances = {
+                        "cash_available": raw.get("availableFunds"),
+                        "cash_balance": raw.get("cashBalance"),
+                        "market_value": raw.get("longMarketValue"),
+                        "total_value": raw.get("liquidationValue"),
+                        "buying_power": raw.get("buyingPower"),
+                    }
+                    return {
+                        "account_id": resp.get("account_id") or acct.get("accountNumber"),
+                        "account_type": acct.get("type") or resp.get("account_type"),
+                        "balances": balances,
+                        "raw": resp,
+                    }
+            last = {"error": "get_account_no_balances", "raw": str(resp)[:300]}
+            continue
+        return resp
+    return last
+
+
+def _as_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_tradable_cash(
+    account_resp: Dict[str, Any],
+    *,
+    prefer: str = "cash_available",
+) -> Optional[float]:
+    """Extract a single tradable-cash figure from get_account response.
+
+    prefer:
+      - cash_available: availableFunds (correct for long option debits)
+      - buying_power: margin BP
+      - min: min(cash_available, buying_power) when both present
+    """
+    if not account_resp or account_resp.get("error"):
+        return None
+    bal = account_resp.get("balances") or {}
+    if not isinstance(bal, dict):
+        return None
+    cash = _as_float(bal.get("cash_available"))
+    if cash is None:
+        cash = _as_float(bal.get("cash_balance"))
+    bp = _as_float(bal.get("buying_power"))
+    mode = (prefer or "cash_available").strip().lower()
+    if mode in ("bp", "buying_power", "buyingpower"):
+        return bp if bp is not None else cash
+    if mode == "min":
+        vals = [v for v in (cash, bp) if v is not None]
+        return min(vals) if vals else None
+    # default cash_available with BP fallback
+    if cash is not None:
+        return cash
+    return bp
+
+
+def quote_last_price(call_mcp: McpCaller, symbol: str) -> Optional[float]:
+    """Last/mark/mid for a stock or OCC via get_quote."""
+    if not symbol:
+        return None
+    try:
+        resp = call_mcp("get_quote", {"symbol": symbol})
+    except Exception:
+        return None
+    if not isinstance(resp, dict) or resp.get("error"):
+        return None
+    # unwrap nested quote envelope if present
+    data = resp.get(symbol) if isinstance(resp.get(symbol), dict) else resp
+    if isinstance(data, dict) and isinstance(data.get("quote"), dict):
+        data = data["quote"]
+    if not isinstance(data, dict):
+        return None
+    for key in (
+        "last_price",
+        "lastPrice",
+        "mark",
+        "markPrice",
+        "ask",
+        "askPrice",
+        "bid",
+        "bidPrice",
+        "last",
+    ):
+        px = _as_float(data.get(key))
+        if px is not None and px > 0:
+            return px
+    return None
+
+
+def quote_debit_premium(
+    call_mcp: McpCaller,
+    *,
+    occ: str,
+    quantity: int = 1,
+    buffer: float = 1.05,
+) -> Optional[float]:
+    """Estimate cash to BUY_TO_OPEN ``quantity`` contracts using ask/mark/last.
+
+    Returns dollars (premium * 100 * qty * buffer), or None if quote unavailable.
+    """
+    if not occ:
+        return None
+    try:
+        resp = call_mcp("get_quote", {"symbol": occ})
+    except Exception:
+        return None
+    if not isinstance(resp, dict) or resp.get("error"):
+        return None
+    data = resp.get(occ) if isinstance(resp.get(occ), dict) else resp
+    if isinstance(data, dict) and isinstance(data.get("quote"), dict):
+        data = data["quote"]
+    if not isinstance(data, dict):
+        data = resp if isinstance(resp, dict) else {}
+    px = None
+    for key in ("ask", "askPrice", "mark", "markPrice", "last_price", "lastPrice", "last", "bid"):
+        px = _as_float(data.get(key))
+        if px is not None and px > 0:
+            break
+    if px is None or px <= 0:
+        return None
+    qty = max(1, int(quantity or 1))
+    buf = max(1.0, float(buffer or 1.0))
+    return round(px * 100.0 * qty * buf, 2)
+
+
+def option_mark_from_position_row(row: Dict[str, Any]) -> Optional[float]:
+    """Per-contract mark from position market_value / (qty*100)."""
+    qty = abs(position_qty(row))
+    if qty < 1e-9:
+        return None
+    for key in ("market_value", "marketValue", "currentMarketValue"):
+        mv = _as_float(row.get(key))
+        if mv is not None:
+            return abs(mv) / (qty * 100.0)
+    return None
+
+
+def fetch_marks_for_lots(
+    call_mcp: McpCaller,
+    lots: List[Any],
+) -> Dict[str, Any]:
+    """Live underlying + option marks for OMS manage loop.
+
+    Returns:
+      {
+        underlying: {SYM: last},
+        option: {OCC: mark},
+        positions_index: {symbol: row},
+      }
+    """
+    underlying: Dict[str, float] = {}
+    option: Dict[str, float] = {}
+    syms: List[str] = []
+    occs: List[str] = []
+    for lot in lots:
+        sym = str(getattr(lot, "symbol", "") or "").upper().strip()
+        occ = str(getattr(lot, "occ_symbol", "") or "").strip()
+        if sym and sym not in syms:
+            syms.append(sym)
+        if occ and occ not in occs:
+            occs.append(occ)
+
+    # Prefer positions for option marks (no extra quote call)
+    pos_resp = fetch_positions(call_mcp)
+    pos_index = index_positions_by_symbol(pos_resp) if not pos_resp.get("error") else {}
+    for occ, row in pos_index.items():
+        mark = option_mark_from_position_row(row)
+        if mark is not None and mark > 0:
+            option[occ.upper()] = mark
+            option[occ] = mark
+
+    for sym in syms:
+        px = quote_last_price(call_mcp, sym)
+        if px is not None:
+            underlying[sym] = px
+
+    for occ in occs:
+        key = occ.upper()
+        if key in option or occ in option:
+            continue
+        px = quote_last_price(call_mcp, occ)
+        if px is not None:
+            option[occ] = px
+            option[key] = px
+
+    return {
+        "underlying": underlying,
+        "option": option,
+        "positions_index": pos_index,
+        "positions_error": pos_resp.get("error"),
+    }
+
+
 def positions_list(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Normalize positions payload into a list of dict rows."""
     if resp.get("error"):

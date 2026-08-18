@@ -352,3 +352,61 @@ def ping_trade_connection() -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
         return {"ok": False, "error": str(exc), "host": cfg["host"], "port": cfg["port"]}
+
+
+def fetch_ibkr_account_balances() -> Dict[str, Any]:
+    """Paper/live IBKR account summary shaped like Schwab get_account balances.
+
+    Uses AvailableFunds / BuyingPower / NetLiquidation when present.
+    """
+    cfg = ibkr_trade_config()
+    try:
+        from ib_insync import IB
+    except ImportError:
+        return {"error": "ib_insync_missing"}
+
+    ib = IB()
+    try:
+        ib.connect(
+            cfg["host"],
+            cfg["port"],
+            clientId=int(cfg["client_id"]) + 101,
+            timeout=cfg["timeout"],
+            readonly=True,
+        )
+        accts = list(ib.managedAccounts() or [])
+        acct = (cfg.get("account") or (accts[0] if accts else "") or "").strip()
+        vals: Dict[str, float] = {}
+        if acct:
+            # accountValues() returns list of AccountValue
+            for av in ib.accountValues(acct) or []:
+                tag = str(getattr(av, "tag", "") or "")
+                cur = str(getattr(av, "currency", "") or "")
+                if cur and cur not in ("USD", "BASE", ""):
+                    continue
+                try:
+                    vals[tag] = float(getattr(av, "value", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+        ib.disconnect()
+        cash_av = vals.get("AvailableFunds", vals.get("TotalCashValue", vals.get("CashBalance")))
+        bp = vals.get("BuyingPower", vals.get("FullAvailableFunds", cash_av))
+        nl = vals.get("NetLiquidation", vals.get("EquityWithLoanValue"))
+        return {
+            "account_id": acct,
+            "account_type": "IBKR",
+            "broker": "ibkr",
+            "balances": {
+                "cash_available": cash_av,
+                "cash_balance": vals.get("TotalCashValue", vals.get("CashBalance")),
+                "buying_power": bp,
+                "total_value": nl,
+                "market_value": vals.get("GrossPositionValue"),
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        try:
+            ib.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        return {"error": "ibkr_account_failed", "message": str(exc)}

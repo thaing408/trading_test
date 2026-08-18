@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Book{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Auto-trade book</h1>
+  <div class="kpi-row compact">
+    <div class="kpi-card"><div class="k">stay_in_cash</div><div class="v">{{ snap.stay_in_cash }}</div></div>
+    <div class="kpi-card"><div class="k">entry_count</div><div class="v">{{ snap.entries|length }}</div></div>
+    <div class="kpi-card"><div class="k">book_role</div><div class="v small">{{ snap.book_role or '—' }}</div></div>
+    <div class="kpi-card"><div class="k">scanned cash</div><div class="v">{{ snap.scanned_raw.get('stay_in_cash', '—') }}</div></div>
+  </div>
+  {% if snap.cash_reason %}
+  <p class="cash-reason">{{ snap.cash_reason }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Entries</h2>
+  {% if snap.entries %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Action</th><th>Side</th><th>Grade</th>
+        <th>Entry</th><th>Stop</th><th>Target</th>
+        <th>Checklist</th><th>Edge</th><th>Strategy</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in snap.entries %}
+      <tr>
+        <td>{{ e.get('symbol') }}</td>
+        <td>{{ e.get('action') }}</td>
+        <td>{{ e.get('side') }}</td>
+        <td>{{ e.get('setup_grade') }}</td>
+        <td>{{ e.get('entry') }}</td>
+        <td>{{ e.get('stop') }}</td>
+        <td>{{ e.get('target') }}</td>
+        <td>{{ e.get('checklist_passed') }}</td>
+        <td>{{ e.get('edge_complete') }}</td>
+        <td>{{ e.get('strategy') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted empty-entries"><strong>Empty entries</strong> — research stay_in_cash or no ENTER-grade setups.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Book incomplete (from rejections)</h2>
+  {% set incompletes = snap.rejections | selectattr('source', 'equalto', 'book_incomplete') | list %}
+  {% if incompletes %}
+  <ul>
+    {% for r in incompletes %}
+    <li><span class="tag">{{ r.symbol }}</span> {{ r.reason }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No <code>rejected_incomplete</code> rows on book (plan rejections may still apply).</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Watchlist / scan symbols</h2>
+  <p>{{ snap.watchlist|join(', ') or '—' }}</p>
+</section>
+
+<section class="panel">
+  <h2>Book raw (expand)</h2>
+  <details>
+    <summary>auto_trade_book.json fields</summary>
+    <pre class="json-dump">{{ snap.book_raw | tojson(indent=2) }}</pre>
+  </details>
+  <details>
+    <summary>scanned_list.json fields</summary>
+    <pre class="json-dump">{{ snap.scanned_raw | tojson(indent=2) }}</pre>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Day bias / gap (if present)</h2>
+  {% if snap.book_raw.get('day_bias') %}
+  <pre class="json-dump">{{ snap.book_raw.get('day_bias') | tojson(indent=2) }}</pre>
+  {% else %}
+  <p class="muted">No day_bias on book.</p>
+  {% endif %}
+  {% if snap.gap_book_summary %}
+  <p>Gap book: {{ snap.gap_book_summary }}</p>
+  {% endif %}
+</section>
+{% endblock %}

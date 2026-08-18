@@ -1043,6 +1043,67 @@ def _run_cio(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_firm(args: argparse.Namespace) -> int:
+    """TradingAgents firm sleeve (P0–P7) under sessions/{date}/firm/."""
+    import json
+    from pathlib import Path
+
+    from trading_agent.firm.discord_card import post_firm_day
+    from trading_agent.firm.eval import evaluate_firm_day, write_eval_report
+    from trading_agent.firm.runner import run_firm_sleeve
+    from trading_agent.firm.state import firm_enabled
+
+    session_root = getattr(args, "session_root", None)
+    root = Path(session_root).expanduser() if session_root else None
+    day = getattr(args, "date", None)
+
+    if getattr(args, "eval_only", False):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trading_date = day or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        rep = evaluate_firm_day(trading_date, session_root=root)
+        path = write_eval_report(rep, session_root=root)
+        print(json.dumps(rep.to_dict(), indent=2))
+        print(f"\nwrote {path}")
+        return 0
+
+    if getattr(args, "post_discord", False):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trading_date = day or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        res = post_firm_day(trading_date, session_root=root)
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") or res.get("skipped") else 1
+
+    symbols = list(getattr(args, "symbol", None) or [])
+    force = bool(getattr(args, "force", False))
+    if not symbols:
+        symbols = ["AAPL"]
+        force = True
+    use_llm = None
+    if getattr(args, "no_llm", False):
+        use_llm = False
+    # Don't spam Discord from CLI unless explicitly enabled in env
+    result = run_firm_sleeve(
+        symbols,
+        trading_date=day,
+        session_root=root,
+        force=force,
+        use_llm=use_llm,
+    )
+    print(json.dumps(result, indent=2))
+    if result.get("skipped") and not force:
+        print(
+            "\n(firm skipped — set TRADING_AGENT_FIRM=1 or pass --force)",
+            file=sys.stderr,
+        )
+    elif result.get("ok"):
+        print(f"\nfirm_enabled={firm_enabled()} paths under sessions/{{date}}/firm/")
+    return 0 if result.get("ok") else 1
+
+
 def _run_process(args: argparse.Namespace) -> int:
     """Komar-style 5-step systematic process runbook."""
     from datetime import date as date_type
@@ -1794,6 +1855,99 @@ def main(argv: list[str] | None = None) -> int:
     )
     multi_bt.add_argument("--output", "-o", metavar="FILE")
 
+    desk_ui = subparsers.add_parser(
+        "desk-ui",
+        help="Local auto-trade desk web UI (FastAPI; optional [desk-ui] extra)",
+    )
+    desk_ui.add_argument(
+        "--host",
+        default=None,
+        help="Bind host (default 127.0.0.1; localhost only in v1)",
+    )
+    desk_ui.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port (default 8787)",
+    )
+    desk_ui.add_argument(
+        "--reload",
+        action="store_true",
+        help="Uvicorn reload (dev)",
+    )
+    desk_ui.add_argument(
+        "--state",
+        metavar="DIR",
+        help="Fixture/state root instead of ~/.trading_agent",
+    )
+    desk_ui.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Override trading date for snapshot",
+    )
+
+    desk_status = subparsers.add_parser(
+        "desk-status",
+        help="Local auto-trade desk snapshot (book, rejections, manage; no HTTP)",
+    )
+    desk_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit full DeskSnapshot as JSON",
+    )
+    desk_status.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="Override trading date (default: resolve_trading_date PT)",
+    )
+    desk_status.add_argument(
+        "--state",
+        metavar="DIR",
+        help="Fixture/state root instead of ~/.trading_agent",
+    )
+    desk_status.add_argument(
+        "--positions",
+        metavar="FILE",
+        help="Positions JSON path (never refreshes brokerage)",
+    )
+
+    firm = subparsers.add_parser(
+        "firm",
+        help="TradingAgents-style firm sleeve (P0: empty reports; TRADING_AGENT_FIRM=1 to enable on desk)",
+    )
+    firm.add_argument(
+        "--symbol",
+        action="append",
+        default=[],
+        help="Symbol (repeatable). Default: AAPL fixture when none given with --force",
+    )
+    firm.add_argument("--date", default=None, help="YYYY-MM-DD (default: today ET)")
+    firm.add_argument(
+        "--force",
+        action="store_true",
+        help="Write artifacts even when TRADING_AGENT_FIRM=0",
+    )
+    firm.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Heuristics only (skip xAI even if XAI_API_KEY is set)",
+    )
+    firm.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="P6: write firm eval_report.json for --date (no new symbol runs)",
+    )
+    firm.add_argument(
+        "--post-discord",
+        action="store_true",
+        help="P7: post firm cards for --date to Discord ops channel",
+    )
+    firm.add_argument(
+        "--session-root",
+        default=None,
+        help="Override sessions root (default ~/.trading_agent/sessions)",
+    )
+
     process = subparsers.add_parser(
         "process",
         help="Systematic 5-step process runbook (regime → select → prepare → execute → review)",
@@ -1862,8 +2016,43 @@ def main(argv: list[str] | None = None) -> int:
         return _run_oms(args)
     if args.command == "research":
         return _run_research(args)
+    if args.command == "firm":
+        return _run_firm(args)
     if args.command == "process":
         return _run_process(args)
+    if args.command == "desk-ui":
+        try:
+            import fastapi  # noqa: F401
+            import uvicorn  # noqa: F401
+        except ImportError:
+            print(
+                "desk-ui requires optional deps. Install:\n"
+                '  pip install -e ".[desk-ui]"',
+                file=sys.stderr,
+            )
+            return 2
+        from trading_agent.desk_ui.cli import run_server
+
+        return run_server(
+            host=getattr(args, "host", None),
+            port=getattr(args, "port", None),
+            reload=bool(getattr(args, "reload", False)),
+            state=getattr(args, "state", None),
+            trading_date=getattr(args, "date", None),
+        )
+    if args.command == "desk-status":
+        from trading_agent.desk_ui.cli_status import run_desk_status
+
+        extra: list[str] = []
+        if getattr(args, "json", False):
+            extra.append("--json")
+        if getattr(args, "date", None):
+            extra.extend(["--date", args.date])
+        if getattr(args, "state", None):
+            extra.extend(["--state", args.state])
+        if getattr(args, "positions", None):
+            extra.extend(["--positions", args.positions])
+        return run_desk_status(extra)
     if args.command == "premarket":
         return _run_premarket(args)
 

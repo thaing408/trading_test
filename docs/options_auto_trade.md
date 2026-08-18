@@ -2,6 +2,8 @@
 
 **Roadmap / full-auto gaps:** see [`docs/quant_institution_roadmap.md`](quant_institution_roadmap.md) (institutional goals + missing pieces for ultimate fully auto trade).
 
+**Monday continue (P0 proof + P2/P3 backlog):** see [`docs/AUTO_TRADE_NEXT_STEPS.md`](AUTO_TRADE_NEXT_STEPS.md).
+
 ## Goal
 Windows builds **defined-risk options** suggestions with IV/POP/DTE/liquidity gates and posts them to Discord.  
 Mac pulls **code only** from git, then trades in **local TOS** using Discord cards + optional local book file.
@@ -79,7 +81,22 @@ Agent: `com.grok.pull-researcher-sync` every **15m** + desk startup.
 |------|-------------------|
 | Gap book | On **CIO board** as decision candidates (continuation); soft pipeline tag |
 | Playlist | On **CIO board** + screener universe; confidence boost if already Phase-1 |
-| Both | Full CIO gates still apply — **not auto-approve** |
+| Both | Full CIO gates still apply for gap/playlist — **not auto-approve** |
+| **Multi-method EXPORT** | **P1 auto-export** to `auto_trade_book` **without CIO** when `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT=1` (default **on**). Consumer still uses process gate + OMS + LIVE. Disable with `=0`. |
+
+### Multi-method auto-export (no CIO required)
+
+At research (and evening) desk scanners, **export-eligible** multi-method PLAYs write ENTER rows into local `auto_trade_book.json` even if classic research is `stay_in_cash` or CIO approves nothing.
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT` | `1` | Write multi-method ENTERs without CIO |
+| `TRADING_AGENT_PROTECT_AUTO_TRADE_BOOK` | `1` | Discovery/cash empty books cannot wipe those ENTERs same day |
+| `TRADING_AGENT_MULTILEG_LIVE` | `0` | Spreads still need opt-in for LIVE place (single-leg debit OK when LIVE=1) |
+| `TRADING_AGENT_0DTE_SYMBOLS` | `SPY,QQQ,IWM` | Only these may export/place **0DTE** |
+| `TRADING_AGENT_NON_INDEX_MIN_DTE` | `3` | All other symbols need **DTE > 2** (min 3 calendar days) |
+
+**DTE dual-path:** multi-method export uses `option_dte_policy.py`. Index list → 0DTE on weekdays; everything else picks the next Friday (or first weekday) with DTE ≥ 3. Same rules at place-time (Schwab precheck / IBKR paper).
 
 Disable:
 

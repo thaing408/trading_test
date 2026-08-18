@@ -18,6 +18,23 @@ See **[docs/repo_split.md](docs/repo_split.md)** and **[PAPER_NO_CIO.md](PAPER_N
 - Paper: IBKR Gateway, state under `~/.trading_test` (see `.env.paper.example`)
 - Linux paper: [docs/ibkr_gateway_paper_linux.md](docs/ibkr_gateway_paper_linux.md)
 
+
+## Sync with trading_agent
+
+This repo keeps `upstream` → `https://github.com/thaing408/trading_agent.git`.
+Periodically merge upstream for shared OMS / firm / manage improvements, while
+preserving IBKR paper Discord (`#ibkr-tradings`), Gateway helpers, and
+`product_mode=methods` (no CIO).
+
+```bash
+git fetch upstream
+git merge upstream/main
+# resolve conflicts favoring paper IBKR paths where needed
+```
+
+Schwab-only pieces (OAuth health block, `#trading-journal` bot posts) stay
+gated off when `TRADING_AGENT_BROKER=ibkr`. Cash gate uses IBKR AvailableFunds.
+
 ## Quick start
 
 ```bash

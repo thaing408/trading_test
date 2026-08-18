@@ -558,10 +558,57 @@ def _apply_place_response(order: ReadyOrder, resp: Dict[str, Any], *, occ: str =
     return order
 
 
+def option_contract_precheck(order: ReadyOrder) -> Tuple[bool, str, Dict[str, Any]]:
+    """Fail-closed structural qualify before Schwab place (P2.5 + dual DTE).
+
+    Checks expiration parse, symbol-aware min DTE (0DTE only SPY/QQQ/IWM;
+    others DTE > 2 → min 3), single strike, CALL/PUT, OCC length.
+    Does not call the broker for a live option-chain lookup (MCP place still
+    returns errors if OCC unknown).
+    """
+    meta: Dict[str, Any] = {}
+    exp = parse_expiration_date(order.expiration)
+    if not exp:
+        return False, "bad_expiration", meta
+    from trading_agent.export.option_dte_policy import dte_allowed, dte_policy_label
+
+    ok_dte, why_dte, dte = dte_allowed(order.symbol, exp)
+    meta["dte"] = dte
+    meta["expiration"] = exp.isoformat()
+    meta["dte_policy"] = dte_policy_label(order.symbol)
+    if not ok_dte:
+        return False, why_dte, meta
+    if not order.strike_prices or len(order.strike_prices) != 1:
+        return False, "need_single_strike", meta
+    cp = infer_call_put(order)
+    if not cp:
+        return False, "ambiguous_call_put", meta
+    strike = float(order.strike_prices[0])
+    if strike <= 0:
+        return False, "bad_strike", meta
+    occ = format_occ_symbol(order.symbol, exp, cp, strike)
+    meta["occ_symbol"] = occ
+    meta["call_put"] = cp
+    # OCC root(6)+yymmdd(6)+C/P(1)+strike(8) = 21
+    if len(occ) != 21:
+        return False, f"bad_occ_len:{len(occ)}", meta
+    return True, "", meta
+
+
 def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
     """BUY_TO_OPEN one option contract (Schwab MCP or IBKR paper)."""
+    ok_q, reason_q, meta = option_contract_precheck(order)
+    if not ok_q:
+        order.status = "skipped"
+        order.skip_reason = reason_q
+        order.broker_response = {
+            "mode": "precheck_failed",
+            "message": reason_q,
+            **meta,
+        }
+        return order
     exp = parse_expiration_date(order.expiration)
-    cp = infer_call_put(order)
+    cp = str(meta.get("call_put") or infer_call_put(order) or "")
     if not exp or not cp or not order.strike_prices:
         order.status = "ready"
         order.broker_response = {
@@ -570,6 +617,7 @@ def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
         }
         return order
     strike = float(order.strike_prices[0])
+    occ = str(meta.get("occ_symbol") or format_occ_symbol(order.symbol, exp, cp, strike))
     qty = max(1, int(order.quantity or 1))
 
     if broker_name() == "ibkr":
@@ -600,6 +648,7 @@ def submit_single_leg_debit(order: ReadyOrder, *, live: bool) -> ReadyOrder:
         "confirm_live": bool(live),
     }
     resp = call_schwab_mcp("place_order", payload)
+    resp = {**meta, **resp}
     return _apply_place_response(order, resp, occ=occ)
 
 
@@ -725,14 +774,62 @@ def submit_order(order: ReadyOrder, *, live: bool) -> ReadyOrder:
     return order
 
 
-def format_checklist(orders: Sequence[ReadyOrder], *, live: bool) -> str:
+def summarize_books(books: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """P2.6 — which local books contributed ENTER rows (for logs / Discord)."""
+    rows: List[Dict[str, Any]] = []
+    for book in books:
+        path = str(book.get("_path") or book.get("source") or "")
+        ents = entries_from_book(book)
+        rows.append(
+            {
+                "path": path,
+                "name": Path(path).name if path else str(book.get("role") or "unknown"),
+                "stay_in_cash": bool(book.get("stay_in_cash")),
+                "entry_count": int(
+                    book.get("entry_count")
+                    if book.get("entry_count") is not None
+                    else len(ents)
+                ),
+                "enter_rows": len(ents),
+                "role": book.get("role"),
+                "export_policy": book.get("export_policy"),
+                "symbols": [
+                    str(e.get("symbol") or "")
+                    for e in ents[:10]
+                    if isinstance(e, dict)
+                ],
+            }
+        )
+    return rows
+
+
+def format_checklist(
+    orders: Sequence[ReadyOrder],
+    *,
+    live: bool,
+    book_summary: Optional[Sequence[Dict[str, Any]]] = None,
+) -> str:
     lines = [
         f"# Mac auto-trade consumer  host={socket.gethostname()}  live={live}",
         f"orders={len(orders)} ready={sum(1 for o in orders if o.status in ('ready','dry_run'))} "
         f"submitted={sum(1 for o in orders if o.status == 'submitted')} "
-        f"skipped={sum(1 for o in orders if o.status == 'skipped')}",
+        f"skipped={sum(1 for o in orders if o.status == 'skipped')} "
+        f"failed={sum(1 for o in orders if o.status == 'failed')}",
         "",
     ]
+    if book_summary:
+        lines.append("## Books loaded (P2.6 source clarity)")
+        for b in book_summary:
+            lines.append(
+                f"- **{b.get('name')}** enter_rows={b.get('enter_rows')} "
+                f"cash={b.get('stay_in_cash')} role={b.get('role') or '—'} "
+                f"policy={b.get('export_policy') or '—'}"
+            )
+            if b.get("symbols"):
+                lines.append(f"  syms: {', '.join(str(s) for s in b['symbols'][:10])}")
+            if b.get("path"):
+                lines.append(f"  path: `{b.get('path')}`")
+        lines.append("")
     if not orders:
         lines.append("NO ORDERS — empty books or stay_in_cash")
         return "\n".join(lines)
@@ -779,7 +876,7 @@ def in_qt_window(now: Optional[datetime] = None) -> bool:
 
 
 def in_consumer_window(now: Optional[datetime] = None) -> bool:
-    """Active consumer window: 9:25–11:00 ET weekdays (covers QT + early desk)."""
+    """Active *entry* consumer window: 9:25–11:00 ET weekdays (QT + early desk)."""
     ts = now or datetime.now(ET)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
@@ -789,6 +886,29 @@ def in_consumer_window(now: Optional[datetime] = None) -> bool:
         return False
     t = ts.time()
     return time(9, 25) <= t <= time(11, 0)
+
+
+def in_watch_window(now: Optional[datetime] = None) -> bool:
+    """Watch loop window: entry hours + manage-until (default through 16:00 ET).
+
+    After 11:00 ET the consumer still polls so multi-day / 0DTE lots get managed
+    (trail, EOD flatten, min-premium wipe). New-entry gating stays soft in OMS.
+    """
+    try:
+        from trading_agent.oms.manage_rules import in_manage_window
+
+        return in_manage_window(now)
+    except Exception:
+        # Fallback: extend classic window to 16:00 ET
+        ts = now or datetime.now(ET)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
+        else:
+            ts = ts.astimezone(ET)
+        if ts.weekday() >= 5:
+            return False
+        t = ts.time()
+        return time(9, 25) <= t <= time(16, 0)
 
 
 def run_consume(

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}Desk UI{% endblock %} · trading_agent</title>
+  <link rel="stylesheet" href="/static/desk.css"/>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+  <header class="desk-header" id="desk-header"
+          {% if poll_seconds %}hx-get="{{ request.url.path }}" hx-trigger="every {{ poll_seconds }}s" hx-select=".desk-header" hx-target="this" hx-swap="outerHTML"{% endif %}>
+    <div class="header-row">
+      <div class="brand">
+        <span class="logo">Desk</span>
+        <span class="date">{{ snap.trading_date }}</span>
+      </div>
+      <div class="phase-chip" title="{{ snap.phase.phase_label }}">
+        {{ snap.phase.phase_kind }}
+        {% if next_phase_label %}<span class="muted">→ {{ next_phase_label }}</span>{% endif %}
+      </div>
+      <div class="badge badge-{{ 'cash' if snap.stay_in_cash else 'armed' }}">{{ cash_badge }}</div>
+      <div class="kpi env-chip" title="{{ snap.market.raw_bias or snap.regime or '' }}">
+        {% if snap.market and snap.market.header_label and snap.market.header_label != '—' %}
+        {{ snap.market.header_label }}
+        {% else %}
+        env {{ snap.environment_score if snap.environment_score is not none else '—' }}
+        · {{ snap.regime or '—' }}
+        {% endif %}
+      </div>
+      <div class="kpi muted" title="host role">
+        {{ snap.host }} · <strong>{{ snap.host_role }}</strong>
+      </div>
+      <div class="kpi muted">write {{ last_write_label }}</div>
+    </div>
+    <nav class="desk-nav">
+      {% for href, label in nav %}
+      <a href="{{ href }}" class="{% if active == href %}active{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </nav>
+  </header>
+
+  {% if snap.export_health.wrong_day %}
+  <div class="banner banner-red">Wrong day: book trading_date does not match resolved PT session.</div>
+  {% endif %}
+  {% if snap.export_health.stale_missed_slot and not snap.export_health.stale_suppressed_cash %}
+  <div class="banner banner-amber">Missed refresh slot — no book/scanned write since a scheduled research/CIO/discovery event.</div>
+  {% endif %}
+  {% if snap.manage.quiet %}
+  <div class="banner banner-amber">Manage quiet: {{ snap.manage.quiet_reason }}</div>
+  {% endif %}
+
+  <main class="desk-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="desk-footer">
+    <span>state: {{ state_root }}</span>
+    <span>{{ snap.broker_boundary or 'broker_boundary: —' }}</span>
+    <span>dual_system: local host files only · never rsync books</span>
+    <span>parse_failures={{ snap.parse_failures }}</span>
+  </footer>
+</body>
+</html>

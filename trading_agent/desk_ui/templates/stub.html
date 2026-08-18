@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>{{ page_title }}</h1>
+  <p class="muted">{{ stub_message }}</p>
+  <p><a href="/">← Overview</a> · <a href="/book">Book</a> · <a href="/api/v1/snapshot">JSON snapshot</a></p>
+</section>
+{% endblock %}

@@ -16,7 +16,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4", "httpx>=0.27"]
+desk-ui = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
 
 [project.scripts]
 trading-agent = "trading_agent.__main__:main"
@@ -24,6 +31,12 @@ trading-agent = "trading_agent.__main__:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["trading_agent*"]
+
+[tool.setuptools.package-data]
+trading_agent = [
+    "desk_ui/templates/*.html",
+    "desk_ui/static/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -190,10 +190,21 @@ def reconcile_lot_with_positions(
 
     avg = position_avg_price(found)
     qty = position_qty(found)
+    instr = (lot.instrument or "").lower()
+    is_opt = instr in ("options", "option") or len((lot.occ_symbol or "")) >= 15
     if avg > 0:
-        lot.fill_entry = avg
-        if lot.expected_entry:
-            lot.slippage = avg - float(lot.expected_entry)
+        if is_opt and avg < 50:
+            # True option fill premium — keep structure on lot.entry
+            from trading_agent.oms.manage_rules import capture_option_premium
+
+            capture_option_premium(lot, premium=avg, source="broker_avg_reconcile")
+            # Only set fill_entry to premium when prior fill looked like und/missing
+            if float(lot.fill_entry or 0) <= 0 or float(lot.fill_entry or 0) >= 50:
+                pass  # leave und structure in fill_entry if present; premium in meta
+        else:
+            lot.fill_entry = avg
+            if lot.expected_entry:
+                lot.slippage = avg - float(lot.expected_entry)
     if qty and abs(qty) >= 1:
         lot.quantity = int(abs(qty))
     if lot.status in (LotStatus.SUBMITTED.value, LotStatus.PENDING.value):
@@ -205,12 +216,22 @@ def reconcile_lot_with_positions(
         "qty": qty,
         "avg": avg,
         "ts": datetime.now(timezone.utc).isoformat(),
+        "option_entry_premium": meta.get("option_entry_premium"),
     }
+    # Persist initial_stop once for trail math
+    if "initial_stop" not in meta and lot.stop:
+        meta["initial_stop"] = float(lot.stop)
     lot.broker_meta = meta
     store.upsert_lot(lot)
     append_audit(
         "lot_reconciled",
-        payload={"lot_id": lot.lot_id, "symbol": lot.symbol, "fill": lot.fill_entry, "qty": qty},
+        payload={
+            "lot_id": lot.lot_id,
+            "symbol": lot.symbol,
+            "fill": lot.fill_entry,
+            "option_premium": (lot.broker_meta or {}).get("option_entry_premium"),
+            "qty": qty,
+        },
     )
     return lot
 

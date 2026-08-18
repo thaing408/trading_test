@@ -1,0 +1,30 @@
+{
+  "date": "2026-08-13",
+  "overall_market_bias": "Neutral",
+  "market_environment_score": 42.0,
+  "market_regime": "risk_off",
+  "stay_in_cash": true,
+  "cash_recommendation_reason": "All candidates failed gates (ADR%/RVOL/strength)",
+  "top_watchlist": [
+    "QQQ",
+    "IWM"
+  ],
+  "rejection_reasons": [
+    {
+      "symbol": "QQQ",
+      "reason": "ADR% below 2.5 minimum"
+    },
+    {
+      "symbol": "QQQ",
+      "reason": "Relative volume (RVOL) below 2.0"
+    },
+    {
+      "symbol": "IWM",
+      "reason": "52w strength too weak"
+    },
+    {
+      "symbol": "IWM",
+      "reason": "ADR% below 2.5 and RVOL weak"
+    }
+  ]
+}

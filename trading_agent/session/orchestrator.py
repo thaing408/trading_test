@@ -43,6 +43,7 @@ from trading_agent.session.intelligence import run_intelligence_pass
 from trading_agent.session.play_formatter import (
     format_cio_plays,
     format_cio_review,
+    format_income_plays,
     format_intelligence_brief,
     format_intraday_discord_title,
     format_intraday_plays,
@@ -298,8 +299,29 @@ def run_session(
                             reason="trading_test methods research",
                             force=mm_n > 0,
                         )
+
                     except Exception as bias_exc:  # noqa: BLE001
                         _log(log, f"[warn] process bias sync failed: {bias_exc}")
+                    # Optional TradingAgents firm sleeve (no-op unless TRADING_AGENT_FIRM=1)
+                    try:
+                        from trading_agent.firm import maybe_run_firm_after_research
+
+                        firm_res = maybe_run_firm_after_research(
+                            watch_symbols,
+                            session_dir=session_dir,
+                        )
+                        if not firm_res.get("skipped"):
+                            _log(
+                                log,
+                                f"[firm] sleeve symbols={firm_res.get('symbols')} "
+                                f"index={firm_res.get('index_path')}",
+                            )
+                            phase_messages["firm_sleeve"] = (
+                                f"Firm sleeve: {len(firm_res.get('symbols') or [])} "
+                                f"symbols → {firm_res.get('index_path')}"
+                            )
+                    except Exception as firm_exc:  # noqa: BLE001
+                        _log(log, f"[warn] firm sleeve failed: {firm_exc}")
                 else:
                     plan = run_pipeline(agent_config)
                     plan_context = plan_to_context(plan)
@@ -351,6 +373,25 @@ def run_session(
                             for sym in scan.symbols:
                                 if sym not in watch_symbols:
                                     watch_symbols.append(sym)
+                            try:
+                                from trading_agent.firm import maybe_run_firm_after_research
+
+                                firm_res = maybe_run_firm_after_research(
+                                    watch_symbols,
+                                    session_dir=session_dir,
+                                )
+                                if not firm_res.get("skipped"):
+                                    _log(
+                                        log,
+                                        f"[firm] sleeve symbols={firm_res.get('symbols')} "
+                                        f"index={firm_res.get('index_path')}",
+                                    )
+                                    phase_messages["firm_sleeve"] = (
+                                        f"Firm sleeve: {len(firm_res.get('symbols') or [])} "
+                                        f"symbols → {firm_res.get('index_path')}"
+                                    )
+                            except Exception as firm_exc:  # noqa: BLE001
+                                _log(log, f"[warn] firm sleeve failed: {firm_exc}")
                         except Exception as scan_exc:  # noqa: BLE001
                             _log(log, f"[warn] Research scanners failed: {scan_exc}")
                             _log(log, traceback.format_exc())

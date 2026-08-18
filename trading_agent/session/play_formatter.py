@@ -152,6 +152,100 @@ def format_research_plays(plan: DailyTradingPlan) -> str:
     return text
 
 
+# Short-premium / income-style structures (credit + CSP / covered call)
+_INCOME_STRATEGY_NAMES = frozenset(
+    {
+        "Iron Condor",
+        "Bull Put Credit Spread",
+        "Bear Call Credit Spread",
+        "Covered Call",
+        "Cash Secured Put",
+    }
+)
+_INCOME_SETUP_PREFIXES = (
+    "options_credit_",
+    "options_csp",
+    "options_covered",
+    "income_",
+)
+
+
+def is_income_opportunity(opp) -> bool:
+    """True for credit / short-premium income-style option plays."""
+    cls = (getattr(opp, "options_strategy_class", None) or "").strip().lower()
+    if cls == "credit":
+        return True
+    strategy = (getattr(opp, "strategy", None) or "").strip()
+    if strategy in _INCOME_STRATEGY_NAMES:
+        return True
+    setup = (getattr(opp, "playbook_setup_id", None) or "").strip().lower()
+    if any(setup.startswith(p) for p in _INCOME_SETUP_PREFIXES):
+        return True
+    name_l = strategy.lower()
+    return any(
+        k in name_l
+        for k in (
+            "credit",
+            "iron condor",
+            "covered call",
+            "cash secured",
+            "bull put",
+            "bear call",
+        )
+    )
+
+
+def format_income_plays(plan: DailyTradingPlan, *, limit: int = 10) -> str:
+    """Discord message for income (credit / short-premium) plays only.
+
+    Posted to DISCORD_INCOME_CHANNEL_ID when set (desk research phase).
+    """
+    opps = [o for o in (plan.ranked_opportunities or []) if is_income_opportunity(o)]
+    opps = opps[: max(0, limit)]
+    lines = [
+        f"**Income Plays — {plan.date}**",
+        f"**Bias:** {plan.overall_market_bias} | **Env:** {plan.market_environment_score:.1f}/100",
+        f"**Income setups:** {len(opps)} (credit / CSP / covered call / IC)",
+        "",
+    ]
+    if not opps:
+        if plan.stay_in_cash:
+            lines.append(
+                f"**No income plays today.** {plan.cash_recommendation_reason or 'Stay in cash.'}"
+            )
+        else:
+            lines.append(
+                "_No credit/income structures in ranked book (debit/directional may still be on Research)._"
+            )
+        return "\n".join(lines)
+
+    for opp in opps:
+        strikes = ", ".join(f"${s:.2f}" for s in (opp.strike_prices or [])[:4])
+        setup_id = getattr(opp, "playbook_setup_id", "") or "n/a"
+        eligible = "YES" if getattr(opp, "auto_trade_eligible", False) else "NO"
+        lines.extend(
+            [
+                f"### #{opp.rank} {opp.symbol} [{getattr(opp, 'setup_grade', 'C')}] — "
+                f"{opp.direction} {opp.strategy}",
+                f"- setup=`{setup_id}` | auto_trade={eligible} | "
+                f"class=`{getattr(opp, 'options_strategy_class', '') or 'credit'}`",
+                f"- Entry ${opp.entry_price:.2f} | Stop ${opp.stop_loss:.2f} | "
+                f"Target ${opp.profit_target:.2f} | Max risk ${opp.maximum_risk:.2f}",
+                f"- IVR {getattr(opp, 'iv_rank', 0):.0f} | "
+                f"POP {getattr(opp, 'options_pop', opp.probability_of_success):.0%} | "
+                f"Δ {getattr(opp, 'options_delta', 0):.2f} | "
+                f"DTE {getattr(opp, 'expiration_days', 0)} | "
+                f"defined_risk={getattr(opp, 'defined_risk', True)}",
+                f"- Strikes: {strikes} | Exp: {opp.expiration}",
+                f"- Conf {opp.confidence_score:.0f} | "
+                f"Thesis: {(opp.trade_thesis or 'n/a')[:140]}",
+                "",
+            ]
+        )
+    lines.append("_Income channel — short premium / defined-risk credit. Not auto-live by default._")
+    return "\n".join(lines)
+
+
 def _scanned_count(plan: DailyTradingPlan) -> int:
     """Names evaluated/screened that day (from pipeline research_summary)."""
     rs = plan.research_summary or {}
