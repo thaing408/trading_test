@@ -144,4 +144,4 @@ def test_runner_p1_with_mocked_tools(monkeypatch, tmp_path):
     fund = json.loads((d / "fundamental_report.json").read_text())
     assert fund["fundamental_score"] == 68.0
     card = json.loads((d / "firm_card.json").read_text())
-    assert card["status"] == "p1_analysts"
+    assert card["status"] == "p2_debate"

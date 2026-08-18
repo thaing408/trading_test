@@ -21,10 +21,9 @@ from trading_agent.firm.analysts import (
     build_sentiment_report,
     build_technical_report,
 )
+from trading_agent.firm.debate import run_debate
 from trading_agent.firm.protocol import FirmCard, FirmMessage
-from trading_agent.firm.react import analyst_stub_react_pass
 from trading_agent.firm.reports import (
-    DebateVerdict,
     ManagerDecision,
     RiskAdjustment,
     TraderProposal,
@@ -148,14 +147,48 @@ def run_firm_for_symbol(
     insider = tool_cache.get("insider") or call_tool("insider", symbol=sym).data
     social = tool_cache.get("social") or call_tool("social", symbol=sym).data
 
-    # --- Analyst reports ---
+    # --- Analyst reports (P1) ---
     tech_r = build_technical_report(sym, day, ta, use_llm=llm)
     news_r = build_news_report(sym, day, news, use_llm=llm)
     fund_r = build_fundamental_report(sym, day, fund, insider, use_llm=llm)
     sent_r = build_sentiment_report(sym, day, social, use_llm=llm)
 
-    # P2–P4 still empty stubs
-    debate = DebateVerdict.empty(sym, day)
+    # --- Researcher debate (P2) ---
+    debate, debate_transcript = run_debate(
+        symbol=sym,
+        trading_date=day,
+        tech=tech_r,
+        news=news_r,
+        fund=fund_r,
+        sent=sent_r,
+        use_llm=llm,
+    )
+    state.react_log.append(
+        {
+            "role": "debate_facilitator",
+            "thought": "P2 bull/bear debate on analyst reports",
+            "tool": "",
+            "observation": {
+                "winner": debate.winner,
+                "confidence": debate.confidence,
+                "rounds": debate.rounds,
+            },
+        }
+    )
+    append_message(
+        state,
+        FirmMessage(
+            kind="debate",
+            role="debate_facilitator",
+            symbol=sym,
+            trading_date=day,
+            payload={"transcript": debate_transcript[-6:], "verdict": debate.to_dict()},
+        ),
+    )
+    # Persist full transcript beside reports
+    # (written after out_dir known — see below)
+
+    # P3–P4 still stubs
     trader = TraderProposal.empty(sym, day)
     risk = RiskAdjustment.empty(sym, day)
     manager = ManagerDecision.empty(sym, day)
@@ -184,14 +217,26 @@ def run_firm_for_symbol(
         ),
         technical_bullet=_bullet(f"{tech_r.bias}/{tech_r.regime}"),
         debate_winner=debate.winner,
+        debate_confidence=float(debate.confidence or 0),
         trader_action=trader.action,
         risk_adjustment=risk.recommendation,
         manager_decision=manager.decision,
-        status="p1_analysts",
+        status="p2_debate",
     )
     state.card = card.to_dict()
     state.status = "complete"
     out_dir = persist_symbol_run(state, reports, session_root=session_root)
+    write_json(
+        Path(out_dir) / "debate_transcript.json",
+        {
+            "symbol": sym,
+            "trading_date": day,
+            "rounds": debate.rounds,
+            "winner": debate.winner,
+            "confidence": debate.confidence,
+            "transcript": debate_transcript,
+        },
+    )
     return {
         "ok": True,
         "skipped": False,
@@ -207,6 +252,12 @@ def run_firm_for_symbol(
             "fundamental": fund_r.meta.status,
             "sentiment": sent_r.meta.status,
             "fundamental_score": fund_r.fundamental_score,
+        },
+        "debate": {
+            "winner": debate.winner,
+            "confidence": debate.confidence,
+            "rounds": debate.rounds,
+            "status": debate.meta.status,
         },
         "card": state.card,
     }
@@ -261,7 +312,7 @@ def run_firm_sleeve(
         "schema_version": "firm_day_index_v1",
         "trading_date": day,
         "enabled": enabled or force,
-        "phase": "P1_analysts",
+        "phase": "P2_debate",
         "symbols": capped,
         "results": [
             {

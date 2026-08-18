@@ -1,6 +1,6 @@
 """Optional TradingAgents-style firm sleeve (arXiv 2412.20138).
 
-P0: schemas, roles, empty reports, ReAct tool stubs, session persistence.
+P0: schemas/roles/persistence · P1: four analysts · P2: bull/bear debate.
 Feature flag: TRADING_AGENT_FIRM=0 (default off) — CIO/OMS unchanged.
 """
 

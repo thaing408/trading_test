@@ -5,7 +5,8 @@
 
 **Implementation status:**  
 - **P0 shipped** — schemas/roles/empty reports/ReAct + `TRADING_AGENT_FIRM` (default off).  
-- **P1 shipped** (2026-08-17) — four analysts with live gathers + heuristic reports; optional xAI (`XAI_API_KEY`) enrichment. P2+ still later.
+- **P1 shipped** — four analysts with live gathers + heuristic reports; optional xAI enrichment.  
+- **P2 shipped** (2026-08-17) — bull/bear + facilitator → `DebateVerdict` (+ transcript). P3+ still later.
 
 ---
 
@@ -90,14 +91,20 @@ python -m trading_agent firm --symbol AAPL --force
 ```
 
 Env: `TRADING_AGENT_FIRM_LLM` (default 1), `TRADING_AGENT_FIRM_LLM_MODEL` (default `grok-4.5`).  
-Still **only shortlist** (`TRADING_AGENT_FIRM_MAX_SYMBOLS`, default 5). Debate/trader/risk remain P2–P4 stubs.
+Still **only shortlist** (`TRADING_AGENT_FIRM_MAX_SYMBOLS`, default 5). Trader/risk remain P3–P4 stubs.
 
-### P2 — Researcher debate (fully missing)
+### P2 — Researcher debate — **DONE**
 
-- Bull researcher: only argues long/add from analyst reports.
-- Bear researcher: only argues fade/avoid/risks.
-- Facilitator: N rounds (config `FIRM_DEBATE_ROUNDS`, default 2–3), then structured verdict (`winner`, `confidence`, `open_risks`).
-- **Do not** let debate bypass stay-in-cash / ADR / liquidity rails.
+Module: `trading_agent/firm/debate.py`.
+
+- Bull / bear opening points from P1 reports; N rounds of rebuttal (`TRADING_AGENT_FIRM_DEBATE_ROUNDS`, default **2**).
+- Facilitator scores → `winner` (`bull`|`bear`|`draw`), `confidence`, `open_risks` (always includes `advisory_only_hard_rails_still_apply`).
+- Optional LLM polish of the verdict when `XAI_API_KEY` set.
+- Artifacts: `debate_verdict.json`, `debate_transcript.json`; firm card `status=p2_debate`.
+
+```bash
+TRADING_AGENT_FIRM_LLM=0 python -m trading_agent firm --symbol AAPL --force --no-llm
+```
 
 ### P3 — Trader agent (partially missing)
 
