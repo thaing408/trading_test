@@ -48,6 +48,9 @@ def gather_ta_bundle(symbol: str, ohlcv: Optional[Dict[str, Any]] = None) -> Dic
         highs = data["highs"]
         lows = data["lows"]
         vols = data.get("volumes") or []
+        from trading_agent.firm.indicators import build_indicator_pack
+
+        pack = build_indicator_pack(data)
         bundle = {
             "status": "ok",
             "symbol": symbol.upper(),
@@ -61,6 +64,8 @@ def gather_ta_bundle(symbol: str, ohlcv: Optional[Dict[str, Any]] = None) -> Dic
             "adx14": ta.adx(highs, lows, closes, 14),
             "support_resistance": list(ta.support_resistance(lows, highs)),
             "vwap_relation": ta.vwap_relation(closes, vols) if vols else "n/a",
+            "indicator_pack": pack,
+            "indicator_count": int(pack.get("count") or 0),
         }
         # soft regime label
         rsi = bundle["rsi14"]
@@ -211,4 +216,56 @@ def gather_social(symbol: str, news: Optional[Dict[str, Any]] = None) -> Dict[st
         "peaks": peaks[:12],
         "engagement_notes": f"news_tone_proxy n={len(items)} (no X/Reddit yet)",
         "source": "news_tone_proxy",
+    }
+
+
+def gather_calendar(symbol: str = "") -> Dict[str, Any]:
+    """Economic calendar — degrade cleanly when FMP/calendar unavailable."""
+    try:
+        from trading_agent.collectors.calendar import collect_economic_calendar
+        from trading_agent.config import AgentConfig
+
+        cfg = AgentConfig()
+        try:
+            cfg.fixture_mode = False
+        except Exception:
+            pass
+        cal = collect_economic_calendar(cfg)
+        events = []
+        for ev in list(getattr(cal, "events", None) or [])[:20]:
+            if isinstance(ev, dict):
+                events.append(ev)
+            else:
+                events.append(
+                    {
+                        "title": str(getattr(ev, "event", None) or getattr(ev, "title", "") or ev),
+                        "date": str(getattr(ev, "time", "") or getattr(ev, "date", "") or ""),
+                        "impact": str(getattr(ev, "impact", "") or ""),
+                        "country": str(getattr(ev, "country", "") or ""),
+                    }
+                )
+        return {
+            "status": "ok" if events else "empty",
+            "symbol": (symbol or "").upper(),
+            "events": events,
+            "source": getattr(cal, "source", "calendar"),
+            "note": "paid FMP calendar may be empty without key",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "unavailable",
+            "symbol": (symbol or "").upper(),
+            "events": [],
+            "error": str(exc),
+            "note": "calendar collector unavailable",
+        }
+
+
+def gather_breadth() -> Dict[str, Any]:
+    """Market breadth placeholder (A/D, NH/NL) — marked unavailable."""
+    return {
+        "status": "unavailable",
+        "advance_decline": None,
+        "new_high_new_low": None,
+        "note": "breadth feed not configured",
     }

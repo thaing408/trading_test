@@ -4,10 +4,8 @@
 **Ours:** phase desk (intelligence → research → CIO → preopen → intraday → performance → evening scan), options/PA/multi-method books, rule CIO + risk gates, Discord/OMS.
 
 **Implementation status:**  
-- **P0 shipped** — schemas/roles/empty reports/ReAct + `TRADING_AGENT_FIRM` (default off).  
-- **P1 shipped** — four analysts with live gathers + heuristic reports; optional xAI enrichment.  
-- **P2 shipped** — bull/bear + facilitator → `DebateVerdict` (+ transcript).  
-- **P3 shipped** (2026-08-17) — trader BUY/SELL/HOLD + optional book merge. P4+ still later.
+- **P0–P7 shipped** (2026-08-17) — firm sleeve end-to-end under `trading_agent/firm/` with flag `TRADING_AGENT_FIRM` (default off).  
+- Live OMS / multi-method desk unchanged unless `TRADING_AGENT_FIRM_BOOK_MERGE=1`.
 
 ---
 
@@ -123,38 +121,38 @@ python -m trading_agent firm --symbol AAPL --force --no-llm
 # echo 'TRADING_AGENT_FIRM_BOOK_MERGE=1' >> ~/.grok/trading-agent.env
 ```
 
-### P4 — Risk debate + manager (partially missing)
+### P4 — Risk debate + manager — **DONE**
 
-- Add three risk personas (aggressive / neutral / conservative) debating the **trader proposal vs live book** (vol, liquidity, correlation, open exposure).
-- Facilitator + **CIO/manager** applies adjustment (cut size, tighten stop, veto).
-- Keep **deterministic vetoes** (cash floor, max risk %, earnings hard block) as last word.
+- `risk_debate.py`: aggressive/neutral/conservative votes + facilitator; deterministic earnings/open-lot vetoes.
+- `manager.py`: approve/modify/reject/defer + `cio_handoff`.
+- Firm card includes risk + manager; trader size/action adjusted on veto/cut.
 
-### P5 — Data gaps vs paper dataset
+### P5 — Data gaps — **PARTIAL (packaged + degrade-clean)**
 
-| Feed | Status | Later work |
-|------|--------|------------|
-| Prices / TA | Strong | Package a named **60-indicator** bundle for the tech analyst |
-| News | Partial (yfinance/FMP) | Point-in-time daily cache for backtest |
-| Social / X / Reddit | **Absent** | Optional collectors; degrade cleanly |
-| Insider / Form 4 | Keywords only | Structured insider series |
-| Financial statements | Thin yfinance | Deeper FMP/filings when keys exist |
-| Economic calendar | Often omitted (paid FMP) | Paid plan or alternate calendar |
-| Breadth (A/D, NH/NL) | Marked unavailable | Optional if we get a feed |
+| Feed | Status |
+|------|--------|
+| Prices / TA | **`firm_ta_pack_v1`** (~40–60 features) in `indicators.py` / `data_pack.json` |
+| News | Existing collectors |
+| Social | News-tone proxy (X/Reddit still absent) |
+| Insider | News-category proxy |
+| Calendar | `gather_calendar` → empty/unavailable without paid FMP |
+| Breadth | Explicitly `unavailable` in pack |
 
-### P6 — Evaluation (paper §5–6)
+### P6 — Evaluation — **DONE (day audit)**
 
-- Daily **no-look-ahead** replay: firm sleeve vs B&H / MACD / KDJ+RSI / SMA / **our current multi-method**.
-- Metrics already close: CR, AR, Sharpe, MDD in `performance/` / `backtest/` — add a **firm-sleeve** report.
-- Cap universe and dates (paper used ~3 months, 3–5 names) because of LLM cost.
-- Export decision sequences for audit (paper footnote on extreme Sharpe).
+- `eval.py`: `evaluate_firm_day` / `eval_report.json` — BUY/SELL/HOLD counts, vetoes, agreement vs multi-method ENTERs.
+- CLI: `python -m trading_agent firm --eval-only --date YYYY-MM-DD`
 
-### P7 — Product integration (ours, not in paper)
+### P7 — Product integration — **DONE**
 
-- **Feature flag** `TRADING_AGENT_FIRM=0` default.
-- Firm runs **after** research scanners, **before** CIO, on ranked symbols only.
-- CIO still owns Approve/Modify/Reject.
-- Discord: compact “firm card” (4 report bullets + debate winner + risk adjust).
-- Never let firm output skip OMS/export eligibility / DTE policy.
+- Flag `TRADING_AGENT_FIRM=0` default; desk hook after scanners / before CIO.
+- Discord firm cards opt-in: `TRADING_AGENT_FIRM_DISCORD=1` or `firm --post-discord`.
+- Eligibility: manager reject/defer / risk veto → `oms_eligible=false` (no silent OMS skip of DTE/cash).
+
+```bash
+python -m trading_agent firm --symbol AAPL --force --no-llm
+python -m trading_agent firm --eval-only --date 2026-08-17
+```
 
 ---
 

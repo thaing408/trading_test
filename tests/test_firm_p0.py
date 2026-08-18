@@ -97,6 +97,7 @@ def test_firm_sleeve_index(monkeypatch, tmp_path):
     monkeypatch.setenv("TRADING_AGENT_FIRM", "1")
     monkeypatch.setenv("TRADING_AGENT_FIRM_MAX_SYMBOLS", "2")
     monkeypatch.setenv("TRADING_AGENT_FIRM_LLM", "0")
+    monkeypatch.setenv("TRADING_AGENT_FIRM_DISCORD", "0")
     _patch_firm_tools(monkeypatch)
     out = run_firm_sleeve(
         ["AAPL", "MSFT", "NVDA"],
@@ -110,7 +111,7 @@ def test_firm_sleeve_index(monkeypatch, tmp_path):
     assert idx.is_file()
     data = json.loads(idx.read_text())
     assert data["symbols"] == ["AAPL", "MSFT"]
-    assert data.get("phase") == "P3_trader"
+    assert data.get("phase") == "P4_manager"
 
 def test_maybe_run_after_research_respects_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("TRADING_AGENT_FIRM", "0")

@@ -27,6 +27,11 @@ from trading_agent.firm.reports import (
     ManagerDecision,
     RiskAdjustment,
 )
+from trading_agent.firm.discord_card import firm_discord_enabled, load_firm_card, post_firm_cards
+from trading_agent.firm.eval import evaluate_firm_day, write_eval_report
+from trading_agent.firm.gather import gather_breadth, gather_calendar
+from trading_agent.firm.manager import build_manager_decision
+from trading_agent.firm.risk_debate import apply_risk_to_proposal, run_risk_debate
 from trading_agent.firm.trader import (
     book_merge_enabled,
     build_trader_proposal,
@@ -228,9 +233,54 @@ def run_firm_for_symbol(
         ),
     )
 
-    # P4 still stub
-    risk = RiskAdjustment.empty(sym, day)
-    manager = ManagerDecision.empty(sym, day)
+    # --- Risk + manager (P4) ---
+    risk = run_risk_debate(
+        symbol=sym,
+        trading_date=day,
+        prop=trader,
+        tech=tech_r,
+        fund=fund_r,
+        debate=debate,
+        use_llm=llm,
+    )
+    trader = apply_risk_to_proposal(trader, risk)
+    manager = build_manager_decision(
+        symbol=sym,
+        trading_date=day,
+        prop=trader,
+        risk=risk,
+        debate=debate,
+        use_llm=llm,
+    )
+    # P7 eligibility: reject/defer never auto-eligible
+    if manager.decision in ("reject", "defer") or risk.recommendation == "veto":
+        trader.book_hints["mapped_action"] = "SKIP"
+        trader.book_hints["oms_eligible"] = False
+    else:
+        trader.book_hints["oms_eligible"] = trader.action in ("BUY", "SELL")
+        trader.book_hints["dte_policy_required"] = True
+
+    state.react_log.append(
+        {
+            "role": "risk_facilitator",
+            "thought": "P4 risk trio vs trader proposal + OMS exposure",
+            "observation": {
+                "recommendation": risk.recommendation,
+                "size_mult": risk.size_mult,
+                "votes": risk.persona_votes,
+            },
+        }
+    )
+    state.react_log.append(
+        {
+            "role": "fund_manager",
+            "thought": "P4 manager overlay for CIO handoff",
+            "observation": {
+                "decision": manager.decision,
+                "size_mult": manager.size_mult,
+            },
+        }
+    )
 
     reports = {
         "fundamental": fund_r.to_dict(),
@@ -260,7 +310,7 @@ def run_firm_for_symbol(
         trader_action=trader.action,
         risk_adjustment=risk.recommendation,
         manager_decision=manager.decision,
-        status="p3_trader",
+        status="p4_manager",
     )
     state.card = card.to_dict()
     state.status = "complete"
@@ -277,10 +327,30 @@ def run_firm_for_symbol(
         },
     )
     write_json(Path(out_dir) / "trader_proposal.json", trader.to_dict())
+    # P5 side artifacts
+    write_json(
+        Path(out_dir) / "data_pack.json",
+        {
+            "indicator_pack": (ta or {}).get("indicator_pack"),
+            "calendar": gather_calendar(sym),
+            "breadth": gather_breadth(),
+        },
+    )
 
     merge_result: Dict[str, Any] = {"skipped": True}
-    if book_merge_enabled():
+    if book_merge_enabled() and trader.book_hints.get("oms_eligible"):
         merge_result = maybe_merge_proposal_into_book(trader)
+    elif book_merge_enabled() and not trader.book_hints.get("oms_eligible"):
+        # Still allow HOLD soft-block
+        if trader.action == "HOLD" or manager.decision in ("reject", "defer"):
+            merge_result = maybe_merge_proposal_into_book(trader)
+        else:
+            merge_result = {
+                "skipped": True,
+                "reason": "oms_eligible_false",
+                "manager": manager.decision,
+                "risk": risk.recommendation,
+            }
 
     return {
         "ok": True,
@@ -297,6 +367,7 @@ def run_firm_for_symbol(
             "fundamental": fund_r.meta.status,
             "sentiment": sent_r.meta.status,
             "fundamental_score": fund_r.fundamental_score,
+            "indicator_count": int((ta or {}).get("indicator_count") or 0),
         },
         "debate": {
             "winner": debate.winner,
@@ -311,6 +382,19 @@ def run_firm_for_symbol(
             "size_hint": trader.size_hint,
             "timing": trader.timing,
             "status": trader.meta.status,
+            "oms_eligible": trader.book_hints.get("oms_eligible"),
+        },
+        "risk": {
+            "recommendation": risk.recommendation,
+            "size_mult": risk.size_mult,
+            "votes": risk.persona_votes,
+            "status": risk.meta.status,
+        },
+        "manager": {
+            "decision": manager.decision,
+            "size_mult": manager.size_mult,
+            "status": manager.meta.status,
+            "cio_handoff": manager.cio_handoff,
         },
         "book_merge": merge_result,
         "card": state.card,
@@ -366,7 +450,7 @@ def run_firm_sleeve(
         "schema_version": "firm_day_index_v1",
         "trading_date": day,
         "enabled": enabled or force,
-        "phase": "P3_trader",
+        "phase": "P4_manager",
         "symbols": capped,
         "results": [
             {
@@ -374,12 +458,32 @@ def run_firm_sleeve(
                 "path": r.get("path"),
                 "status": r.get("status"),
                 "analyst_status": r.get("analyst_status"),
+                "trader": r.get("trader"),
+                "risk": r.get("risk"),
+                "manager": r.get("manager"),
             }
             for r in results
             if r.get("ok") and not r.get("skipped")
         ],
     }
     write_json(index_dir / "index.json", index)
+
+    # P6 eval report for the day
+    eval_rep = evaluate_firm_day(day, session_root=root)
+    eval_path = write_eval_report(eval_rep, session_root=root)
+
+    # P7 Discord firm cards (optional)
+    discord_res: Dict[str, Any] = {"skipped": True}
+    if firm_discord_enabled() and (enabled or force):
+        cards = []
+        for r in results:
+            p = r.get("path")
+            if p:
+                c = load_firm_card(Path(p) / "firm_card.json")
+                if c:
+                    cards.append(c)
+        discord_res = post_firm_cards(cards, title=f"Firm sleeve {day}")
+
     return {
         "ok": True,
         "skipped": False,
@@ -387,6 +491,15 @@ def run_firm_sleeve(
         "symbols": capped,
         "results": results,
         "index_path": str(index_dir / "index.json"),
+        "eval_path": str(eval_path),
+        "eval": {
+            "n_symbols": eval_rep.n_symbols,
+            "n_buy": eval_rep.n_buy,
+            "n_hold": eval_rep.n_hold,
+            "n_veto": eval_rep.n_veto,
+            "agreement_rate": eval_rep.agreement_rate,
+        },
+        "discord": discord_res,
     }
 
 

@@ -1015,26 +1015,51 @@ def _run_cio(args: argparse.Namespace) -> int:
 
 
 def _run_firm(args: argparse.Namespace) -> int:
-    """P0 TradingAgents firm sleeve — empty structured reports under sessions/firm/."""
+    """TradingAgents firm sleeve (P0–P7) under sessions/{date}/firm/."""
     import json
     from pathlib import Path
 
+    from trading_agent.firm.discord_card import post_firm_day
+    from trading_agent.firm.eval import evaluate_firm_day, write_eval_report
     from trading_agent.firm.runner import run_firm_sleeve
     from trading_agent.firm.state import firm_enabled
+
+    session_root = getattr(args, "session_root", None)
+    root = Path(session_root).expanduser() if session_root else None
+    day = getattr(args, "date", None)
+
+    if getattr(args, "eval_only", False):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trading_date = day or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        rep = evaluate_firm_day(trading_date, session_root=root)
+        path = write_eval_report(rep, session_root=root)
+        print(json.dumps(rep.to_dict(), indent=2))
+        print(f"\nwrote {path}")
+        return 0
+
+    if getattr(args, "post_discord", False):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trading_date = day or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        res = post_firm_day(trading_date, session_root=root)
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") or res.get("skipped") else 1
 
     symbols = list(getattr(args, "symbol", None) or [])
     force = bool(getattr(args, "force", False))
     if not symbols:
         symbols = ["AAPL"]
         force = True
-    session_root = getattr(args, "session_root", None)
-    root = Path(session_root).expanduser() if session_root else None
     use_llm = None
     if getattr(args, "no_llm", False):
         use_llm = False
+    # Don't spam Discord from CLI unless explicitly enabled in env
     result = run_firm_sleeve(
         symbols,
-        trading_date=getattr(args, "date", None),
+        trading_date=day,
         session_root=root,
         force=force,
         use_llm=use_llm,
@@ -1855,6 +1880,16 @@ def main(argv: list[str] | None = None) -> int:
         "--no-llm",
         action="store_true",
         help="Heuristics only (skip xAI even if XAI_API_KEY is set)",
+    )
+    firm.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="P6: write firm eval_report.json for --date (no new symbol runs)",
+    )
+    firm.add_argument(
+        "--post-discord",
+        action="store_true",
+        help="P7: post firm cards for --date to Discord ops channel",
     )
     firm.add_argument(
         "--session-root",
