@@ -26,7 +26,12 @@ from trading_agent.firm.protocol import FirmCard, FirmMessage
 from trading_agent.firm.reports import (
     ManagerDecision,
     RiskAdjustment,
-    TraderProposal,
+)
+from trading_agent.firm.trader import (
+    book_merge_enabled,
+    build_trader_proposal,
+    load_book_geometry,
+    maybe_merge_proposal_into_book,
 )
 from trading_agent.firm.roles import FIRM_ROLES
 from trading_agent.firm.state import (
@@ -185,11 +190,45 @@ def run_firm_for_symbol(
             payload={"transcript": debate_transcript[-6:], "verdict": debate.to_dict()},
         ),
     )
-    # Persist full transcript beside reports
-    # (written after out_dir known — see below)
+    # --- Trader (P3) ---
+    geometry = load_book_geometry(sym)
+    trader = build_trader_proposal(
+        symbol=sym,
+        trading_date=day,
+        tech=tech_r,
+        news=news_r,
+        fund=fund_r,
+        sent=sent_r,
+        debate=debate,
+        geometry=geometry,
+        use_llm=llm,
+    )
+    # Attach fundamental score into book hints for merge
+    trader.book_hints["fundamental_score"] = fund_r.fundamental_score
+    state.react_log.append(
+        {
+            "role": "trader",
+            "thought": "P3 synthesize BUY/SELL/HOLD from debate + reports",
+            "tool": "",
+            "observation": {
+                "action": trader.action,
+                "confidence": trader.confidence,
+                "size_hint": trader.size_hint,
+            },
+        }
+    )
+    append_message(
+        state,
+        FirmMessage(
+            kind="proposal",
+            role="trader",
+            symbol=sym,
+            trading_date=day,
+            payload=trader.to_dict(),
+        ),
+    )
 
-    # P3–P4 still stubs
-    trader = TraderProposal.empty(sym, day)
+    # P4 still stub
     risk = RiskAdjustment.empty(sym, day)
     manager = ManagerDecision.empty(sym, day)
 
@@ -221,7 +260,7 @@ def run_firm_for_symbol(
         trader_action=trader.action,
         risk_adjustment=risk.recommendation,
         manager_decision=manager.decision,
-        status="p2_debate",
+        status="p3_trader",
     )
     state.card = card.to_dict()
     state.status = "complete"
@@ -237,6 +276,12 @@ def run_firm_for_symbol(
             "transcript": debate_transcript,
         },
     )
+    write_json(Path(out_dir) / "trader_proposal.json", trader.to_dict())
+
+    merge_result: Dict[str, Any] = {"skipped": True}
+    if book_merge_enabled():
+        merge_result = maybe_merge_proposal_into_book(trader)
+
     return {
         "ok": True,
         "skipped": False,
@@ -259,6 +304,15 @@ def run_firm_for_symbol(
             "rounds": debate.rounds,
             "status": debate.meta.status,
         },
+        "trader": {
+            "action": trader.action,
+            "side": trader.side,
+            "confidence": trader.confidence,
+            "size_hint": trader.size_hint,
+            "timing": trader.timing,
+            "status": trader.meta.status,
+        },
+        "book_merge": merge_result,
         "card": state.card,
     }
 
@@ -312,7 +366,7 @@ def run_firm_sleeve(
         "schema_version": "firm_day_index_v1",
         "trading_date": day,
         "enabled": enabled or force,
-        "phase": "P2_debate",
+        "phase": "P3_trader",
         "symbols": capped,
         "results": [
             {

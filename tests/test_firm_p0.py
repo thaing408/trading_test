@@ -110,7 +110,7 @@ def test_firm_sleeve_index(monkeypatch, tmp_path):
     assert idx.is_file()
     data = json.loads(idx.read_text())
     assert data["symbols"] == ["AAPL", "MSFT"]
-    assert data.get("phase") == "P2_debate"
+    assert data.get("phase") == "P3_trader"
 
 def test_maybe_run_after_research_respects_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("TRADING_AGENT_FIRM", "0")

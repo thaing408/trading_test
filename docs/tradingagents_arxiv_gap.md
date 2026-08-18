@@ -6,7 +6,8 @@
 **Implementation status:**  
 - **P0 shipped** — schemas/roles/empty reports/ReAct + `TRADING_AGENT_FIRM` (default off).  
 - **P1 shipped** — four analysts with live gathers + heuristic reports; optional xAI enrichment.  
-- **P2 shipped** (2026-08-17) — bull/bear + facilitator → `DebateVerdict` (+ transcript). P3+ still later.
+- **P2 shipped** — bull/bear + facilitator → `DebateVerdict` (+ transcript).  
+- **P3 shipped** (2026-08-17) — trader BUY/SELL/HOLD + optional book merge. P4+ still later.
 
 ---
 
@@ -91,7 +92,7 @@ python -m trading_agent firm --symbol AAPL --force
 ```
 
 Env: `TRADING_AGENT_FIRM_LLM` (default 1), `TRADING_AGENT_FIRM_LLM_MODEL` (default `grok-4.5`).  
-Still **only shortlist** (`TRADING_AGENT_FIRM_MAX_SYMBOLS`, default 5). Trader/risk remain P3–P4 stubs.
+Still **only shortlist** (`TRADING_AGENT_FIRM_MAX_SYMBOLS`, default 5). Risk/manager remain P4 stubs.
 
 ### P2 — Researcher debate — **DONE**
 
@@ -106,12 +107,21 @@ Module: `trading_agent/firm/debate.py`.
 TRADING_AGENT_FIRM_LLM=0 python -m trading_agent firm --symbol AAPL --force --no-llm
 ```
 
-### P3 — Trader agent (partially missing)
+### P3 — Trader agent — **DONE**
 
-- Today: scanners emit ENTER with method scores.
-- Add: LLM trader consumes **four reports + debate verdict + our book geometry** → BUY / SELL / HOLD, size hint, timing.
-- Output must include ReAct-style reasoning for Discord.
-- Map to existing `auto_trade_book` fields (`action`, `side`, `thesis`, `confidence`) without dropping options structure (spreads, DTE, defined risk).
+Module: `trading_agent/firm/trader.py`.
+
+- Consumes P1 reports + P2 debate (+ optional `auto_trade_book` geometry).
+- Emits `TraderProposal`: BUY/SELL/HOLD, side, size_hint, timing, confidence, thesis, `book_hints.react_reasoning`.
+- Maps to book fields via `proposal_to_book_fields` (BUY→ENTER, HOLD→ineligible, SELL/Bearish→ENTER put path).
+- Optional merge: `TRADING_AGENT_FIRM_BOOK_MERGE=1` patches sync book (default **off**).
+- Still does **not** place orders; OMS/DTE/cash unchanged.
+
+```bash
+python -m trading_agent firm --symbol AAPL --force --no-llm
+# enable book patch (careful on LIVE Mac):
+# echo 'TRADING_AGENT_FIRM_BOOK_MERGE=1' >> ~/.grok/trading-agent.env
+```
 
 ### P4 — Risk debate + manager (partially missing)
 

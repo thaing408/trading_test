@@ -168,5 +168,6 @@ def test_runner_includes_debate(monkeypatch, tmp_path):
     assert deb["winner"] == out["debate"]["winner"]
     assert (d / "debate_transcript.json").is_file()
     card = json.loads((d / "firm_card.json").read_text())
-    assert card["status"] == "p2_debate"
+    assert card["status"] == "p3_trader"
     assert card["debate_winner"] == out["debate"]["winner"]
+    assert out.get("trader", {}).get("action") in ("BUY", "SELL", "HOLD")
