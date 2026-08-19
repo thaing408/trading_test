@@ -109,12 +109,14 @@ def estimate_order_cash_required(
         return float(premium_dollars)
 
     if instr in ("options", "option"):
-        # risk is research package risk — use as floor only; multiply buffer
-        # so we do not assume free premium when quote missing
+        # Never treat underlying entry as share notional (was inflating IWM-sized
+        # cash_required into tens of thousands when premium quote missing).
+        # risk is research package risk — floor only; buffer so missing quote
+        # does not look "free".
         base = max(risk, 1.0)
         return round(base * max(1.0, float(buffer or 1.0)), 2)
 
-    # equity shares
+    # equity shares only
     entry = float(getattr(order, "entry", 0) or 0)
     if entry > 0:
         return round(entry * qty * max(1.0, float(buffer or 1.0)), 2)

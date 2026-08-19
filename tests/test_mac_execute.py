@@ -13,7 +13,9 @@ from trading_agent.export.mac_execute import (
     format_checklist,
     format_occ_symbol,
     in_consumer_window,
+    in_live_entry_window,
     in_qt_window,
+    live_entry_blocked_reason,
     infer_call_put,
     is_terminal_broker_reject,
     option_contract_precheck,
@@ -136,6 +138,41 @@ def test_consumer_window_bounds():
     assert in_consumer_window(ok)
     late = datetime(2026, 7, 16, 12, 0, tzinfo=ET)
     assert not in_consumer_window(late)
+    # Prep window starts 9:25 — still before RTH live gate
+    prep = datetime(2026, 7, 16, 9, 25, tzinfo=ET)
+    assert in_consumer_window(prep)
+
+
+def test_live_entry_window_blocks_preopen():
+    """LIVE MARKET place only at/after 09:30 ET (not 09:25 prep)."""
+    ET = ZoneInfo("America/New_York")
+    pre = datetime(2026, 8, 19, 9, 25, tzinfo=ET)  # Wed
+    open_ts = datetime(2026, 8, 19, 9, 30, tzinfo=ET)
+    mid = datetime(2026, 8, 19, 10, 15, tzinfo=ET)
+    after = datetime(2026, 8, 19, 11, 1, tzinfo=ET)
+    weekend = datetime(2026, 8, 15, 10, 0, tzinfo=ET)
+
+    assert in_consumer_window(pre)
+    assert not in_live_entry_window(pre)
+    assert live_entry_blocked_reason(pre) == "before_rth_open"
+
+    assert in_live_entry_window(open_ts)
+    assert live_entry_blocked_reason(open_ts) == ""
+    assert in_live_entry_window(mid)
+    assert live_entry_blocked_reason(mid) == ""
+
+    assert not in_live_entry_window(after)
+    assert live_entry_blocked_reason(after) == "after_entry_window"
+    assert not in_live_entry_window(weekend)
+    assert live_entry_blocked_reason(weekend) == "before_rth_open"
+
+
+def test_preopen_live_escape_hatch(monkeypatch):
+    ET = ZoneInfo("America/New_York")
+    pre = datetime(2026, 8, 19, 9, 25, tzinfo=ET)
+    monkeypatch.setenv("TRADING_AGENT_AUTO_TRADE_ALLOW_PREOPEN_LIVE", "1")
+    assert live_entry_blocked_reason(pre) == ""
+    assert not in_live_entry_window(pre)  # window helper stays truthful
 
 
 def test_underlying_no_strikes_ok():
@@ -168,7 +205,7 @@ def _ready(**overrides) -> ReadyOrder:
         target=520.0,
         max_risk_dollars=100.0,
         strike_prices=[500.0],
-        expiration="2026-08-21",  # future vs "today" in dual-DTE precheck
+        expiration="2026-08-28",  # keep ≥3 DTE vs calendar "today" in dual-DTE precheck
         quantity=1,
         defined_risk=True,
         confidence=70.0,

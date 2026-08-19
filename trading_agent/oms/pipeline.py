@@ -293,6 +293,76 @@ def run_oms_consume(
             )
             continue
 
+        # Hard gate: no LIVE MARKET place before RTH (09:30 ET). Prep/ready_orders OK.
+        # Do NOT mark_processed — retry after the open.
+        rth_block = ""
+        if effective_live:
+            rth_block = mx.live_entry_blocked_reason()
+        if rth_block:
+            order.status = "skipped"
+            order.skip_reason = rth_block
+            order.broker_response = {
+                "mode": "rth_gate",
+                "message": (
+                    "LIVE place blocked until regular session open (09:30 ET). "
+                    "ready_orders still written; will retry after open."
+                ),
+                "place_path": place_path,
+            }
+            orders[i] = order
+            append_audit(
+                "order_rth_gate",
+                payload={
+                    "order_id": order.order_id,
+                    "symbol": order.symbol,
+                    "reason": rth_block,
+                    "live": True,
+                },
+            )
+            continue
+
+        # Explicit affordability (debit premium / credit margin) before any LIVE place.
+        # Complements evaluate_pretrade cash gate; covers credit/SELL_TO_OPEN paths.
+        if effective_live:
+            from trading_agent.oms.affordability import check_open_affordability
+
+            cash_snapshot = dict(cash_info or {})
+            if remaining_cash is not None:
+                cash_snapshot["remaining_after_submits"] = remaining_cash
+            afford = check_open_affordability(
+                order,
+                place_path=place_path,
+                account_cash=cash_snapshot,
+                premium_est=premium_est,
+                buffer=float(cfg.cash_buffer or 1.05),
+                require_balances=True,
+            )
+            if not afford.ok:
+                order.status = "skipped"
+                order.skip_reason = afford.reason
+                order.broker_response = {
+                    "mode": "affordability",
+                    "affordability": afford.as_dict(),
+                    "place_path": place_path,
+                    "message": (
+                        "LIVE place blocked — account balance/BP cannot fund this order"
+                    ),
+                }
+                orders[i] = order
+                append_audit(
+                    "order_affordability_block",
+                    payload={
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "reason": afford.reason,
+                        "need": afford.need,
+                        "have": afford.have,
+                        "kind": afford.kind,
+                        "place_path": place_path,
+                    },
+                )
+                continue
+
         # Multi-leg / credit: package always; LIVE sequential when MULTILEG_LIVE allowed
         if place_path in ("multi_leg_ready", "credit_ready"):
             if place_path == "multi_leg_ready" or (

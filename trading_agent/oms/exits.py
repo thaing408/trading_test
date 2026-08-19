@@ -49,6 +49,38 @@ def _legs_for_lot(lot: OpenLot) -> List[Dict[str, Any]]:
     return [leg for leg in legs if isinstance(leg, dict)]
 
 
+def _account_cash_snapshot(call_mcp: McpCaller) -> Dict[str, Any]:
+    try:
+        from trading_agent.oms.broker import fetch_account_balances, parse_tradable_cash
+        from trading_agent.oms.pretrade import PretradeConfig
+
+        cfg = PretradeConfig.from_env()
+        resp = fetch_account_balances(call_mcp)
+        if resp.get("error"):
+            return {
+                "fetched": False,
+                "error": resp.get("error"),
+                "message": resp.get("message") or resp.get("stderr"),
+            }
+        raw = parse_tradable_cash(resp, prefer=cfg.cash_metric)
+        reserve = max(0.0, float(cfg.min_cash_reserve or 0.0))
+        bal = resp.get("balances") or {}
+        return {
+            "fetched": True,
+            "metric": cfg.cash_metric,
+            "cash_available": bal.get("cash_available"),
+            "buying_power": bal.get("buying_power"),
+            "cash_balance": bal.get("cash_balance"),
+            "raw_tradable": raw,
+            "reserve": reserve,
+            "tradable_after_reserve": (
+                None if raw is None else max(0.0, float(raw) - reserve)
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"fetched": False, "error": str(exc)}
+
+
 def submit_close(
     lot: OpenLot,
     *,
@@ -60,6 +92,65 @@ def submit_close(
     qty = max(1, int(lot.quantity or 1))
     instrument = (lot.instrument or "").lower()
     legs = _legs_for_lot(lot)
+
+    # LIVE: verify account can fund BUY_TO_CLOSE (short buyback) before place_order.
+    if live:
+        from trading_agent.oms.affordability import check_close_affordability
+        from trading_agent.oms.broker import quote_last_price
+
+        primary_instr = _close_instruction(lot)
+        if legs:
+            # If any leg needs BUY_TO_CLOSE, gate on that
+            for leg in legs:
+                open_i = str(leg.get("instruction") or "BUY_TO_OPEN")
+                from trading_agent.oms.broker import close_instruction_for_open_leg
+
+                if close_instruction_for_open_leg(open_i) == "BUY_TO_CLOSE":
+                    primary_instr = "BUY_TO_CLOSE"
+                    break
+
+        cash = _account_cash_snapshot(call_mcp)
+        buyback = None
+        if primary_instr == "BUY_TO_CLOSE":
+            occ = (lot.occ_symbol or "").strip()
+            if occ:
+                try:
+                    px = quote_last_price(call_mcp, occ)
+                    if px is not None and 0 < float(px) < 50:
+                        buyback = float(px) * 100.0 * qty * 1.15
+                except Exception:
+                    buyback = None
+        afford = check_close_affordability(
+            lot,
+            instruction=primary_instr,
+            account_cash=cash,
+            buyback_premium_est=buyback,
+            require_balances=True,
+        )
+        if not afford.ok:
+            append_audit(
+                "close_affordability_block",
+                payload={
+                    "lot_id": lot.lot_id,
+                    "symbol": lot.symbol,
+                    "instruction": primary_instr,
+                    "reason": afford.reason,
+                    "need": afford.need,
+                    "have": afford.have,
+                    "exit_reason": reason,
+                },
+            )
+            return {
+                "error": afford.reason,
+                "mode": "affordability_block",
+                "status": "blocked",
+                "dry_run": False,
+                "reason": reason,
+                "affordability": afford.as_dict(),
+                "message": (
+                    "LIVE close blocked — account balance/BP cannot fund this exit"
+                ),
+            }
 
     if instrument in ("options", "option") and len(legs) >= 2:
         responses = []
