@@ -9,6 +9,23 @@ Recorded: 2026-08-19.
 
 ---
 
+## Priority later-work list (worth stealing)
+
+Do these first when we pick this up. CIO/OMS stay untouched; research-host only.
+
+| Pri | Steal | Why | Where it lands |
+|-----|--------|-----|----------------|
+| **P1** | Live TradingView screener + `tradingview_ta` consensus (crypto + global: Binance/KuCoin/Bybit, EGX, BIST) | Our params JSON is US-desk; they actually **run** the TV screener | Research columns / universe, not CIO votes |
+| **P2** | Rating / BB ±3 scan | Extra TA column we do not have | `analysis/` or `tv_mcp_*` fields |
+| **P3** | Crypto top-gainer / volume-breakout universe | Future crypto sleeve; desk is equity/options first | Optional screener path |
+| **P4** | Candlestick pattern dump (15 names) | Cheap tags on research cards | Research JSON tags |
+| **P5** | Error envelope + TA throttle | Needed if we batch TV HTTP (empty-body rate-limit cliff) | Any TV HTTP client |
+| **P6** | Thin MCP adapter (read-only, Windows) | Grok/Claude can query research without duplicating collectors | Flag `TRADING_AGENT_TV_MCP=0` |
+
+**Skip:** hosted cryptosieve billing, MCP Apps chart widgets, OpenClaw, their 9-strategy backtester (weaker than `backtest/`).
+
+---
+
 ## What it is
 
 An **MCP server** that exposes ~37 tools for market data, TradingView-style technicals, screeners, sentiment/news, and simple strategy backtests. Clients: Claude, ChatGPT, Cursor, Copilot, OpenClaw (Telegram wrapper).
@@ -70,19 +87,6 @@ Retry + 60s TTL on screener; TA throttle (default 4 concurrent, 0.8s spacing); s
 
 ---
 
-## Gaps they have that we might steal later
-
-1. **Live TradingView screener + `tradingview_ta` consensus** for crypto and global listings (Binance/KuCoin/Bybit, EGX, BIST) — our params JSON is US-desk oriented.  
-2. **Rating / BB ±3 scan** as an extra research column, not a CIO vote.  
-3. **Crypto top-gainer / volume-breakout** universe for a future crypto sleeve (desk is equity/options first).  
-4. **Candlestick pattern dump** as optional tags on research cards.  
-5. **Error envelope + TA throttle** pattern if we ever batch TV HTTP.  
-6. **MCP adapter** so Grok/Claude can query the same research without duplicating collectors — read-only, Windows-side.
-
-Not interesting later: hosted cryptosieve billing, MCP Apps candlestick widgets, OpenClaw, their backtester (weaker than ours).
-
----
-
 ## Risks (must respect if we integrate)
 
 - **ToS / scrape risk:** public TV endpoints, not official API. Rate-limit cliff (empty JSON body). Throttle is mandatory.  
@@ -135,3 +139,4 @@ Compare one symbol vs `trading_agent.analysis.technical` + `market_data.provider
 | Date | Decision |
 |------|----------|
 | 2026-08-19 | Parked. Useful as optional research MCP / TV-screener source. Not a replacement for collectors, CIO, OMS, or `backtest/`. |
+| 2026-08-19 | Priority list is the **worth stealing** table at the top (P1–P6). |
