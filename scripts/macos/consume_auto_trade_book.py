@@ -262,6 +262,10 @@ def main(argv: list[str] | None = None) -> int:
         # Discord: paper channel — entries / exits / cycle summary / positions
         try:
             from trading_agent.discord.paper_activity import (
+                interesting_manage_rows,
+                maybe_post_skip_summary,
+                partition_cycle_orders,
+                post_manage_activity,
                 post_order_event,
                 post_orders_batch,
                 post_positions,
@@ -277,9 +281,11 @@ def main(argv: list[str] | None = None) -> int:
                     except TypeError:
                         continue
 
-            if orders_objs:
-                post_orders_batch(orders_objs, label="Consumer · order cycle")
-            for o in orders_objs:
+            actionable, skipped = partition_cycle_orders(orders_objs)
+            if actionable:
+                post_orders_batch(actionable, label="Consumer · order cycle")
+            maybe_post_skip_summary(skipped)
+            for o in actionable:
                 st = (getattr(o, "status", "") or "").lower()
                 act = (getattr(o, "action", "") or "").upper()
                 if st == "submitted":
@@ -290,16 +296,13 @@ def main(argv: list[str] | None = None) -> int:
                 elif st == "dry_run":
                     post_order_event(o, event="DRY_RUN")
 
-            manage = result.get("manage") or []
-            if manage:
-                from trading_agent.discord.paper_activity import post_manage_activity
+            manage = [m for m in (result.get("manage") or []) if isinstance(m, dict)]
+            manage_posts = interesting_manage_rows(manage)
+            if manage_posts:
+                post_manage_activity(manage_posts)
 
-                post_manage_activity(
-                    [m for m in manage if isinstance(m, dict)]
-                    or [{"action": "note", "symbol": "?", "reason": str(manage)[:120]}]
-                )
-
-            if orders_objs or manage:
+            # Positions only when something actually hit the broker or an exit fired
+            if actionable or manage_posts:
                 post_positions(source="IBKR paper")
         except Exception as disc_exc:  # noqa: BLE001
             if not args.quiet:

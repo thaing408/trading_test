@@ -170,16 +170,145 @@ def post_order_event(order: Any, *, event: str) -> List[dict]:
     )
 
 
-def post_orders_batch(orders: Sequence[Any], *, label: str = "Consumer cycle") -> List[dict]:
+ACTIONABLE_ORDER_STATUSES = frozenset({"submitted", "failed", "dry_run", "ready"})
+_SKIP_DIGEST_LAST: str = ""
+
+
+def order_status(order: Any) -> str:
+    return str(getattr(order, "status", "") or "").strip().lower()
+
+
+def partition_cycle_orders(orders: Sequence[Any]) -> Tuple[List[Any], List[Any]]:
+    """Split broker-worthy rows from skips that should not spam Discord."""
+    actionable: List[Any] = []
+    skipped: List[Any] = []
+    for o in orders:
+        st = order_status(o)
+        if st == "skipped":
+            skipped.append(o)
+        elif st in ACTIONABLE_ORDER_STATUSES:
+            actionable.append(o)
+    return actionable, skipped
+
+
+def format_order_line(order: Any) -> str:
+    st = getattr(order, "status", "?")
+    sym = getattr(order, "symbol", "?")
+    act = getattr(order, "action", "?")
+    side = getattr(order, "side", "") or ""
+    line = f"- `{st}` **{sym}** {act} {side}".rstrip()
+    skip = getattr(order, "skip_reason", "") or ""
+    if skip:
+        line += f" — {skip}"
+    return line
+
+
+def format_orders_batch(orders: Sequence[Any]) -> str:
     if not orders:
-        return post_activity("_No orders this cycle._", title=label)
+        return "_No orders this cycle._"
     lines = [f"**{len(orders)}** order(s)\n"]
     for o in orders:
-        st = getattr(o, "status", "?")
-        sym = getattr(o, "symbol", "?")
-        act = getattr(o, "action", "?")
-        lines.append(f"- `{st}` **{sym}** {act} {getattr(o, 'side', '')}")
-    return post_activity("\n".join(lines), title=label)
+        lines.append(format_order_line(o))
+    return "\n".join(lines)
+
+
+def skip_summary_fingerprint(skipped: Sequence[Any]) -> str:
+    parts = []
+    for o in skipped:
+        parts.append(
+            "|".join(
+                [
+                    str(getattr(o, "symbol", "") or ""),
+                    str(getattr(o, "action", "") or ""),
+                    str(getattr(o, "side", "") or ""),
+                    str(getattr(o, "skip_reason", "") or "unspecified"),
+                ]
+            )
+        )
+    return "\n".join(sorted(parts))
+
+
+def format_skip_summary(skipped: Sequence[Any]) -> str:
+    """One-shot skip digest grouped by skip_reason."""
+    if not skipped:
+        return ""
+    by_reason: Dict[str, List[str]] = {}
+    for o in skipped:
+        reason = str(getattr(o, "skip_reason", "") or "unspecified")
+        label = (
+            f"{getattr(o, 'symbol', '?')} "
+            f"{getattr(o, 'action', '')} "
+            f"{getattr(o, 'side', '')}"
+        ).strip()
+        by_reason.setdefault(reason, []).append(label)
+    lines = [
+        f"**{len(skipped)}** order(s) skipped (not sent to broker). "
+        "Repeats suppressed until the skip set or reasons change.\n"
+    ]
+    for reason in sorted(by_reason):
+        items = by_reason[reason]
+        lines.append(f"**{reason}** ({len(items)})")
+        for it in items[:20]:
+            lines.append(f"- {it}")
+        if len(items) > 20:
+            lines.append(f"- _… +{len(items) - 20} more_")
+    return "\n".join(lines)
+
+
+def _skip_digest_path() -> Path:
+    root = Path(os.getenv("TRADING_AGENT_STATE_DIR") or Path.home() / ".trading_agent")
+    return root / "discord_skip_digest.json"
+
+
+def should_post_skip_summary(skipped: Sequence[Any], *, persist: bool = True) -> bool:
+    """True once per unique skip fingerprint per trading day."""
+    global _SKIP_DIGEST_LAST
+    if not skipped:
+        return False
+    day = datetime.now(PT).date().isoformat()
+    fp = skip_summary_fingerprint(skipped)
+    key = f"{day}:{fp}"
+    if key == _SKIP_DIGEST_LAST:
+        return False
+    path = _skip_digest_path()
+    prev = ""
+    if persist:
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    prev = str(data.get("key") or "")
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            prev = ""
+        if prev == key:
+            _SKIP_DIGEST_LAST = key
+            return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"key": key, "updated_at": datetime.now(PT).isoformat()}, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    _SKIP_DIGEST_LAST = key
+    return True
+
+
+def post_orders_batch(orders: Sequence[Any], *, label: str = "Consumer cycle") -> List[dict]:
+    if not orders:
+        return []
+    return post_activity(format_orders_batch(orders), title=label)
+
+
+def maybe_post_skip_summary(skipped: Sequence[Any]) -> List[dict]:
+    if not skipped or not should_post_skip_summary(skipped):
+        return []
+    body = format_skip_summary(skipped)
+    if not body:
+        return []
+    return post_activity(body, title="Consumer · skips")
 
 
 def _fmt_px(val: Any) -> str:
@@ -306,9 +435,25 @@ def _format_manage_lot_line(
     return line
 
 
+def interesting_manage_rows(manage: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep exits / flatten / non-hold actions; drop hold-only spam."""
+    out: List[Dict[str, Any]] = []
+    for m in manage:
+        if not isinstance(m, dict):
+            continue
+        action = str(m.get("action") or "").strip().lower()
+        if action in ("", "hold", "note"):
+            continue
+        out.append(m)
+    return out
+
+
 def post_manage_activity(manage: Sequence[Dict[str, Any]]) -> List[dict]:
-    """Post manage/exits cycle to paper Discord channel."""
-    return post_activity(format_manage_activity(manage), title="Manage · exits")
+    """Post manage/exits cycle to paper Discord channel (no hold-only floods)."""
+    rows = interesting_manage_rows(list(manage) if manage else [])
+    if not rows:
+        return []
+    return post_activity(format_manage_activity(rows), title="Manage · exits")
 
 
 def format_positions_snapshot(positions: Sequence[Dict[str, Any]]) -> str:
