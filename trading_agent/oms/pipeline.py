@@ -11,6 +11,7 @@ from trading_agent.oms.audit import append_audit
 from trading_agent.oms.exits import manage_enabled, manage_open_lots
 from trading_agent.oms.kill_switch import is_killed, kill_switch_status
 from trading_agent.oms.lifecycle import (
+    broker_status_is_filled,
     extract_legs_from_broker_response,
     register_submitted_lot,
 )
@@ -31,6 +32,21 @@ from trading_agent.oms.pretrade import (
     pretrade_snapshot,
 )
 from trading_agent.oms.state import LotStatus, OpenLot, OmsStore
+
+
+def _maybe_notify_skip(order: mx.ReadyOrder, *, live: bool) -> None:
+    """Discord ops alert for RTH/cash/risk skips (fail-open, day-deduped)."""
+    if not live:
+        return
+    try:
+        from trading_agent.ops.journal_notify import notify_skip_activity
+
+        notify_skip_activity(order, reason=str(order.skip_reason or ""), live=True)
+    except Exception as exc:  # noqa: BLE001
+        append_audit(
+            "journal_skip_notify_error",
+            payload={"order_id": order.order_id, "error": str(exc)},
+        )
 
 
 def _lot_from_order(order: mx.ReadyOrder, place_path: str) -> OpenLot:
@@ -276,6 +292,7 @@ def run_oms_consume(
                     "process_gate": process_detail or None,
                 },
             )
+            _maybe_notify_skip(order, live=effective_live)
             continue
 
         if schwab_block and live:
@@ -291,6 +308,7 @@ def run_oms_consume(
                 "order_schwab_health_block",
                 payload={"order_id": order.order_id, "symbol": order.symbol, "reason": schwab_block},
             )
+            _maybe_notify_skip(order, live=True)
             continue
 
         # Hard gate: no LIVE MARKET place before RTH (09:30 ET). Prep/ready_orders OK.
@@ -319,6 +337,7 @@ def run_oms_consume(
                     "live": True,
                 },
             )
+            _maybe_notify_skip(order, live=True)
             continue
 
         # Explicit affordability (debit premium / credit margin) before any LIVE place.
@@ -344,6 +363,8 @@ def run_oms_consume(
                     "mode": "affordability",
                     "affordability": afford.as_dict(),
                     "place_path": place_path,
+                    "cash_required": afford.need,
+                    "remaining_cash": afford.have,
                     "message": (
                         "LIVE place blocked — account balance/BP cannot fund this order"
                     ),
@@ -361,6 +382,7 @@ def run_oms_consume(
                         "place_path": place_path,
                     },
                 )
+                _maybe_notify_skip(order, live=True)
                 continue
 
         # Multi-leg / credit: package always; LIVE sequential when MULTILEG_LIVE allowed
@@ -471,12 +493,23 @@ def run_oms_consume(
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
 
+                        filled_now = broker_status_is_filled(order.broker_response or {})
                         notify_order_activity(
                             order,
                             live=True,
                             fill_price=prem,
                             spot_price=spot,
+                            fill_confirmed=filled_now,
                         )
+                        # If green ENTER posted now, clear pending on the lot
+                        if filled_now:
+                            lot_now = oms.get_lot(registered.lot_id) or registered
+                            meta = dict(lot_now.broker_meta or {})
+                            meta["journal_entry_pending"] = False
+                            meta["journal_entry_due"] = False
+                            meta["journal_entry_posted"] = True
+                            lot_now.broker_meta = meta
+                            oms.upsert_lot(lot_now)
                     except Exception as exc:  # noqa: BLE001 — fail-open
                         append_audit(
                             "journal_notify_error",
@@ -493,7 +526,7 @@ def run_oms_consume(
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
 
-                        notify_order_activity(orders[i], live=True)
+                        notify_order_activity(orders[i], live=True, fill_confirmed=False)
                     except Exception as exc:  # noqa: BLE001
                         append_audit(
                             "journal_notify_error",
