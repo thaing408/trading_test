@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Rejections{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Rejections &amp; gates</h1>
+  <p class="lede">
+    Research/plan <code>rejection_reasons</code> + book <code>rejected_incomplete</code>.
+    Not CIO decisions.
+  </p>
+  <div class="kpi-row compact">
+    <div class="kpi-card"><div class="k">Shown</div><div class="v">{{ filtered_rejections|length }}</div></div>
+    <div class="kpi-card"><div class="k">Total</div><div class="v">{{ snap.rejections|length }}</div></div>
+    <div class="kpi-card"><div class="k">Plan</div><div class="v">{{ plan_count }}</div></div>
+    <div class="kpi-card"><div class="k">Book incomplete</div><div class="v">{{ book_count }}</div></div>
+  </div>
+</section>
+
+<section class="panel">
+  <form class="filter-form" method="get" action="/rejections">
+    <label>
+      Symbol
+      <input type="text" name="symbol" value="{{ filter_symbol }}" placeholder="QQQ" autocomplete="off"/>
+    </label>
+    <label>
+      Text
+      <input type="text" name="q" value="{{ filter_q }}" placeholder="ADR / RVOL / strength" autocomplete="off"/>
+    </label>
+    <button type="submit">Filter</button>
+    {% if filter_symbol or filter_q %}
+    <a class="muted" href="/rejections">Clear</a>
+    {% endif %}
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Rows</h2>
+  {% if filtered_rejections %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Source</th>
+        <th>Gates</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in filtered_rejections %}
+      <tr>
+        <td><strong>{{ r.symbol }}</strong></td>
+        <td><span class="tag">{{ r.source }}</span></td>
+        <td>
+          {% for g in r.gates %}
+          <span class="tag">{{ g }}</span>
+          {% else %}
+          <span class="muted">—</span>
+          {% endfor %}
+        </td>
+        <td>{{ r.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">
+    {% if snap.rejections %}
+    No rows match this filter.
+    {% else %}
+    No plan/book rejections for this session.
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

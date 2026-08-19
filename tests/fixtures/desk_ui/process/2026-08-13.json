@@ -1,0 +1,23 @@
+{
+  "date": "2026-08-13",
+  "bias": "cash",
+  "overall_score": 42.0,
+  "cards": [
+    {
+      "symbol": "QQQ",
+      "bias": "neutral",
+      "setup": "watch",
+      "status": "rejected",
+      "score": 40,
+      "notes": "ADR%/RVOL failed — process card for desk discovery"
+    },
+    {
+      "symbol": "IWM",
+      "bias": "neutral",
+      "setup": "watch",
+      "status": "rejected",
+      "score": 38,
+      "notes": "52w strength weak"
+    }
+  ]
+}

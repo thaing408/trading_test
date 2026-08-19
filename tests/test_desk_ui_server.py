@@ -163,6 +163,8 @@ def test_templates_dir_exists():
     assert (templates_dir() / "manage.html").is_file()
     assert (templates_dir() / "oms.html").is_file()
     assert (templates_dir() / "firm.html").is_file()
+    assert (templates_dir() / "rejections.html").is_file()
+    assert (templates_dir() / "discovery.html").is_file()
     assert (static_dir() / "desk.css").is_file()
 
 
@@ -193,7 +195,68 @@ def test_firm_page_shows_aapl(client):
     assert "BUY" in r.text
 
 
-def test_stub_routes(client):
+def test_rejections_page_shows_plan_rows(client):
     r = client.get("/rejections")
     assert r.status_code == 200
-    assert "stubbed" in r.text.lower() or "Snapshot" in r.text or "desk-status" in r.text
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Rejections" in body
+    assert "QQQ" in body
+    assert "IWM" in body
+    assert "ADR" in body
+    assert "RVOL" in body or "volume" in body.lower()
+    assert "plan" in body
+
+
+def test_rejections_filter_symbol(client):
+    r = client.get("/rejections", params={"symbol": "IWM"})
+    assert r.status_code == 200
+    body = r.text
+    assert "IWM" in body
+    assert "52w" in body or "strength" in body.lower()
+    # QQQ-only ADR row should be filtered out of the table body sense —
+    # page still has nav, so check API filter instead for precision
+    api = client.get("/api/v1/rejections", params={"symbol": "IWM"})
+    assert api.status_code == 200
+    rows = api.json()["rejections"]
+    assert rows
+    assert all(row["symbol"] == "IWM" for row in rows)
+
+
+def test_rejections_filter_text(client):
+    api = client.get("/api/v1/rejections", params={"q": "rvol"})
+    assert api.status_code == 200
+    rows = api.json()["rejections"]
+    assert rows
+    assert all("rvol" in (row["reason"] or "").lower() or "volume" in (row["reason"] or "").lower() for row in rows)
+
+
+def test_discovery_page_process_cards(client):
+    r = client.get("/discovery")
+    assert r.status_code == 200
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Discovery" in body
+    assert "Process trade cards" in body
+    assert "QQQ" in body
+    assert "IWM" in body
+    assert "ADR" in body or "process card" in body.lower()
+
+
+def test_discovery_api_and_filter(client):
+    api = client.get("/api/v1/discovery")
+    assert api.status_code == 200
+    data = api.json()
+    assert len(data["process_cards"]) >= 2
+    filtered = client.get("/api/v1/discovery", params={"symbol": "QQQ"}).json()
+    assert filtered["process_cards"]
+    assert all(
+        (c.get("symbol") or "").upper() == "QQQ" for c in filtered["process_cards"]
+    )
+
+
+def test_stub_routes_remaining(client):
+    for path in ("/session", "/settings"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert "stubbed" in r.text.lower()

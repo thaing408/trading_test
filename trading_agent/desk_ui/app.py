@@ -26,7 +26,7 @@ from trading_agent.desk_ui.snapshot import assemble_snapshot
 
 logger = logging.getLogger("trading_agent.desk_ui")
 
-# Nav — Overview/Book/Manage/OMS/Firm live; others stubbed
+# Nav — Session/Settings still stubbed (PR4/PR6)
 NAV_ITEMS = (
     ("/", "Overview"),
     ("/book", "Book"),
@@ -38,6 +38,84 @@ NAV_ITEMS = (
     ("/session", "Session"),
     ("/settings", "Settings"),
 )
+
+
+def _filter_params(request: Any) -> tuple[str, str]:
+    """Return (symbol, q) query filters, lowercased/stripped."""
+    try:
+        qp = request.query_params
+    except Exception:  # noqa: BLE001
+        return "", ""
+    symbol = str(qp.get("symbol") or "").strip()
+    q = str(qp.get("q") or "").strip()
+    return symbol, q
+
+
+def _filter_rejections(rows: list[Any], *, symbol: str = "", q: str = "") -> list[Any]:
+    sym = symbol.strip().upper()
+    needle = q.strip().lower()
+    out: list[Any] = []
+    for r in rows:
+        r_sym = str(getattr(r, "symbol", "") or "").upper()
+        if sym and r_sym != sym and sym not in r_sym:
+            continue
+        if needle:
+            reason = str(getattr(r, "reason", "") or "").lower()
+            source = str(getattr(r, "source", "") or "").lower()
+            gates = " ".join(str(g) for g in (getattr(r, "gates", None) or [])).lower()
+            blob = f"{r_sym.lower()} {reason} {source} {gates}"
+            if needle not in blob:
+                continue
+        out.append(r)
+    return out
+
+
+def _filter_symbol_list(symbols: list[str], *, symbol: str = "", q: str = "") -> list[str]:
+    sym = symbol.strip().upper()
+    needle = q.strip().lower()
+    out: list[str] = []
+    for s in symbols:
+        su = str(s or "").upper()
+        if sym and su != sym and sym not in su:
+            continue
+        if needle and needle not in su.lower():
+            continue
+        out.append(su)
+    return out
+
+
+def _filter_process_cards(
+    cards: list[dict[str, Any]], *, symbol: str = "", q: str = ""
+) -> list[dict[str, Any]]:
+    sym = symbol.strip().upper()
+    needle = q.strip().lower()
+    out: list[dict[str, Any]] = []
+    for c in cards:
+        if not isinstance(c, dict):
+            continue
+        c_sym = str(c.get("symbol") or c.get("ticker") or "").upper()
+        if sym and c_sym != sym and sym not in c_sym:
+            continue
+        if needle:
+            blob = " ".join(
+                str(c.get(k) or "")
+                for k in (
+                    "symbol",
+                    "ticker",
+                    "bias",
+                    "side",
+                    "setup",
+                    "setup_id",
+                    "status",
+                    "notes",
+                    "note",
+                    "summary",
+                )
+            ).lower()
+            if needle not in blob:
+                continue
+        out.append(c)
+    return out
 
 
 def _check_token(settings: DeskUiSettings, provided: str | None) -> bool:
@@ -202,6 +280,51 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
             templates, request, "manage.html", _base_ctx(request, snap, "/manage")
         )
 
+    @app.get("/rejections", response_class=HTMLResponse)
+    async def rejections(request: FastAPIRequest):
+        snap = get_snapshot()
+        symbol, q = _filter_params(request)
+        filtered = _filter_rejections(snap.rejections, symbol=symbol, q=q)
+        plan_count = sum(1 for r in snap.rejections if r.source == "plan")
+        book_count = sum(1 for r in snap.rejections if r.source == "book_incomplete")
+        return _template_response(
+            templates,
+            request,
+            "rejections.html",
+            {
+                **_base_ctx(request, snap, "/rejections"),
+                "filtered_rejections": filtered,
+                "filter_symbol": symbol,
+                "filter_q": q,
+                "plan_count": plan_count,
+                "book_count": book_count,
+            },
+        )
+
+    @app.get("/discovery", response_class=HTMLResponse)
+    async def discovery(request: FastAPIRequest):
+        snap = get_snapshot()
+        symbol, q = _filter_params(request)
+        return _template_response(
+            templates,
+            request,
+            "discovery.html",
+            {
+                **_base_ctx(request, snap, "/discovery"),
+                "filter_symbol": symbol,
+                "filter_q": q,
+                "filtered_cards": _filter_process_cards(
+                    snap.process_cards, symbol=symbol, q=q
+                ),
+                "filtered_watch": _filter_symbol_list(
+                    snap.watchlist, symbol=symbol, q=q
+                ),
+                "filtered_play": _filter_symbol_list(
+                    snap.play_symbols, symbol=symbol, q=q
+                ),
+            },
+        )
+
     @app.get("/oms", response_class=HTMLResponse)
     async def oms(request: FastAPIRequest):
         snap = get_snapshot()
@@ -228,14 +351,12 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
                 "page_title": path.strip("/").title() or "Page",
                 "stub_message": (
                     "This panel is stubbed. Use Overview, Book, Manage, OMS, Firm, "
-                    "or desk-status /api/v1/snapshot for live execute data."
+                    "Rejections, Discovery, or desk-status /api/v1/snapshot."
                 ),
             },
         )
 
     for stub_path in (
-        "/rejections",
-        "/discovery",
         "/session",
         "/settings",
     ):
@@ -282,10 +403,13 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
         }
 
     @app.get("/api/v1/rejections")
-    async def api_rejections():
+    async def api_rejections(request: FastAPIRequest):
         snap = get_snapshot()
+        symbol, q = _filter_params(request)
+        rows = _filter_rejections(snap.rejections, symbol=symbol, q=q)
         return {
             "trading_date": snap.trading_date,
+            "filter": {"symbol": symbol, "q": q},
             "rejections": [
                 {
                     "symbol": r.symbol,
@@ -293,8 +417,29 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
                     "source": r.source,
                     "gates": r.gates,
                 }
-                for r in snap.rejections
+                for r in rows
             ],
+        }
+
+    @app.get("/api/v1/discovery")
+    async def api_discovery(request: FastAPIRequest):
+        snap = get_snapshot()
+        symbol, q = _filter_params(request)
+        return {
+            "trading_date": snap.trading_date,
+            "filter": {"symbol": symbol, "q": q},
+            "watchlist": _filter_symbol_list(snap.watchlist, symbol=symbol, q=q),
+            "play_symbols": _filter_symbol_list(snap.play_symbols, symbol=symbol, q=q),
+            "process_cards": _filter_process_cards(
+                snap.process_cards, symbol=symbol, q=q
+            ),
+            "gap_book_summary": snap.gap_book_summary,
+            "next_discovery_at": (
+                snap.phase.next_discovery_at.isoformat()
+                if snap.phase.next_discovery_at
+                else None
+            ),
+            "discovery_slot_label": snap.phase.discovery_slot_label,
         }
 
     @app.get("/login", response_class=HTMLResponse)
