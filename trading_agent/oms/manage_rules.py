@@ -94,6 +94,61 @@ def eod_0dte_flatten_due(lot: OpenLot, *, now: Optional[datetime] = None) -> Tup
     return False, ""
 
 
+def near_expiry_flatten_due(lot: OpenLot, *, now: Optional[datetime] = None) -> Tuple[bool, str]:
+    """Close option lots that expire soon (calendar DTE ≤ max).
+
+    Defaults (production-safe):
+    - ``TRADING_AGENT_NEAR_EXPIRY_FLATTEN=1``
+    - ``TRADING_AGENT_NEAR_EXPIRY_MAX_DTE=1`` → flatten when DTE is 0 or 1
+    - ``TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET=15:00`` → for DTE=1, start after 15:00 ET
+      (0DTE still uses ``TRADING_AGENT_EOD_0DTE_CUTOFF_ET``, default 15:45)
+
+    Expired (DTE < 0) always flatten when this feature is on.
+    Equity lots are ignored.
+    """
+    if not _env_bool("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", True):
+        return False, ""
+    instr = (lot.instrument or "").lower()
+    if instr in ("equity", "underlying", "etf", "stock", "shares"):
+        return False, ""
+    dte = calendar_dte(lot, now=now)
+    if dte is None:
+        return False, ""
+    if dte < 0:
+        return True, "expired_option_flatten"
+
+    max_dte = int(_env_float("TRADING_AGENT_NEAR_EXPIRY_MAX_DTE", 1.0))
+    if max_dte < 0:
+        max_dte = 0
+    if dte > max_dte:
+        return False, ""
+
+    ts = now or datetime.now(ET)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=ET)
+    else:
+        ts = ts.astimezone(ET)
+    tnow = ts.timetz().replace(tzinfo=None)
+
+    if dte == 0:
+        # Prefer dedicated 0DTE cutoff when that feature is on; else near-expiry cutoff
+        if _env_bool("TRADING_AGENT_EOD_0DTE_FLATTEN", True):
+            cutoff = _env_time("TRADING_AGENT_EOD_0DTE_CUTOFF_ET", "15:45")
+            if tnow >= cutoff:
+                return True, "eod_0dte_flatten"
+            return False, ""
+        cutoff = _env_time("TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET", "15:00")
+        if tnow >= cutoff:
+            return True, "near_expiry_flatten:dte=0"
+        return False, ""
+
+    # 1 … max_dte : flatten after near-expiry afternoon cutoff
+    cutoff = _env_time("TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET", "15:00")
+    if tnow >= cutoff:
+        return True, f"near_expiry_flatten:dte={dte}"
+    return False, ""
+
+
 def min_premium_wipe_due(
     lot: OpenLot,
     *,
@@ -218,7 +273,11 @@ def early_exit_reasons(
     option_entry: Optional[float] = None,
     now: Optional[datetime] = None,
 ) -> Tuple[bool, str]:
-    """Priority exits before classic stop/target: expired / EOD 0DTE / min premium."""
+    """Priority exits before classic stop/target: near-expiry / 0DTE / min premium."""
+    ok, reason = near_expiry_flatten_due(lot, now=now)
+    if ok:
+        return True, reason
+    # Keep dedicated 0DTE helper as fallback if near-expiry feature disabled
     ok, reason = eod_0dte_flatten_due(lot, now=now)
     if ok:
         return True, reason

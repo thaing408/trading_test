@@ -572,7 +572,7 @@ def manage_open_lots(
             if closed.status not in (
                 LotStatus.CLOSED.value,
             ) and reason.startswith(
-                ("expired_option", "eod_0dte", "min_premium_wipe")
+                ("expired_option", "eod_0dte", "near_expiry_flatten", "min_premium_wipe")
             ):
                 try:
                     from trading_agent.oms.lifecycle import close_lot_as_orphan

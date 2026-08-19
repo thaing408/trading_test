@@ -122,6 +122,7 @@ Consumer routes through `trading_agent.oms` when `TRADING_AGENT_OMS=1` (default)
 - Audit JSONL under `~/.trading_agent/oms/audit/`  
 - Lot state `~/.trading_agent/oms/state.json`  
 - Manage loop: software stop/target + kill flatten (`python -m trading_agent oms manage`)  
+- **Near-expiry flatten (default ON):** options with calendar DTE ≤ `TRADING_AGENT_NEAR_EXPIRY_MAX_DTE` (default **1**) are closed after `TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET` (default **15:00 ET**). **0DTE** still uses `TRADING_AGENT_EOD_0DTE_CUTOFF_ET` (default **15:45 ET**). Expired lots flatten immediately. Disable with `TRADING_AGENT_NEAR_EXPIRY_FLATTEN=0`.
 
 | Env | Role |
 |-----|------|

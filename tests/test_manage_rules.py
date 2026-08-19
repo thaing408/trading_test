@@ -11,6 +11,7 @@ from trading_agent.oms.manage_rules import (
     eod_0dte_flatten_due,
     in_manage_window,
     min_premium_wipe_due,
+    near_expiry_flatten_due,
     update_trail_stop,
 )
 from trading_agent.oms.state import OpenLot
@@ -76,11 +77,53 @@ def test_min_premium_wipe(monkeypatch):
 
 def test_early_exit_prefers_wipe(monkeypatch):
     monkeypatch.setenv("TRADING_AGENT_EOD_0DTE_FLATTEN", "0")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", "0")
     monkeypatch.setenv("TRADING_AGENT_MIN_PREMIUM_WIPE", "1")
     monkeypatch.setenv("TRADING_AGENT_MIN_OPTION_PREMIUM", "0.05")
     lot = _lot(expiration="2026-08-21")  # not 0DTE
     ok, reason = early_exit_reasons(lot, option_mark=0.01)
     assert ok and "min_premium" in reason
+
+
+def test_near_expiry_dte1_after_cutoff(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", "1")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_MAX_DTE", "1")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET", "15:00")
+    lot = _lot(expiration="2026-08-20")  # DTE=1 on Aug 19
+    before = datetime(2026, 8, 19, 14, 0, tzinfo=ET)
+    ok, _ = near_expiry_flatten_due(lot, now=before)
+    assert not ok
+    after = datetime(2026, 8, 19, 15, 5, tzinfo=ET)
+    ok2, reason = near_expiry_flatten_due(lot, now=after)
+    assert ok2 and reason == "near_expiry_flatten:dte=1"
+
+
+def test_near_expiry_ignores_far_dated(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", "1")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_MAX_DTE", "1")
+    lot = _lot(expiration="2026-08-28")
+    now = datetime(2026, 8, 19, 15, 30, tzinfo=ET)  # DTE=9
+    ok, _ = near_expiry_flatten_due(lot, now=now)
+    assert not ok
+
+
+def test_near_expiry_expired_always(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", "1")
+    lot = _lot(expiration="2026-08-18")
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=ET)
+    ok, reason = near_expiry_flatten_due(lot, now=now)
+    assert ok and reason == "expired_option_flatten"
+
+
+def test_early_exit_near_expiry(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_FLATTEN", "1")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_MAX_DTE", "1")
+    monkeypatch.setenv("TRADING_AGENT_NEAR_EXPIRY_CUTOFF_ET", "15:00")
+    monkeypatch.setenv("TRADING_AGENT_MIN_PREMIUM_WIPE", "0")
+    lot = _lot(expiration="2026-08-20")
+    now = datetime(2026, 8, 19, 15, 10, tzinfo=ET)
+    ok, reason = early_exit_reasons(lot, option_mark=1.0, now=now)
+    assert ok and reason.startswith("near_expiry_flatten")
 
 
 def test_trail_to_breakeven(monkeypatch):
