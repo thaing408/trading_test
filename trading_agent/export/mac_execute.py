@@ -862,30 +862,84 @@ def format_checklist(
     return "\n".join(lines)
 
 
-def in_qt_window(now: Optional[datetime] = None) -> bool:
-    """True during 9:30–9:50 America/New_York weekdays."""
+# Regular US equity/options session open (Schwab MARKET + session NORMAL).
+RTH_OPEN_ET = time(9, 30)
+# Consumer may wake / build ready_orders before the open (QT prep).
+ENTRY_PREP_ET = time(9, 25)
+ENTRY_END_ET = time(11, 0)
+
+
+def _as_et(now: Optional[datetime] = None) -> datetime:
     ts = now or datetime.now(ET)
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
-    else:
-        ts = ts.astimezone(ET)
+        return ts.replace(tzinfo=timezone.utc).astimezone(ET)
+    return ts.astimezone(ET)
+
+
+def in_qt_window(now: Optional[datetime] = None) -> bool:
+    """True during 9:30–9:50 America/New_York weekdays."""
+    ts = _as_et(now)
     if ts.weekday() >= 5:
         return False
     t = ts.time()
-    return time(9, 30) <= t <= time(9, 50)
+    return RTH_OPEN_ET <= t <= time(9, 50)
 
 
 def in_consumer_window(now: Optional[datetime] = None) -> bool:
-    """Active *entry* consumer window: 9:25–11:00 ET weekdays (QT + early desk)."""
-    ts = now or datetime.now(ET)
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc).astimezone(ET)
-    else:
-        ts = ts.astimezone(ET)
+    """Active *entry* consumer window: 9:25–11:00 ET weekdays (QT + early desk).
+
+    Prep/ready_orders may run from 9:25. LIVE place_order is gated separately
+    by ``in_live_entry_window`` (RTH open 9:30 ET).
+    """
+    ts = _as_et(now)
     if ts.weekday() >= 5:
         return False
     t = ts.time()
-    return time(9, 25) <= t <= time(11, 0)
+    return ENTRY_PREP_ET <= t <= ENTRY_END_ET
+
+
+def in_live_entry_window(now: Optional[datetime] = None) -> bool:
+    """True when LIVE MARKET entries may be sent to Schwab (RTH open).
+
+    Must be a weekday at/after 09:30 ET and still within the entry end (11:00 ET).
+    Pre-open accepts (HTTP 201) on NORMAL/DAY markets often never fill — that
+    produced Discord ENTER + OMS protected lots with nothing in TOS.
+    """
+    ts = _as_et(now)
+    if ts.weekday() >= 5:
+        return False
+    t = ts.time()
+    return RTH_OPEN_ET <= t <= ENTRY_END_ET
+
+
+def allow_preopen_live_place() -> bool:
+    """Escape hatch for tests / rare ops — default off."""
+    return os.getenv("TRADING_AGENT_AUTO_TRADE_ALLOW_PREOPEN_LIVE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def live_entry_blocked_reason(now: Optional[datetime] = None) -> str:
+    """Empty if LIVE place is allowed; otherwise a skip_reason for audit/Discord silence.
+
+    ``TRADING_AGENT_AUTO_TRADE_ANYTIME`` does **not** bypass this — pre-open MARKET
+    submits are unsafe. Use TRADING_AGENT_AUTO_TRADE_ALLOW_PREOPEN_LIVE=1 only
+    when intentionally testing.
+    """
+    if allow_preopen_live_place():
+        return ""
+    ts = _as_et(now)
+    if ts.weekday() >= 5:
+        return "before_rth_open"
+    t = ts.time()
+    if t < RTH_OPEN_ET:
+        return "before_rth_open"
+    if t > ENTRY_END_ET:
+        return "after_entry_window"
+    return ""
 
 
 def in_watch_window(now: Optional[datetime] = None) -> bool:
@@ -951,8 +1005,20 @@ def run_consume(
     orders = build_ready_orders(books, processed=processed)
 
     submitted_ids: List[str] = []
+    rth_block = live_entry_blocked_reason() if live else ""
     for i, order in enumerate(orders):
         if order.status == "skipped":
+            continue
+        if live and rth_block:
+            orders[i].status = "skipped"
+            orders[i].skip_reason = rth_block
+            orders[i].broker_response = {
+                "mode": "rth_gate",
+                "message": (
+                    "LIVE place blocked until regular session open (09:30 ET). "
+                    "Will retry after open."
+                ),
+            }
             continue
         orders[i] = submit_order(order, live=live)
         if orders[i].status in ("submitted", "dry_run", "ready") and mark_processed:
