@@ -7,6 +7,7 @@ Related:
 
 - [`options_auto_trade.md`](options_auto_trade.md) — LIVE path, env flags, multi-method auto-export  
 - [`DESK_UI_AUTO_TRADE.md`](DESK_UI_AUTO_TRADE.md) — operator UI  
+- [`PACKAGING_ROADMAP.md`](PACKAGING_ROADMAP.md) — installable Operator Desk (Mac/Windows); feature constraints  
 - [`quant_institution_roadmap.md`](quant_institution_roadmap.md) — long-horizon G0–G7  
 
 Paper stack on me-ai is **`trading_test`** (separate repo); this file is **Mac production desk**.
