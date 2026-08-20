@@ -204,6 +204,33 @@ def evaluate_pretrade(
         if total_rt >= max_day_rt:
             return False, f"max_round_trips_per_day:{total_rt}>={max_day_rt}"
 
+    try:
+        from trading_agent.oms.wr_desk import evaluate_wr_enter, wr_desk_enabled
+
+        if wr_desk_enabled():
+            dte = None
+            exp = str(getattr(order, "expiration", "") or "")[:10]
+            if exp:
+                try:
+                    from datetime import date as _date
+
+                    dte = (_date.fromisoformat(exp) - _date.today()).days
+                except ValueError:
+                    dte = None
+            ok_w, reason_w = evaluate_wr_enter(
+                order,
+                bias=str((process_detail or {}).get("bias") or ""),
+                regime=str((process_detail or {}).get("regime") or ""),
+                dte=dte,
+            )
+            if not ok_w:
+                return False, reason_w
+    except Exception as exc:  # noqa: BLE001
+        from trading_agent.oms.wr_desk import wr_desk_enabled
+
+        if wr_desk_enabled():
+            return False, f"wr_desk_error:{exc}"
+
     if cfg.require_defined_risk and getattr(order, "instrument", "").lower() in (
         "options",
         "option",

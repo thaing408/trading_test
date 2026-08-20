@@ -1,6 +1,26 @@
 # Auto-trade next steps (Mac `trading_agent`)
 
-**Last updated:** 2026-08-17  
+**Last updated:** 2026-08-20
+
+## WR desk (default ON) — fewer ENTERs, higher bar
+
+`TRADING_AGENT_WR_DESK=1` (default). LIVE new entries require:
+
+| Gate | Rule |
+|------|------|
+| Bias | **`trade` only** (`light` / `cash` → no ENTER) |
+| Regime | Not chop/range/sideways |
+| Tape | SPY 10d MA ≥ 20d MA **and** VIX ≤ 20 (disable tape: `TRADING_AGENT_WR_TAPE=0`) |
+| Setup | Pullback family only: `fvg`, `soulz_pa` (`TRADING_AGENT_WR_METHODS`) |
+| Side | No PUT / bear_breakdown |
+| DTE | ≥ 3 (index 0DTE off; `TRADING_AGENT_WR_ALLOW_INDEX_0DTE=1` to restore on push tape) |
+| Spread | Skip if `bid_ask_spread_pct` &gt; 8 |
+| Payoff | Target **2R** vs stop |
+| Time stop | Flatten debit after **60m** if still open |
+
+Disable all of the above: `TRADING_AGENT_WR_DESK=0`.
+
+---  
 **Audience:** Mac production desk ops + continue from multi-day manage hardening.
 
 Related:

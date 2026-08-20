@@ -761,6 +761,22 @@ def evaluate_process_pretrade_gate(
     if block_on_cash and bias == "cash":
         return False, "process_cash_bias", detail
 
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled, process_session_ok, read_tape
+
+        if wr_desk_enabled():
+            tape = read_tape(fetch=True)
+            detail["wr_desk"] = True
+            detail["wr_tape"] = {k: tape.get(k) for k in ("ok", "push", "vix", "ma_ok", "error")}
+            ok_w, reason_w = process_session_ok(bias=bias, regime=state.regime or "", tape=tape)
+            if not ok_w:
+                return False, reason_w, detail
+    except Exception as exc:  # noqa: BLE001
+        from trading_agent.oms.wr_desk import wr_desk_enabled
+
+        if wr_desk_enabled():
+            return False, f"wr_desk_error:{exc}", detail
+
     # light = reduce risk; still allow entries if prep complete
     for sid, code in (
         ("read_market", "process_step1_incomplete"),

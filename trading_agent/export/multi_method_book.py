@@ -95,6 +95,20 @@ def entry_from_multi_eval(
     """Build one ENTER row from a PLAY multi-eval. None if incomplete or quality fail."""
     if not result.play or result.decision != "PLAY":
         return None
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled, allowed_methods
+
+        if wr_desk_enabled():
+            allow = allowed_methods()
+            best_m = str(result.best_method or "").lower()
+            plays = [str(m).lower() for m in (result.play_methods or [])]
+            if allow and best_m not in allow and not any(m in allow for m in plays):
+                return None
+            side_u = (result.best_side or "").upper()
+            if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
+                return None
+    except Exception:
+        pass
     if require_export_quality:
         if getattr(result, "export_eligible", False) is True:
             pass
@@ -125,6 +139,19 @@ def entry_from_multi_eval(
             stop = entry * 1.02
         else:
             stop = entry * 0.98
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled, apply_payoff
+
+        if wr_desk_enabled() and entry > 0 and stop > 0:
+            bullish = (result.best_side or best.side or "").upper() not in (
+                "PUT",
+                "BEAR",
+                "BEARISH",
+                "SHORT",
+            )
+            target = apply_payoff(entry, stop, bullish=bullish)
+    except Exception:
+        pass
     if target <= 0:
         if stop < entry:
             target = entry + (entry - stop) * 1.5
