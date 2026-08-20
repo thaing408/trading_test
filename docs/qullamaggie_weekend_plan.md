@@ -169,10 +169,12 @@ After P1–P3 exist:
 ## Acceptance (end of weekend)
 
 - [x] **P1 shipped** (`trading_agent/analysis/extension.py`) — tags on multi-method + classic book export; size cuts only when `TRADING_AGENT_ADR_EXTENSION=1`
+- [x] **P2 shipped** — `research methods-backtest --method orb --or-minutes 15,30`
+- [x] **P3 shipped** (`trading_agent/analysis/setup_family.py`) — `setup_family=ep|breakout`; EP size cut only when `TRADING_AGENT_EP_SLOW=1`
 - [ ] `docs/qullamaggie_entry_dials.md` still matches what we built (update if we diverge)
 - [x] Flags default **off** → existing tests + book size unchanged unless flag on
-- [ ] `setup_family` on book or CIO notes (P3)
-- [ ] ORB 15 vs 30 table checked in (not used as a live switch) (P2)
+- [x] `setup_family` on book rows (P3)
+- [x] ORB 15 vs 30 CLI compare (paste live table into methods doc when you run it) (P2)
 - [ ] Pulse halt card still names tickers (`pulse_halt.py`)
 - [ ] No change to Pulse 2-loss sleeve halt or OMS 2-RT-per-symbol without a separate decision
 

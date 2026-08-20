@@ -240,9 +240,17 @@ def entry_from_multi_eval(
     try:
         from trading_agent.analysis.extension import try_enrich_entry_from_market
 
-        return try_enrich_entry_from_market(row)
+        row = try_enrich_entry_from_market(row)
     except Exception:  # noqa: BLE001
-        return row
+        pass
+    # EP vs breakout family (size cut only if TRADING_AGENT_EP_SLOW=1)
+    try:
+        from trading_agent.analysis.setup_family import apply_setup_family_to_entry
+
+        row = apply_setup_family_to_entry(row)
+    except Exception:  # noqa: BLE001
+        pass
+    return row
 
 
 def build_multi_method_book(

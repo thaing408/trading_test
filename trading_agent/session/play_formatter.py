@@ -151,18 +151,25 @@ def format_options_enter_cards(plan: DailyTradingPlan, *, limit: int = 5) -> lis
 
 
 def format_book_enter_extension_lines(entries: list, *, limit: int = 8) -> list[str]:
-    """Discord lines for auto_trade_book rows that carry ADR extension tags."""
+    """Discord lines for auto_trade_book rows with ADR / setup_family tags."""
     from trading_agent.analysis.extension import discord_extension_line
+    from trading_agent.analysis.setup_family import discord_family_line
 
     lines: list[str] = []
     for e in (entries or [])[:limit]:
         if not isinstance(e, dict):
             continue
+        bits = []
         note = discord_extension_line(e)
-        if not note:
+        if note:
+            bits.append(note)
+        fam = discord_family_line(e)
+        if fam:
+            bits.append(fam)
+        if not bits:
             continue
         sym = str(e.get("symbol") or "?").upper()
-        lines.append(f"- **{sym}** {note}")
+        lines.append(f"- **{sym}** · " + " · ".join(bits))
     return lines
 
 

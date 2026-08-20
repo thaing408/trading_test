@@ -198,6 +198,13 @@ def build_auto_trade_book(
             row = try_enrich_entry_from_market(row)
         except Exception:  # noqa: BLE001
             pass
+        # EP vs breakout family (optional EP size cut when TRADING_AGENT_EP_SLOW=1)
+        try:
+            from trading_agent.analysis.setup_family import apply_setup_family_to_entry
+
+            row = apply_setup_family_to_entry(row)
+        except Exception:  # noqa: BLE001
+            pass
         # Researcher gap screener handoff (Raschke 4-day unfilled → continuation)
         try:
             from trading_agent.export.gap_book import apply_gap_boost_to_opportunity_fields, load_gap_book
