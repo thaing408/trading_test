@@ -168,10 +168,11 @@ After P1–P3 exist:
 
 ## Acceptance (end of weekend)
 
+- [x] **P1 shipped** (`trading_agent/analysis/extension.py`) — tags on multi-method + classic book export; size cuts only when `TRADING_AGENT_ADR_EXTENSION=1`
 - [ ] `docs/qullamaggie_entry_dials.md` still matches what we built (update if we diverge)
-- [ ] Flags default **off** → existing tests + book unchanged
-- [ ] `adr_used` / `adr_bucket` / `setup_family` on book or CIO notes
-- [ ] ORB 15 vs 30 table checked in (not used as a live switch)
+- [x] Flags default **off** → existing tests + book size unchanged unless flag on
+- [ ] `setup_family` on book or CIO notes (P3)
+- [ ] ORB 15 vs 30 table checked in (not used as a live switch) (P2)
 - [ ] Pulse halt card still names tickers (`pulse_halt.py`)
 - [ ] No change to Pulse 2-loss sleeve halt or OMS 2-RT-per-symbol without a separate decision
 

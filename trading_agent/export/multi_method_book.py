@@ -179,7 +179,7 @@ def entry_from_multi_eval(
     )
     notes = "; ".join(result.reasons[:3])[:240]
 
-    return {
+    row = {
         "symbol": result.symbol,
         "action": "ENTER",
         "side": direction,  # Bullish→CALL / Bearish→PUT via infer_call_put
@@ -236,6 +236,13 @@ def entry_from_multi_eval(
         "play_quality_score": float(getattr(result, "play_quality_score", 0) or 0),
         "best_play_score": float(getattr(result, "best_play_score", 0) or 0),
     }
+    # Qullamaggie ADR extension tags (size cut only if TRADING_AGENT_ADR_EXTENSION=1)
+    try:
+        from trading_agent.analysis.extension import try_enrich_entry_from_market
+
+        return try_enrich_entry_from_market(row)
+    except Exception:  # noqa: BLE001
+        return row
 
 
 def build_multi_method_book(

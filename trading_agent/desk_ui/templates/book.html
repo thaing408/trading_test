@@ -22,7 +22,7 @@
       <tr>
         <th>Symbol</th><th>Action</th><th>Side</th><th>Grade</th>
         <th>Entry</th><th>Stop</th><th>Target</th>
-        <th>Checklist</th><th>Edge</th><th>Strategy</th>
+        <th>ADR used</th><th>Checklist</th><th>Edge</th><th>Strategy</th>
       </tr>
     </thead>
     <tbody>
@@ -35,6 +35,11 @@
         <td>{{ e.get('entry') }}</td>
         <td>{{ e.get('stop') }}</td>
         <td>{{ e.get('target') }}</td>
+        <td class="muted">
+          {% if e.get('adr_used') is not none %}
+          {{ '%.2f'|format(e.adr_used) }} <span class="tag">{{ e.get('adr_bucket') or '' }}</span>
+          {% else %}—{% endif %}
+        </td>
         <td>{{ e.get('checklist_passed') }}</td>
         <td>{{ e.get('edge_complete') }}</td>
         <td>{{ e.get('strategy') }}</td>

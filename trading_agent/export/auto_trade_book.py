@@ -191,6 +191,13 @@ def build_auto_trade_book(
             continue
         row["method_tags"] = list(getattr(opp, "method_tags", None) or [])
         row["method_notes"] = str(getattr(opp, "method_notes", "") or "")[:240]
+        # ADR extension tags (optional size cut when TRADING_AGENT_ADR_EXTENSION=1)
+        try:
+            from trading_agent.analysis.extension import try_enrich_entry_from_market
+
+            row = try_enrich_entry_from_market(row)
+        except Exception:  # noqa: BLE001
+            pass
         # Researcher gap screener handoff (Raschke 4-day unfilled → continuation)
         try:
             from trading_agent.export.gap_book import apply_gap_boost_to_opportunity_fields, load_gap_book

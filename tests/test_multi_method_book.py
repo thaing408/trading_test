@@ -65,7 +65,7 @@ def test_entry_from_multi_eval_valid():
     )
     assert row is not None
     assert row["symbol"] == "NVDA"
-    assert row["instrument"] == "equity"
+    assert row["instrument"] == "options"  # multi-method auto is options-only
     assert row["auto_trade_eligible"] is True
     assert row["entry"] == 100.0
     assert row["stop"] == 98.0
@@ -101,9 +101,11 @@ def test_export_writes_files(tmp_path, monkeypatch):
     assert payload["entries"][0]["symbol"] == "NVDA"
 
 
-def test_cash_bias_suppresses_export(tmp_path, monkeypatch):
+def test_cash_bias_suppresses_export_when_auto_export_off(tmp_path, monkeypatch):
+    """With AUTO_EXPORT on (default), cash bias does not wipe multi-method ENTERs."""
     monkeypatch.setenv("TRADING_AGENT_SYNC_DIR", str(tmp_path / "sync"))
     monkeypatch.setenv("TRADING_AGENT_PROCESS_DIR", str(tmp_path / "process"))
+    monkeypatch.setenv("TRADING_AGENT_MULTI_METHOD_AUTO_EXPORT", "0")
     from trading_agent.runbook.process import set_regime
 
     set_regime("cash", regime="halt", reason="test")
