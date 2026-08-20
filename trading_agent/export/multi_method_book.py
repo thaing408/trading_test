@@ -161,6 +161,20 @@ def entry_from_multi_eval(
         return None
 
     side_raw = (result.best_side or best.side or "CALL").upper()
+    # Safety: never export a stop wider than N×ATR estimate (2% of price fallback)
+    try:
+        from trading_agent.strategy.swing_scan import clamp_stop_to_atr
+
+        mult = float(getattr(cfg or MultiMethodConfig(), "max_stop_atr_mult", 1.5) or 1.5)
+        atr_guess = entry * 0.02
+        for t in best.tags or []:
+            if isinstance(t, str) and t.startswith("atr=") and t.endswith("%"):
+                atr_guess = max(atr_guess, entry * float(t[4:-1]) / 100.0)
+                break
+        stop, _ = clamp_stop_to_atr(entry, stop, side_raw, atr_guess, max_atr_mult=mult)
+        stop = float(round(stop, 2))
+    except Exception:
+        pass
     if side_raw in ("CALL", "LONG", "BULL", "BULLISH"):
         direction = "Bullish"
         contract_side = "CALL"

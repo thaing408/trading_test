@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from trading_agent.strategy.swing_scan import (
     SwingScanConfig,
+    clamp_stop_to_atr,
     format_swing_scan_report,
     score_swing_from_ohlc,
 )
@@ -76,6 +77,47 @@ def test_format_report_empty_play():
     text = format_swing_scan_report([c])
     assert "Daily swing scan" in text
     assert "No PLAY" in text or "PLAY" in text
+
+
+def test_clamp_stop_to_atr_crwd_zs_scale():
+    """CRWD-like: entry 213 stop 119 (~44%) → pull to 1.5×ATR."""
+    entry, fat_stop, atr = 212.92, 118.61, 212.92 * 0.041
+    new_stop, clamped = clamp_stop_to_atr(entry, fat_stop, "CALL", atr, max_atr_mult=1.5)
+    assert clamped is True
+    assert new_stop == entry - 1.5 * atr
+    assert (entry - new_stop) / entry < 0.08  # ~6.2% vs 44%
+
+    # ZS-like ~26% → still capped
+    entry2, fat2, atr2 = 185.70, 137.75, 185.70 * 0.042
+    new2, c2 = clamp_stop_to_atr(entry2, fat2, "CALL", atr2, max_atr_mult=1.5)
+    assert c2 is True
+    assert abs(new2 - (entry2 - 1.5 * atr2)) < 1e-6
+
+    # Already tight → unchanged
+    tight = entry - 1.0 * atr
+    same, c3 = clamp_stop_to_atr(entry, tight, "CALL", atr, max_atr_mult=1.5)
+    assert c3 is False
+    assert same == tight
+
+
+def test_score_swing_caps_fat_pattern_stop():
+    """Synthetic double-bottom with ancient low → stop must be ATR-capped."""
+    o, h, l, c = _uptrend_series(150)
+    # Inject a very old deep low so pattern stop would be absurd if used raw
+    l[20] = min(c) * 0.55
+    cfg = SwingScanConfig(
+        min_score=40.0,
+        allow_structure_only=True,
+        require_confirmed_pattern=False,
+        min_atr_pct=0.3,
+        max_atr_pct=20.0,
+        max_stop_atr_mult=1.5,
+        use_rs=False,
+    )
+    cand = score_swing_from_ohlc(h, l, o, c, cfg=cfg, symbol="FAT")
+    if cand.play and cand.side == "CALL" and cand.entry > 0 and cand.stop > 0:
+        atr_abs = cand.entry * (cand.atr_pct / 100.0) if cand.atr_pct else cand.entry * 0.02
+        assert (cand.entry - cand.stop) <= 1.5 * atr_abs * 1.05 + 1e-6
 
 
 def test_require_pattern_blocks_structure_only():
