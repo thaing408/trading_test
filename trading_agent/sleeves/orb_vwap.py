@@ -16,12 +16,40 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 
 ASSUMPTIONS = [
-    "15m bars via yfinance; OR = first 30m (2 bars) 9:30–10:00 ET",
+    "15m bars via yfinance; OR window dial default 30m (first N bars from 9:30 ET)",
     "Long: close > OR high and close > session VWAP; short inverse",
     "Stop: OR midpoint; target: 1.5R; one trade per symbol per day",
     "Equity-style P/L in $ per share × 100 shares (not options premium)",
     "RTH only; no news filter",
 ]
+
+# Supported research dials (yfinance 15m cannot do true 1m OR).
+SUPPORTED_OR_MINUTES = (5, 15, 30, 45, 60)
+
+
+def or_bar_count(or_minutes: int, *, bar_minutes: int = 15) -> int:
+    """How many bars define the opening range for a given window.
+
+    15m data: 15→1 bar, 30→2, 45→3, 60→4. Sub-bar windows (5) still use 1 bar
+    (best available on 15m feed) and are labeled as approximate.
+    """
+    mins = max(1, int(or_minutes or 30))
+    bar = max(1, int(bar_minutes or 15))
+    return max(1, int(round(mins / bar)))
+
+
+def assumptions_for_or(or_minutes: int) -> List[str]:
+    n = or_bar_count(or_minutes)
+    approx = ""
+    if int(or_minutes) < 15:
+        approx = " (approx on 15m bars — true 5m needs finer data)"
+    return [
+        f"15m bars via yfinance; OR = first {or_minutes}m ≈ {n} bar(s) from 9:30 ET{approx}",
+        "Long: close > OR high and close > session VWAP; short inverse",
+        "Stop: OR midpoint; target: 1.5R; one trade per symbol per day",
+        "Equity-style P/L in $ per share × 100 shares (not options premium)",
+        "RTH only; no news filter — research dial only (not live Pulse)",
+    ]
 
 
 @dataclass
@@ -72,11 +100,18 @@ def _session_date(ts) -> date:
     return ts.astimezone(ET).date() if getattr(ts, "tzinfo", None) else ts.date()
 
 
-def run_orb_vwap_symbol(symbol: str, *, period: str = "60d", rr: float = 1.5) -> List[OrbTrade]:
+def run_orb_vwap_symbol(
+    symbol: str,
+    *,
+    period: str = "60d",
+    rr: float = 1.5,
+    or_minutes: int = 30,
+) -> List[OrbTrade]:
     df = _fetch(symbol, period)
     if df is None or len(df) < 30:
         return []
 
+    n_or = or_bar_count(or_minutes)
     highs = df["High"].tolist()
     lows = df["Low"].tolist()
     closes = df["Close"].tolist()
@@ -95,11 +130,11 @@ def run_orb_vwap_symbol(symbol: str, *, period: str = "60d", rr: float = 1.5) ->
             t = times[i].astimezone(ET).time()
             if time(9, 30) <= t <= time(15, 55):
                 rth.append(i)
-        if len(rth) < 6:
+        if len(rth) < max(6, n_or + 2):
             continue
 
-        # OR: first two 15m bars (30m)
-        or_bars = rth[:2]
+        # OR: first N 15m bars for the dial window (default 30m → 2)
+        or_bars = rth[:n_or]
         orh = max(highs[i] for i in or_bars)
         orl = min(lows[i] for i in or_bars)
         mid = (orh + orl) / 2.0
@@ -121,7 +156,7 @@ def run_orb_vwap_symbol(symbol: str, *, period: str = "60d", rr: float = 1.5) ->
             cum_v += max(v, 1.0)
             vwap = cum_pv / cum_v
 
-            if j < 2 or traded:
+            if j < n_or or traded:
                 continue
             # after OR complete
             side = None
@@ -195,13 +230,15 @@ def run_orb_vwap_backtest(
     *,
     period: str = "60d",
     rr: float = 1.5,
+    or_minutes: int = 30,
 ) -> OrbBacktestResult:
     syms = [s.upper() for s in (symbols or ["QQQ", "SPY", "IWM"])]
+    mins = int(or_minutes or 30)
     all_t: List[OrbTrade] = []
     by_sym: Dict[str, Dict[str, float]] = {}
     for s in syms:
         try:
-            ts = run_orb_vwap_symbol(s, period=period, rr=rr)
+            ts = run_orb_vwap_symbol(s, period=period, rr=rr, or_minutes=mins)
         except Exception:
             ts = []
         all_t.extend(ts)
@@ -229,13 +266,46 @@ def run_orb_vwap_backtest(
         avg_r=round(sum(t.r_multiple for t in all_t) / len(all_t), 3) if all_t else 0.0,
         by_symbol=by_sym,
         trades=all_t,
-        assumptions=list(ASSUMPTIONS),
+        assumptions=assumptions_for_or(mins),
+        metadata={"or_minutes": mins, "or_bars": or_bar_count(mins)},
     )
 
 
+def compare_orb_windows(
+    symbols: Optional[Sequence[str]] = None,
+    *,
+    period: str = "60d",
+    rr: float = 1.5,
+    or_minutes_list: Sequence[int] = (15, 30),
+) -> Dict[str, Any]:
+    """Run the same symbols/period across OR windows; research dial only."""
+    results: Dict[int, OrbBacktestResult] = {}
+    for m in or_minutes_list:
+        results[int(m)] = run_orb_vwap_backtest(
+            symbols, period=period, rr=rr, or_minutes=int(m)
+        )
+    # Optional: days that broke the shorter ORH but not the longer (filter vs cost)
+    filter_note = ""
+    if 15 in results and 30 in results:
+        days_15 = {(t.symbol, t.day) for t in results[15].trades}
+        days_30 = {(t.symbol, t.day) for t in results[30].trades}
+        only_15 = days_15 - days_30
+        filter_note = (
+            f"symbol-days with 15m OR trade but not 30m: {len(only_15)} "
+            f"(faster window catches more; cost is noise)"
+        )
+    return {
+        "period": period,
+        "windows": sorted(results.keys()),
+        "results": results,
+        "filter_note": filter_note,
+    }
+
+
 def format_orb_report(r: OrbBacktestResult) -> str:
+    or_m = (r.metadata or {}).get("or_minutes", 30)
     lines = [
-        f"# ORB + VWAP sleeve ({r.period})",
+        f"# ORB + VWAP sleeve ({r.period}, OR={or_m}m)",
         "",
         "## Assumptions",
     ]
@@ -255,3 +325,32 @@ def format_orb_report(r: OrbBacktestResult) -> str:
             f"${b['pnl']:+.2f} | {b['avg_r']:+.2f} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def format_orb_compare_report(cmp: Dict[str, Any]) -> str:
+    """Side-by-side OR window table (research only — do not pick a live winner)."""
+    results: Dict[int, OrbBacktestResult] = cmp.get("results") or {}
+    period = cmp.get("period") or ""
+    lines = [
+        f"# ORB window dial compare ({period})",
+        "",
+        "_Research dial only — default live/research OR remains 30m. "
+        "Do not promote a window to Pulse/CIO from this table alone._",
+        "",
+        "| OR (m) | bars | trades | WR | mean R | total $ | exp $ |",
+        "|--------|------|--------|-----|--------|---------|-------|",
+    ]
+    for m in sorted(results.keys()):
+        r = results[m]
+        bars = or_bar_count(m)
+        lines.append(
+            f"| {m} | {bars} | {r.trade_count} | {r.win_rate:.1%} | "
+            f"{r.avg_r:+.2f} | ${r.total_pnl:+.2f} | ${r.expectancy:+.2f} |"
+        )
+    note = cmp.get("filter_note") or ""
+    if note:
+        lines += ["", f"_Filter vs cost:_ {note}"]
+    lines.append("")
+    for m in sorted(results.keys()):
+        lines.append(format_orb_report(results[m]))
+    return "\n".join(lines)

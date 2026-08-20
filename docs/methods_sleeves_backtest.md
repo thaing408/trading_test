@@ -1,3 +1,15 @@
+# ORB window dial (research)
+
+Default remains **30m**. Compare windows without promoting to live Pulse:
+
+```bash
+python -m trading_agent research methods-backtest --method orb --or-minutes 15,30 --period 60d
+```
+
+Side-by-side table prints trades / WR / mean R / total $. Paste a fresh run below when you refresh numbers — do **not** declare a live winner from one table.
+
+---
+
 # ORB + VWAP sleeve (60d)
 
 ## Assumptions

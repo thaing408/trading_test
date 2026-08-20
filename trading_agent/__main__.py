@@ -805,14 +805,36 @@ def _run_research(args: argparse.Namespace) -> int:
         return 0
     if cmd == "methods-backtest":
         from trading_agent.sleeves.momentum import format_momentum_report, run_momentum_backtest
-        from trading_agent.sleeves.orb_vwap import format_orb_report, run_orb_vwap_backtest
+        from trading_agent.sleeves.orb_vwap import (
+            compare_orb_windows,
+            format_orb_compare_report,
+            format_orb_report,
+            run_orb_vwap_backtest,
+        )
         from trading_agent.sleeves.regime_premium import format_regime_report, run_regime_premium_ablation
 
         which = (getattr(args, "method", None) or "all").lower()
         parts = []
         if which in ("all", "orb", "orb-vwap"):
-            orb = run_orb_vwap_backtest(period=getattr(args, "period", "60d") or "60d")
-            parts.append(format_orb_report(orb))
+            raw_mins = str(getattr(args, "or_minutes", "30") or "30")
+            mins_list = []
+            for tok in raw_mins.replace(";", ",").split(","):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                try:
+                    mins_list.append(int(tok))
+                except ValueError:
+                    continue
+            if not mins_list:
+                mins_list = [30]
+            period = getattr(args, "period", "60d") or "60d"
+            if len(mins_list) == 1:
+                orb = run_orb_vwap_backtest(period=period, or_minutes=mins_list[0])
+                parts.append(format_orb_report(orb))
+            else:
+                cmp = compare_orb_windows(period=period, or_minutes_list=mins_list)
+                parts.append(format_orb_compare_report(cmp))
         if which in ("all", "momentum", "mom"):
             mom = run_momentum_backtest(period=getattr(args, "mom_period", "1y") or "1y")
             parts.append(format_momentum_report(mom))
@@ -1612,6 +1634,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["all", "orb", "orb-vwap", "momentum", "mom", "regime", "premium"],
     )
     methods_bt.add_argument("--period", default="60d", help="ORB intraday period")
+    methods_bt.add_argument(
+        "--or-minutes",
+        default="30",
+        help="ORB window dial in minutes (research only). "
+        "Single value e.g. 30, or compare e.g. 15,30",
+    )
     methods_bt.add_argument("--mom-period", default="1y", help="Momentum/regime daily period")
     methods_bt.add_argument("--output", "-o", metavar="FILE")
 
