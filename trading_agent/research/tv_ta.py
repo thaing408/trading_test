@@ -30,10 +30,48 @@ def tv_ta_enabled() -> bool:
 
 
 def _throttle_seconds() -> float:
+    # TV rate-limits hard if we hammer; default 1.2s between symbols
     try:
-        return max(0.0, float(os.getenv("TRADING_AGENT_TV_TA_THROTTLE", "0.8") or 0.8))
+        return max(0.0, float(os.getenv("TRADING_AGENT_TV_TA_THROTTLE", "1.2") or 1.2))
     except ValueError:
-        return 0.8
+        return 1.2
+
+
+def _fmt_num(value: Any, digits: int = 2) -> str:
+    try:
+        if value is None or value == "":
+            return "—"
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_int(value: Any) -> str:
+    try:
+        if value is None or value == "":
+            return "—"
+        return f"{int(float(value)):,}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_vol(value: Any) -> str:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 1_000_000_000:
+        return f"{v / 1_000_000_000:.1f}B"
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.1f}M"
+    if v >= 1_000:
+        return f"{v / 1_000:.0f}K"
+    return f"{v:.0f}"
+
+
+def _short_rec(rec: Any) -> str:
+    s = str(rec or "").upper().replace("STRONG_", "S_")
+    return (s or "—")[:10]
 
 
 def _deps_available() -> tuple[bool, str]:
@@ -271,14 +309,143 @@ def fetch_symbol_analysis(
     return snap
 
 
+def _enrich_via_screener(
+    symbols: Sequence[str],
+    *,
+    interval: str = "1d",
+) -> List[Dict[str, Any]]:
+    """Batch enrich using tradingview-screener set_tickers (fewer rate limits)."""
+    try:
+        from tradingview_screener import Query
+    except ImportError:
+        return []
+    tickers = []
+    for sym in symbols:
+        s = str(sym).upper().strip()
+        if ":" in s:
+            tickers.append(s)
+        else:
+            tickers.append(f"{_guess_exchange(s)}:{s}")
+    if not tickers:
+        return []
+    try:
+        q = (
+            Query()
+            .select(
+                "name",
+                "close",
+                "Recommend.All",
+                "Recommend.MA",
+                "Recommend.Other",
+                "BBPower",
+                "RSI",
+                "BB.upper",
+                "BB.lower",
+            )
+            .set_tickers(*tickers)
+        )
+        _total, df = q.get_scanner_data()
+    except Exception:
+        return []
+    if df is None or not hasattr(df, "to_dict"):
+        return []
+    by_sym: Dict[str, Dict[str, Any]] = {}
+    for rec in df.to_dict(orient="records"):
+        ticker = str(rec.get("ticker") or "")
+        sym = ticker.split(":")[-1].upper() if ticker else ""
+        if not sym:
+            continue
+        close = rec.get("close")
+        upper = rec.get("BB.upper")
+        lower = rec.get("BB.lower")
+        try:
+            close_f = float(close) if close is not None else None
+            upper_f = float(upper) if upper is not None else None
+            lower_f = float(lower) if lower is not None else None
+        except (TypeError, ValueError):
+            close_f = upper_f = lower_f = None
+        z, rating = bb_sigma_and_rating(close_f, upper_f, lower_f)
+        # Map Recommend.All (-1..1) to BUY/SELL/HOLD style
+        try:
+            rec_all = float(rec.get("Recommend.All") or 0)
+        except (TypeError, ValueError):
+            rec_all = 0.0
+        if rec_all >= 0.5:
+            recommendation = "STRONG_BUY"
+        elif rec_all >= 0.1:
+            recommendation = "BUY"
+        elif rec_all <= -0.5:
+            recommendation = "STRONG_SELL"
+        elif rec_all <= -0.1:
+            recommendation = "SELL"
+        else:
+            recommendation = "NEUTRAL"
+        try:
+            rec_ma = float(rec.get("Recommend.MA") or 0)
+        except (TypeError, ValueError):
+            rec_ma = 0.0
+        try:
+            rec_osc = float(rec.get("Recommend.Other") or 0)
+        except (TypeError, ValueError):
+            rec_osc = 0.0
+
+        def _side(v: float) -> str:
+            if v >= 0.5:
+                return "S_BUY"
+            if v >= 0.1:
+                return "BUY"
+            if v <= -0.5:
+                return "S_SELL"
+            if v <= -0.1:
+                return "SELL"
+            return "NEUTRAL"
+
+        # Fake B/S/N counts from score magnitude for display parity
+        buy = max(0, int(round(abs(rec_all) * 20))) if rec_all > 0 else 0
+        sell = max(0, int(round(abs(rec_all) * 20))) if rec_all < 0 else 0
+        neutral = max(0, 20 - buy - sell)
+        by_sym[sym] = {
+            "symbol": sym,
+            "exchange": ticker.split(":")[0] if ":" in ticker else "",
+            "interval": interval,
+            "recommendation": recommendation,
+            "buy": buy,
+            "sell": sell,
+            "neutral": neutral,
+            "oscillators": _side(rec_osc),
+            "moving_averages": _side(rec_ma),
+            "close": round(close_f, 2) if close_f is not None else None,
+            "rsi": round(float(rec.get("RSI") or 0), 1) if rec.get("RSI") is not None else None,
+            "bb_upper": round(upper_f, 2) if upper_f is not None else None,
+            "bb_lower": round(lower_f, 2) if lower_f is not None else None,
+            "bb_mid": round((upper_f + lower_f) / 2, 2) if upper_f and lower_f else None,
+            "bb_sigma": z,
+            "bb_rating": rating,
+            "bbp_signal": "",
+            "error": "",
+            "source": "tradingview_screener",
+            "recommend_all": round(rec_all, 2),
+        }
+    # Preserve input order; mark missing
+    rows: List[Dict[str, Any]] = []
+    for sym in symbols:
+        s = str(sym).upper().strip().split(":")[-1]
+        if s in by_sym:
+            rows.append(by_sym[s])
+        else:
+            rows.append({"symbol": s, "error": "not_in_screener_response", "source": "tradingview_screener"})
+    return rows
+
+
 def enrich_symbols(
     symbols: Sequence[str],
     *,
     interval: str = "1d",
     throttle: Optional[float] = None,
     force: bool = False,
+    retries: int = 2,
 ) -> Dict[str, Any]:
-    """Batch enrich. Respects TRADING_AGENT_TV_TA unless force=True."""
+    """Batch enrich. Prefer screener set_tickers; fall back to tradingview_ta."""
     if not force and not tv_ta_enabled():
         return {
             "enabled": False,
@@ -286,19 +453,37 @@ def enrich_symbols(
             "reason": "TRADING_AGENT_TV_TA off",
             "symbols": [],
         }
-    gap = _throttle_seconds() if throttle is None else max(0.0, float(throttle))
-    rows: List[Dict[str, Any]] = []
-    for i, sym in enumerate(symbols):
-        if i and gap:
-            time.sleep(gap)
-        snap = fetch_symbol_analysis(str(sym), interval=interval)
-        rows.append(snap.as_dict())
+    rows = _enrich_via_screener(symbols, interval=interval)
+    # If screener returned nothing usable, fall back to per-symbol TA
+    if not rows or all(r.get("error") for r in rows):
+        gap = _throttle_seconds() if throttle is None else max(0.0, float(throttle))
+        rows = []
+        for i, sym in enumerate(symbols):
+            if i and gap:
+                time.sleep(gap)
+            snap = fetch_symbol_analysis(str(sym), interval=interval)
+            attempt = 0
+            while (
+                snap.error
+                and attempt < max(0, int(retries))
+                and any(
+                    x in snap.error.lower()
+                    for x in ("http", "rate", "429", "503", "timeout", "can't access")
+                )
+            ):
+                attempt += 1
+                time.sleep(gap * (1.5 + attempt) + 1.0)
+                snap = fetch_symbol_analysis(str(sym), interval=interval)
+            rows.append(snap.as_dict())
+    ok_n = sum(1 for r in rows if not r.get("error"))
     return {
         "enabled": True,
         "skipped": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "interval": interval,
         "count": len(rows),
+        "ok_count": ok_n,
+        "error_count": len(rows) - ok_n,
         "symbols": rows,
     }
 
@@ -322,12 +507,14 @@ def rating_scan(
             "rows": [],
         }
     try:
+        # Over-fetch then filter OTC/pennies so we still return `limit` clean rows
+        fetch_n = max(int(limit) * 4, int(limit) + 20)
         q = (
             Query()
             .select("name", "close", "Recommend.All", "BBPower", "RSI", "volume")
             .where(col("Recommend.All") > float(min_recommend))
             .order_by("volume", ascending=False)
-            .limit(int(limit))
+            .limit(fetch_n)
         )
         if hasattr(q, "set_markets"):
             q = q.set_markets(market)
@@ -340,18 +527,36 @@ def rating_scan(
         for rec in df.to_dict(orient="records"):
             ticker = str(rec.get("ticker") or "")
             sym = ticker.split(":")[-1] if ":" in ticker else ticker
+            close = rec.get("close")
+            try:
+                close_f = float(close) if close is not None else None
+            except (TypeError, ValueError):
+                close_f = None
+            # Drop OTC micro-pennies / noise by default
+            skip_otc = os.getenv("TRADING_AGENT_TV_TA_INCLUDE_OTC", "").strip().lower() not in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if skip_otc and ticker.upper().startswith("OTC:"):
+                continue
+            if close_f is not None and close_f < 1.0:
+                continue
             rows.append(
                 {
                     "ticker": ticker,
                     "symbol": sym.upper(),
                     "name": rec.get("name"),
-                    "close": rec.get("close"),
-                    "recommend_all": rec.get("Recommend.All"),
-                    "bb_power": rec.get("BBPower"),
-                    "rsi": rec.get("RSI"),
-                    "volume": rec.get("volume"),
+                    "close": round(close_f, 2) if close_f is not None else None,
+                    "recommend_all": round(float(rec.get("Recommend.All") or 0), 2),
+                    "bb_power": round(float(rec.get("BBPower") or 0), 2),
+                    "rsi": round(float(rec.get("RSI") or 0), 1),
+                    "volume": int(float(rec.get("volume") or 0)),
                 }
             )
+            if len(rows) >= int(limit):
+                break
     return {
         "enabled": True,
         "skipped": False,
@@ -391,49 +596,99 @@ def bollinger_extreme_scan(
     }
 
 
-def format_tv_ta_report(pack: Dict[str, Any]) -> str:
+def format_tv_ta_report(pack: Dict[str, Any], *, for_discord: bool = True) -> str:
+    """Discord-friendly fixed-width block (markdown tables render poorly)."""
     if pack.get("skipped"):
-        return f"# TV TA (skipped)\n\n{pack.get('reason')}\n"
-    lines = [
-        f"# TradingView TA enrich ({pack.get('interval', '')})",
-        "",
-        f"generated: {pack.get('generated_at')}",
-        "",
-        "| Sym | Rec | Buy/Sell/Neu | Osc | MA | BB rating | σ | RSI |",
-        "|-----|-----|--------------|-----|----|-----------|---|-----|",
-    ]
+        return f"TV TA skipped — {pack.get('reason')}"
+    when = str(pack.get("generated_at") or "")[:19].replace("T", " ")
+    interval = pack.get("interval") or "1d"
+    ok_n = pack.get("ok_count")
+    err_n = pack.get("error_count")
+    if ok_n is None:
+        rows_all = pack.get("symbols") or []
+        ok_n = sum(1 for r in rows_all if not r.get("error"))
+        err_n = len(rows_all) - ok_n
+
+    header = (
+        f"TradingView TA · enrich ({interval})\n"
+        f"{when} UTC · ok {ok_n}"
+        + (f" · errors {err_n}" if err_n else "")
+    )
+    # Fixed-width columns inside a code fence
+    col = (
+        f"{'Sym':<6} {'Rec':<10} {'B/S/N':<9} {'Osc':<10} "
+        f"{'MA':<10} {'BB':<11} {'σ':>5} {'RSI':>5}"
+    )
+    lines = [col, "-" * len(col)]
+    failed: List[str] = []
     for r in pack.get("symbols") or []:
+        sym = str(r.get("symbol") or "?")[:6]
         if r.get("error"):
-            lines.append(f"| {r.get('symbol')} | ERR | | | | | | {r.get('error')[:40]} |")
+            failed.append(sym)
             continue
-        lines.append(
-            f"| {r.get('symbol')} | {r.get('recommendation')} | "
-            f"{r.get('buy')}/{r.get('sell')}/{r.get('neutral')} | "
-            f"{r.get('oscillators')} | {r.get('moving_averages')} | "
-            f"{r.get('bb_rating')} | {r.get('bb_sigma')} | {r.get('rsi')} |"
+        bsn = (
+            f"{int(r.get('buy') or 0)}/"
+            f"{int(r.get('sell') or 0)}/"
+            f"{int(r.get('neutral') or 0)}"
         )
-    return "\n".join(lines) + "\n"
+        lines.append(
+            f"{sym:<6} {_short_rec(r.get('recommendation')):<10} "
+            f"{bsn:<9} "
+            f"{_short_rec(r.get('oscillators')):<10} "
+            f"{_short_rec(r.get('moving_averages')):<10} "
+            f"{str(r.get('bb_rating') or '—')[:11]:<11} "
+            f"{_fmt_num(r.get('bb_sigma'), 2):>5} "
+            f"{_fmt_num(r.get('rsi'), 1):>5}"
+        )
+    body = "\n".join(lines)
+    if for_discord:
+        out = f"{header}\n```\n{body}\n```"
+    else:
+        out = f"{header}\n{body}"
+    if failed:
+        out += f"\n_Failed ({len(failed)}): {', '.join(failed)}_ — rate-limit/retry later"
+    # BB hits section if present
+    hits = pack.get("hits")
+    if hits is not None:
+        out += f"\n**BB extreme (|σ|≥{pack.get('min_abs_sigma', 2)}):** {len(hits)}"
+        if hits:
+            hit_lines = [
+                f"{h.get('symbol'):<6} {str(h.get('bb_rating') or ''):<11} "
+                f"σ={_fmt_num(h.get('bb_sigma'), 2)}  {_short_rec(h.get('recommendation'))}"
+                for h in hits[:20]
+            ]
+            out += "\n```\n" + "\n".join(hit_lines) + "\n```"
+    return out
 
 
-def format_rating_scan_report(pack: Dict[str, Any]) -> str:
+def format_rating_scan_report(pack: Dict[str, Any], *, for_discord: bool = True) -> str:
     if pack.get("skipped"):
-        return f"# TV rating scan (skipped)\n\n{pack.get('reason')}\n"
+        return f"TV rating scan skipped — {pack.get('reason')}"
     if pack.get("error"):
-        return f"# TV rating scan error\n\n{pack.get('error')}\n"
-    lines = [
-        f"# TV rating screener ({pack.get('market')}, Recommend.All > {pack.get('min_recommend')})",
-        "",
-        f"scanner_total≈{pack.get('scanner_total')}  shown={pack.get('count')}",
-        "",
-        "| Ticker | Close | Rec.All | BBPower | RSI | Vol |",
-        "|--------|-------|---------|---------|-----|-----|",
-    ]
+        return f"TV rating scan error — {pack.get('error')}"
+    when = str(pack.get("generated_at") or "")[:19].replace("T", " ")
+    header = (
+        f"TradingView · rating screener ({pack.get('market')})\n"
+        f"Recommend.All > {pack.get('min_recommend')} · "
+        f"shown {pack.get('count')} / ~{pack.get('scanner_total')} · {when} UTC"
+    )
+    col = f"{'Ticker':<14} {'Close':>8} {'Rec':>5} {'BBPwr':>7} {'RSI':>5} {'Vol':>7}"
+    lines = [col, "-" * len(col)]
     for r in pack.get("rows") or []:
+        ticker = str(r.get("ticker") or r.get("symbol") or "?")
+        if len(ticker) > 14:
+            ticker = ticker[:14]
         lines.append(
-            f"| {r.get('ticker')} | {r.get('close')} | {r.get('recommend_all')} | "
-            f"{r.get('bb_power')} | {r.get('rsi')} | {r.get('volume')} |"
+            f"{ticker:<14} {_fmt_num(r.get('close'), 2):>8} "
+            f"{_fmt_num(r.get('recommend_all'), 2):>5} "
+            f"{_fmt_num(r.get('bb_power'), 2):>7} "
+            f"{_fmt_num(r.get('rsi'), 1):>5} "
+            f"{_fmt_vol(r.get('volume')):>7}"
         )
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines)
+    if for_discord:
+        return f"{header}\n```\n{body}\n```"
+    return f"{header}\n{body}"
 
 
 def stamp_tv_fields_on_entry(entry: Dict[str, Any], snap: TvTaSnapshot | Dict[str, Any]) -> Dict[str, Any]:
@@ -492,6 +747,9 @@ def post_tv_ta_discord(
     body = (text or "").strip()
     if not body:
         return {"skipped": True, "reason": "empty"}
+    # Don't spam the channel with all-failed enrich cards
+    if "ok 0" in body and "errors" in body and "Failed" in body:
+        return {"skipped": True, "reason": "all_symbols_failed"}
     header = f"**{title}** · research only (not OMS)\n"
     content = header + body
     try:

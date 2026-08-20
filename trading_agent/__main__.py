@@ -879,13 +879,6 @@ def _run_research(args: argparse.Namespace) -> int:
                 force=force,
             )
             text = format_tv_ta_report(pack)
-            hits = pack.get("hits") or []
-            text += f"\n**BB extreme hits (|σ|≥{pack.get('min_abs_sigma')}):** {len(hits)}\n"
-            for h in hits[:20]:
-                text += (
-                    f"- {h.get('symbol')} {h.get('bb_rating')} σ={h.get('bb_sigma')} "
-                    f"rec={h.get('recommendation')}\n"
-                )
             title = "TradingView TA · BB extreme"
         else:
             pack = enrich_symbols(symbols, interval=interval, force=force)

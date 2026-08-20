@@ -30,32 +30,74 @@ def test_bb_sigma_ratings():
 def test_enrich_force_uses_mock(monkeypatch):
     monkeypatch.setenv("TRADING_AGENT_TV_TA", "0")
 
-    def fake_fetch(symbol, **kwargs):
-        return tv.TvTaSnapshot(
-            symbol=symbol.upper(),
-            recommendation="BUY",
-            buy=10,
-            sell=2,
-            neutral=5,
-            oscillators="NEUTRAL",
-            moving_averages="BUY",
-            close=100.0,
-            rsi=55.0,
-            bb_upper=110.0,
-            bb_lower=90.0,
-            bb_mid=100.0,
-            bb_sigma=0.0,
-            bb_rating="INSIDE",
-        )
+    def fake_screener(symbols, **kwargs):
+        return [
+            {
+                "symbol": str(s).upper(),
+                "recommendation": "BUY",
+                "buy": 10,
+                "sell": 2,
+                "neutral": 5,
+                "oscillators": "NEUTRAL",
+                "moving_averages": "BUY",
+                "close": 100.0,
+                "rsi": 55.0,
+                "bb_sigma": 0.0,
+                "bb_rating": "INSIDE",
+                "error": "",
+                "source": "tradingview_screener",
+            }
+            for s in symbols
+        ]
 
-    monkeypatch.setattr(tv, "fetch_symbol_analysis", fake_fetch)
+    monkeypatch.setattr(tv, "_enrich_via_screener", fake_screener)
     pack = tv.enrich_symbols(["aapl", "msft"], force=True, throttle=0)
     assert pack["skipped"] is False
     assert pack["count"] == 2
+    assert pack["ok_count"] == 2
     assert pack["symbols"][0]["recommendation"] == "BUY"
     text = tv.format_tv_ta_report(pack)
     assert "AAPL" in text
     assert "BUY" in text
+    assert "```" in text  # Discord code fence, not markdown table
+    fence = text.split("```")[1]
+    assert "|" not in fence  # no pipe tables inside fence
+
+
+def test_format_rounds_and_hides_errors():
+    pack = {
+        "interval": "1d",
+        "generated_at": "2026-08-20T00:00:00+00:00",
+        "ok_count": 1,
+        "error_count": 1,
+        "symbols": [
+            {
+                "symbol": "QQQ",
+                "recommendation": "STRONG_BUY",
+                "buy": 13,
+                "sell": 3,
+                "neutral": 10,
+                "oscillators": "BUY",
+                "moving_averages": "STRONG_BUY",
+                "bb_rating": "INSIDE",
+                "bb_sigma": 0.449123,
+                "rsi": 51.450508,
+            },
+            {"symbol": "AAPL", "error": "Can't access TradingView's API. HTTP sta"},
+        ],
+    }
+    text = tv.format_tv_ta_report(pack)
+    assert "0.45" in text
+    assert "51.5" in text
+    assert "0.449123" not in text
+    assert "AAPL" not in text.split("```")[1]  # errors not in main grid
+    assert "Failed" in text and "AAPL" in text
+
+
+def test_fmt_helpers():
+    assert tv._fmt_num(1.2345, 2) == "1.23"
+    assert tv._fmt_vol(199_247_216) == "199.2M"
+    assert tv._fmt_vol(95498) == "95K"
 
 
 def test_stamp_tv_fields_on_entry():
