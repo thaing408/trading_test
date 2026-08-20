@@ -853,6 +853,7 @@ def _run_research(args: argparse.Namespace) -> int:
             enrich_symbols,
             format_rating_scan_report,
             format_tv_ta_report,
+            post_tv_ta_discord,
             rating_scan,
         )
 
@@ -861,6 +862,7 @@ def _run_research(args: argparse.Namespace) -> int:
         raw = str(getattr(args, "symbols", "") or "QQQ,SPY,IWM,AAPL")
         symbols = [s.strip().upper() for s in raw.replace(";", ",").split(",") if s.strip()]
         interval = str(getattr(args, "interval", "1d") or "1d")
+        title = "TradingView TA · enrich"
         if mode in ("rating", "screener", "scan"):
             pack = rating_scan(
                 min_recommend=float(getattr(args, "min_recommend", 0.3) or 0.3),
@@ -868,6 +870,7 @@ def _run_research(args: argparse.Namespace) -> int:
                 force=force,
             )
             text = format_rating_scan_report(pack)
+            title = "TradingView TA · rating screener"
         elif mode in ("bb", "bollinger", "extreme"):
             pack = bollinger_extreme_scan(
                 symbols,
@@ -883,13 +886,26 @@ def _run_research(args: argparse.Namespace) -> int:
                     f"- {h.get('symbol')} {h.get('bb_rating')} σ={h.get('bb_sigma')} "
                     f"rec={h.get('recommendation')}\n"
                 )
+            title = "TradingView TA · BB extreme"
         else:
             pack = enrich_symbols(symbols, interval=interval, force=force)
             text = format_tv_ta_report(pack)
+            title = "TradingView TA · enrich"
         print(text)
         if getattr(args, "output", None):
             with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(text)
+        # Auto-post to dedicated TV research channel unless --no-discord
+        if not bool(getattr(args, "no_discord", False)):
+            posted = post_tv_ta_discord(text, title=title)
+            if posted.get("ok"):
+                print(
+                    f"[discord] posted {posted.get('chunks')} chunk(s) → "
+                    f"channel {posted.get('channel_id')}",
+                    flush=True,
+                )
+            else:
+                print(f"[discord] skip/fail: {posted}", flush=True)
         return 0
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
@@ -1711,6 +1727,11 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="Run even when TRADING_AGENT_TV_TA is off (CLI smoke)",
+    )
+    tv_ta_p.add_argument(
+        "--no-discord",
+        action="store_true",
+        help="Do not post report to DISCORD_TV_TA_CHANNEL_ID",
     )
     tv_ta_p.add_argument("--output", "-o", metavar="FILE")
 

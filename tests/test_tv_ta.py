@@ -72,6 +72,31 @@ def test_stamp_tv_fields_on_entry():
     assert row["action"] == "ENTER"  # eligibility untouched
 
 
+def test_post_tv_ta_discord_uses_channel(monkeypatch):
+    calls = []
+
+    class Cfg:
+        bot_token = "tok"
+        channel_id = "1539794451612958761"
+        webhook_url = None
+
+    monkeypatch.setattr(
+        "trading_agent.discord.config.DiscordConfig.tv_ta_channel_from_env",
+        classmethod(lambda cls: Cfg()),
+    )
+
+    def fake_post(content, config, username=None):
+        calls.append({"content": content, "channel": config.channel_id, "user": username})
+        return [{"ok": True}]
+
+    monkeypatch.setattr("trading_agent.discord.poster.post_message", fake_post)
+    out = tv.post_tv_ta_discord("# hello\n| a | b |", title="TV test")
+    assert out.get("ok") is True
+    assert out.get("channel_id") == "1539794451612958761"
+    assert "TV test" in calls[0]["content"]
+    assert "research only" in calls[0]["content"]
+
+
 def test_bollinger_extreme_scan(monkeypatch):
     def fake_enrich(symbols, **kwargs):
         return {

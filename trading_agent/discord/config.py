@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from trading_agent.discord.env import load_project_env
 
@@ -60,4 +61,38 @@ class DiscordConfig:
         if not token:
             return None
         # Force bot channel (do not use production webhook for income)
+        return DiscordConfig(webhook_url=None, bot_token=token, channel_id=channel)
+
+    @classmethod
+    def tv_ta_channel_from_env(cls) -> "DiscordConfig | None":
+        """Bot config for TradingView TA research posts.
+
+        Channel: DISCORD_TV_TA_CHANNEL_ID (default 1539794451612958761).
+        Uses bot token only (never the production webhook).
+        """
+        load_project_env()
+        # Mac desk secrets live here (same as journal / consumer)
+        try:
+            from dotenv import load_dotenv
+
+            grok_discord = Path.home() / ".grok" / "discord.env"
+            grok_agent = Path.home() / ".grok" / "trading-agent.env"
+            if grok_discord.is_file():
+                load_dotenv(grok_discord, override=False)
+            if grok_agent.is_file():
+                load_dotenv(grok_agent, override=False)
+        except Exception:
+            pass
+        channel = (os.getenv("DISCORD_TV_TA_CHANNEL_ID") or "1539794451612958761").strip()
+        if not channel:
+            return None
+        base = cls.from_env()
+        token = (
+            base.bot_token
+            or os.getenv("DISCORD_BOT_TOKEN")
+            or os.getenv("DISCORD_TOKEN")
+            or None
+        )
+        if not token:
+            return None
         return DiscordConfig(webhook_url=None, bot_token=token, channel_id=channel)

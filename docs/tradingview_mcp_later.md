@@ -31,6 +31,9 @@ python -m trading_agent research tv-ta --mode rating --force --limit 15
 python -m trading_agent research tv-ta --mode bb --force --min-sigma 2
 ```
 
+**Discord:** each `research tv-ta` run auto-posts to channel
+`DISCORD_TV_TA_CHANNEL_ID` (default `1539794451612958761`). Use `--no-discord` to skip.
+
 **Skip:** hosted cryptosieve billing, MCP Apps chart widgets, OpenClaw, their 9-strategy backtester (weaker than `backtest/`).
 
 ---

@@ -448,3 +448,61 @@ def stamp_tv_fields_on_entry(entry: Dict[str, Any], snap: TvTaSnapshot | Dict[st
     if d.get("error"):
         entry["tv_error"] = d["error"]
     return entry
+
+
+DEFAULT_TV_TA_CHANNEL_ID = "1539794451612958761"
+
+
+def post_tv_ta_discord(
+    text: str,
+    *,
+    title: str = "TradingView TA research",
+    channel_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Post a TV TA report to the dedicated Discord research channel.
+
+    Uses bot token + ``DISCORD_TV_TA_CHANNEL_ID`` (default
+    ``1539794451612958761``). Fail-open dict on errors.
+    """
+    try:
+        from trading_agent.discord.config import DiscordConfig
+        from trading_agent.discord.poster import DiscordPostError, post_message
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"discord_import:{exc}"}
+
+    cfg = DiscordConfig.tv_ta_channel_from_env()
+    if channel_id:
+        if cfg is None:
+            from trading_agent.discord.env import load_project_env
+
+            load_project_env()
+            token = os.getenv("DISCORD_BOT_TOKEN") or os.getenv("DISCORD_TOKEN") or ""
+            if not token:
+                return {"error": "missing_discord_bot_token"}
+            cfg = DiscordConfig(webhook_url=None, bot_token=token, channel_id=str(channel_id))
+        else:
+            cfg = DiscordConfig(
+                webhook_url=None,
+                bot_token=cfg.bot_token,
+                channel_id=str(channel_id),
+            )
+    if cfg is None or not cfg.bot_token or not cfg.channel_id:
+        return {"error": "missing_discord_bot_or_tv_ta_channel"}
+
+    body = (text or "").strip()
+    if not body:
+        return {"skipped": True, "reason": "empty"}
+    header = f"**{title}** · research only (not OMS)\n"
+    content = header + body
+    try:
+        results = post_message(content, cfg, username="Trading Agent TV TA")
+        return {
+            "ok": True,
+            "channel_id": cfg.channel_id,
+            "chunks": len(results),
+            "results": results,
+        }
+    except DiscordPostError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:300]}
