@@ -92,6 +92,9 @@ def test_format_rounds_and_hides_errors():
     assert "0.449123" not in text
     assert "AAPL" not in text.split("```")[1]  # errors not in main grid
     assert "Failed" in text and "AAPL" in text
+    assert "Buy/Sell/N" in text or "buy / sell / neutral" in text
+    assert "oscillators" in text.lower()
+    assert "Legend" in text
 
 
 def test_fmt_helpers():

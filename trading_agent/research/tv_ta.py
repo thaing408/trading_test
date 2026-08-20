@@ -614,10 +614,10 @@ def format_tv_ta_report(pack: Dict[str, Any], *, for_discord: bool = True) -> st
         f"{when} UTC · ok {ok_n}"
         + (f" · errors {err_n}" if err_n else "")
     )
-    # Fixed-width columns inside a code fence
+    # Friendlier headers (Discord monospace)
     col = (
-        f"{'Sym':<6} {'Rec':<10} {'B/S/N':<9} {'Osc':<10} "
-        f"{'MA':<10} {'BB':<11} {'σ':>5} {'RSI':>5}"
+        f"{'Sym':<6} {'Overall':<10} {'Buy/Sell/N':<10} {'Osc':<8} "
+        f"{'MAs':<8} {'BB zone':<11} {'σ':>5} {'RSI':>5}"
     )
     lines = [col, "-" * len(col)]
     failed: List[str] = []
@@ -633,18 +633,28 @@ def format_tv_ta_report(pack: Dict[str, Any], *, for_discord: bool = True) -> st
         )
         lines.append(
             f"{sym:<6} {_short_rec(r.get('recommendation')):<10} "
-            f"{bsn:<9} "
-            f"{_short_rec(r.get('oscillators')):<10} "
-            f"{_short_rec(r.get('moving_averages')):<10} "
+            f"{bsn:<10} "
+            f"{_short_rec(r.get('oscillators')):<8} "
+            f"{_short_rec(r.get('moving_averages')):<8} "
             f"{str(r.get('bb_rating') or '—')[:11]:<11} "
             f"{_fmt_num(r.get('bb_sigma'), 2):>5} "
             f"{_fmt_num(r.get('rsi'), 1):>5}"
         )
     body = "\n".join(lines)
+    legend = (
+        "**Legend**\n"
+        "• **Overall** — TradingView summary (BUY / SELL / NEUTRAL / S_BUY=strong buy)\n"
+        "• **Buy/Sell/N** — how many TA signals vote buy / sell / neutral\n"
+        "• **Osc** — oscillators group (RSI, MACD, Stoch, …)\n"
+        "• **MAs** — moving-average group (EMA/SMA stack)\n"
+        "• **BB zone** — where price sits vs Bollinger: INSIDE, NEAR_UPPER/LOWER, EXT_±2/±3\n"
+        "• **σ** — approx. std-devs from BB mid (0=middle; ≥2 stretched)\n"
+        "• **RSI** — 14-period RSI (~30 oversold, ~70 overbought)"
+    )
     if for_discord:
-        out = f"{header}\n```\n{body}\n```"
+        out = f"{header}\n```\n{body}\n```\n{legend}"
     else:
-        out = f"{header}\n{body}"
+        out = f"{header}\n{body}\n\n{legend}"
     if failed:
         out += f"\n_Failed ({len(failed)}): {', '.join(failed)}_ — rate-limit/retry later"
     # BB hits section if present
@@ -686,9 +696,15 @@ def format_rating_scan_report(pack: Dict[str, Any], *, for_discord: bool = True)
             f"{_fmt_vol(r.get('volume')):>7}"
         )
     body = "\n".join(lines)
+    legend = (
+        "**Legend**\n"
+        "• **Rec** — TradingView Recommend.All score (−1 sell … +1 buy); higher = more bullish votes\n"
+        "• **BBPwr** — Bollinger Band Power (price vs mid-band momentum)\n"
+        "• **RSI** — 14-period RSI · **Vol** — session volume"
+    )
     if for_discord:
-        return f"{header}\n```\n{body}\n```"
-    return f"{header}\n{body}"
+        return f"{header}\n```\n{body}\n```\n{legend}"
+    return f"{header}\n{body}\n\n{legend}"
 
 
 def stamp_tv_fields_on_entry(entry: Dict[str, Any], snap: TvTaSnapshot | Dict[str, Any]) -> Dict[str, Any]:
