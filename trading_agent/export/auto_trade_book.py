@@ -110,6 +110,9 @@ def _entry_from_opp(opp: TradeOpportunity, *, expires_at: str) -> Dict[str, Any]
         "measured_target": float(getattr(opp, "measured_target", 0) or 0),
         "pattern_height": float(getattr(opp, "pattern_height", 0) or 0),
         "structure_notes": str(getattr(opp, "structure_notes", "") or "")[:240],
+        "book_points": float(getattr(opp, "book_points", 0) or 0),
+        "compete_score": float(getattr(opp, "compete_score", 0) or 0),
+        "book_gates_mode": str(getattr(opp, "book_gates_mode", "") or "hard"),
     }
 
 

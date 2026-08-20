@@ -235,6 +235,12 @@ def entry_from_multi_eval(
         "export_eligible": True,
         "play_quality_score": float(getattr(result, "play_quality_score", 0) or 0),
         "best_play_score": float(getattr(result, "best_play_score", 0) or 0),
+        "book_points": 0.0,
+        "compete_score": float(
+            getattr(result, "play_quality_score", 0) or result.aggregate_score or 0
+        )
+        + min(10.0, 2.0 * len(method_tags)),
+        "book_gates_mode": "hard",
     }
     # Qullamaggie ADR extension tags (size cut only if TRADING_AGENT_ADR_EXTENSION=1)
     try:
@@ -292,9 +298,13 @@ def build_multi_method_book(
             continue
         entries.append(row)
 
-    # Merge existing book entries (desk/CIO) — multi-method adds or replaces same symbol
+    # Merge existing book entries (desk/CIO) — prefer higher compete_score
     if merge_entries:
-        by_sym = {str(e.get("symbol") or "").upper(): e for e in entries}
+        from trading_agent.discipline.compete import annotate_entry_compete, prefer_entry_by_compete
+
+        by_sym = {
+            str(e.get("symbol") or "").upper(): annotate_entry_compete(e) for e in entries
+        }
         for e in merge_entries:
             if not isinstance(e, dict):
                 continue
@@ -302,18 +312,17 @@ def build_multi_method_book(
             if not sym:
                 continue
             if sym in by_sym:
-                # Prefer multi-method row but keep desk tags
-                desk_tags = list(e.get("method_tags") or [])
-                mm = by_sym[sym]
-                mm_tags = list(mm.get("method_tags") or [])
-                for t in desk_tags:
-                    if t not in mm_tags:
-                        mm_tags.append(t)
-                mm["method_tags"] = mm_tags
-                mm["merged_with_desk"] = True
+                winner = prefer_entry_by_compete(by_sym[sym], dict(e))
+                winner["merged_with_desk"] = True
+                by_sym[sym] = winner
             else:
-                # keep desk entry as-is
-                entries.append(dict(e))
+                by_sym[sym] = annotate_entry_compete(dict(e))
+        entries = list(by_sym.values())
+        # Prefer higher compete_score overall
+        entries.sort(
+            key=lambda r: float(r.get("compete_score") or 0),
+            reverse=True,
+        )
 
     play_syms = [e["symbol"] for e in entries if e.get("source") == "multi_method_router"]
     watch = play_syms + [

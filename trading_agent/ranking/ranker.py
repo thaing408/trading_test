@@ -277,6 +277,15 @@ def build_opportunities(
     enforce_smb = bool(getattr(risk_config, "enforce_smb_book_gates", True))
     enforce_ta = bool(getattr(risk_config, "enforce_ta_book_gates", True))
     enforce_classic = bool(getattr(risk_config, "enforce_classic_ta_book_gates", True))
+    from trading_agent.discipline.compete import (
+        book_gates_mode,
+        compute_compete_score,
+        iter_gate_results,
+        score_gate_results,
+        should_hard_reject_books,
+    )
+
+    gates_mode = book_gates_mode()
     enforce_methods = bool(getattr(risk_config, "enforce_web_methods", True))
 
     # Always apply RiskConfig limits on the auto-trade path (not optional).
@@ -451,6 +460,7 @@ def build_opportunities(
             "revenge_reentry": False,
             "win_streak": int(getattr(state, "win_streak", 0) or 0),
         }
+        book_gate_rows: list = []
         smb = apply_smb_book_gates(
             smb_ctx,
             max_risk_per_trade_pct=float(risk_config.max_risk_per_trade_pct),
@@ -458,7 +468,10 @@ def build_opportunities(
             min_rs=float(getattr(risk_config, "oneil_min_rs", 0.0) or 0.0),
             enabled=enforce_smb,
         )
-        if enforce_smb and not smb.ok:
+        book_gate_rows.extend(iter_gate_results(smb))
+        if enforce_smb and should_hard_reject_books(
+            mode=gates_mode, bundle_ok=smb.ok, results=iter_gate_results(smb)
+        ):
             if rail_rejections is not None:
                 rail_rejections.append(
                     RejectedSetup(
@@ -485,7 +498,10 @@ def build_opportunities(
             min_confluence=int(getattr(risk_config, "ta_min_indicator_confluence", 2) or 2),
             enabled=enforce_ta,
         )
-        if enforce_ta and not ta.ok:
+        book_gate_rows.extend(iter_gate_results(ta))
+        if enforce_ta and should_hard_reject_books(
+            mode=gates_mode, bundle_ok=ta.ok, results=iter_gate_results(ta)
+        ):
             if rail_rejections is not None:
                 rail_rejections.append(
                     RejectedSetup(
@@ -522,7 +538,10 @@ def build_opportunities(
             require_named_setup=require_pb,
             enabled=enforce_classic,
         )
-        if enforce_classic and not classic.ok:
+        book_gate_rows.extend(iter_gate_results(classic))
+        if enforce_classic and should_hard_reject_books(
+            mode=gates_mode, bundle_ok=classic.ok, results=iter_gate_results(classic)
+        ):
             if rail_rejections is not None:
                 rail_rejections.append(
                     RejectedSetup(
@@ -531,6 +550,8 @@ def build_opportunities(
                     )
                 )
             continue
+
+        book_points, _book_by_mech = score_gate_results(book_gate_rows)
 
         # Fundamentals (research host — yfinance/info; no TOS required)
         fund_score = 50.0
@@ -738,6 +759,12 @@ def build_opportunities(
                     f"score={competition.winner.score:.0f}; {compete_summary}"
                 )[:240]
 
+        method_boost = min(10.0, 2.0 * len(method_tags)) if method_tags else 0.0
+        compete_score = compute_compete_score(
+            setup_core=float(combined or quality or 0),
+            book_points=float(book_points or 0),
+            method_boost=method_boost,
+        )
         scored.append(
             {
                 "grade": grade_result.grade,
@@ -775,14 +802,27 @@ def build_opportunities(
                 "expiration_days": int(strategy.expiration_days or 0),
                 "defined_risk": defined_risk,
                 "options_method_notes": opt_notes,
+                "book_points": float(book_points or 0),
+                "compete_score": compete_score,
+                "book_gates_mode": gates_mode,
             }
         )
 
-    scored.sort(
-        key=lambda row: grade_sort_key(
-            row["grade"], row["grade_score"], row["quality"], row["confidence"]
-        ),
-    )
+    if gates_mode == "score":
+        scored.sort(
+            key=lambda row: (
+                -float(row.get("compete_score") or 0),
+                grade_sort_key(
+                    row["grade"], row["grade_score"], row["quality"], row["confidence"]
+                ),
+            ),
+        )
+    else:
+        scored.sort(
+            key=lambda row: grade_sort_key(
+                row["grade"], row["grade_score"], row["quality"], row["confidence"]
+            ),
+        )
 
     # Rails after grade-sort: cool-down / concurrent / aggregate apply in rank order.
     # record_open after each accept so one pass cannot emit N > max_concurrent_plays.
@@ -917,6 +957,9 @@ def build_opportunities(
                 fundamental_summary=str(row.get("fundamental_summary") or ""),
                 combined_quality_score=float(row.get("combined_quality_score") or quality),
                 auto_trade_eligible=bool(row.get("auto_trade_eligible", False)),
+                book_points=float(row.get("book_points") or 0.0),
+                compete_score=float(row.get("compete_score") or 0.0),
+                book_gates_mode=str(row.get("book_gates_mode") or "hard"),
                 method_tags=list(row.get("method_tags") or []),
                 method_notes=str(row.get("method_notes") or ""),
                 options_strategy_class=str(row.get("options_strategy_class") or ""),
