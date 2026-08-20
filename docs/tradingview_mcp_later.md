@@ -3,24 +3,33 @@
 **Upstream:** https://github.com/atilaahmettaner/tradingview-mcp  
 **PyPI:** `tradingview-mcp-server` (v0.8.0 as of this note)  
 **License:** MIT  
-**Status:** analysis only — **do not implement in this commit.** Revisit when we want extra research-side TA / screener / crypto without wiring it into OMS.
+**Status:** **P1+P2 shipped** (library path, not full MCP). P3–P6 still later.  
+**Module:** `trading_agent/research/tv_ta.py` · CLI `research tv-ta` · extra `.[tv-ta]`  
+**Flag:** `TRADING_AGENT_TV_TA=0` (default off). Use `--force` for one-shot CLI.
 
-Recorded: 2026-08-19.
+Recorded: 2026-08-19 · P1+P2 implemented same day.
 
 ---
 
 ## Priority later-work list (worth stealing)
 
-Do these first when we pick this up. CIO/OMS stay untouched; research-host only.
+CIO/OMS stay untouched; research-host only.
 
-| Pri | Steal | Why | Where it lands |
-|-----|--------|-----|----------------|
-| **P1** | Live TradingView screener + `tradingview_ta` consensus (crypto + global: Binance/KuCoin/Bybit, EGX, BIST) | Our params JSON is US-desk; they actually **run** the TV screener | Research columns / universe, not CIO votes |
-| **P2** | Rating / BB ±3 scan | Extra TA column we do not have | `analysis/` or `tv_mcp_*` fields |
-| **P3** | Crypto top-gainer / volume-breakout universe | Future crypto sleeve; desk is equity/options first | Optional screener path |
-| **P4** | Candlestick pattern dump (15 names) | Cheap tags on research cards | Research JSON tags |
-| **P5** | Error envelope + TA throttle | Needed if we batch TV HTTP (empty-body rate-limit cliff) | Any TV HTTP client |
-| **P6** | Thin MCP adapter (read-only, Windows) | Grok/Claude can query research without duplicating collectors | Flag `TRADING_AGENT_TV_MCP=0` |
+| Pri | Steal | Why | Where it lands | Status |
+|-----|--------|-----|----------------|--------|
+| **P1** | Live TradingView screener + `tradingview_ta` consensus | Our params JSON is US-desk; they actually **run** the TV screener | `research/tv_ta.py` enrich + rating scan | **done** |
+| **P2** | Rating / BB ±3 scan | Extra TA column we do not have | `bb_rating` / `bb_sigma` + rating screener | **done** |
+| **P3** | Crypto top-gainer / volume-breakout universe | Future crypto sleeve; desk is equity/options first | Optional screener path | later |
+| **P4** | Candlestick pattern dump (15 names) | Cheap tags on research cards | Research JSON tags | later |
+| **P5** | Error envelope + TA throttle | Needed if we batch TV HTTP | throttle env in `tv_ta.py` (basic) | partial |
+| **P6** | Thin MCP adapter (read-only, Windows) | Grok/Claude query without duplicating collectors | Flag `TRADING_AGENT_TV_MCP=0` | later |
+
+```bash
+pip install -e ".[tv-ta]"
+python -m trading_agent research tv-ta --force --symbols QQQ,AAPL,NVDA
+python -m trading_agent research tv-ta --mode rating --force --limit 15
+python -m trading_agent research tv-ta --mode bb --force --min-sigma 2
+```
 
 **Skip:** hosted cryptosieve billing, MCP Apps chart widgets, OpenClaw, their 9-strategy backtester (weaker than `backtest/`).
 
@@ -140,3 +149,4 @@ Compare one symbol vs `trading_agent.analysis.technical` + `market_data.provider
 |------|----------|
 | 2026-08-19 | Parked. Useful as optional research MCP / TV-screener source. Not a replacement for collectors, CIO, OMS, or `backtest/`. |
 | 2026-08-19 | Priority list is the **worth stealing** table at the top (P1–P6). |
+| 2026-08-19 | **P1+P2 implemented** via Option C/library (`tradingview-ta` + `tradingview-screener==3.0.0`), not full MCP server. Informational `tv_*` fields only; never auto-ENTER. |
