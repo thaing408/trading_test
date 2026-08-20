@@ -679,10 +679,14 @@ def format_rating_scan_report(pack: Dict[str, Any], *, for_discord: bool = True)
     when = str(pack.get("generated_at") or "")[:19].replace("T", " ")
     header = (
         f"TradingView · rating screener ({pack.get('market')})\n"
-        f"Recommend.All > {pack.get('min_recommend')} · "
+        f"score > {pack.get('min_recommend')} · "
         f"shown {pack.get('count')} / ~{pack.get('scanner_total')} · {when} UTC"
     )
-    col = f"{'Ticker':<14} {'Close':>8} {'Rec':>5} {'BBPwr':>7} {'RSI':>5} {'Vol':>7}"
+    # Wider friendlier headers (same idea as enrich legend)
+    col = (
+        f"{'Ticker':<14} {'Close':>8} {'Score':>6} {'BB power':>9} "
+        f"{'RSI':>5} {'Volume':>7}"
+    )
     lines = [col, "-" * len(col)]
     for r in pack.get("rows") or []:
         ticker = str(r.get("ticker") or r.get("symbol") or "?")
@@ -690,17 +694,21 @@ def format_rating_scan_report(pack: Dict[str, Any], *, for_discord: bool = True)
             ticker = ticker[:14]
         lines.append(
             f"{ticker:<14} {_fmt_num(r.get('close'), 2):>8} "
-            f"{_fmt_num(r.get('recommend_all'), 2):>5} "
-            f"{_fmt_num(r.get('bb_power'), 2):>7} "
+            f"{_fmt_num(r.get('recommend_all'), 2):>6} "
+            f"{_fmt_num(r.get('bb_power'), 2):>9} "
             f"{_fmt_num(r.get('rsi'), 1):>5} "
             f"{_fmt_vol(r.get('volume')):>7}"
         )
     body = "\n".join(lines)
     legend = (
         "**Legend**\n"
-        "• **Rec** — TradingView Recommend.All score (−1 sell … +1 buy); higher = more bullish votes\n"
-        "• **BBPwr** — Bollinger Band Power (price vs mid-band momentum)\n"
-        "• **RSI** — 14-period RSI · **Vol** — session volume"
+        "• **Score** — TradingView Recommend.All (−1 = sell … +1 = buy). "
+        "Higher = more bullish indicator votes across the whole suite\n"
+        "• **BB power** — Bollinger Band Power: how far/fast price is vs the mid-band "
+        "(positive = above mid with momentum; negative = below)\n"
+        "• **RSI** — 14-period RSI (~30 oversold, ~70 overbought)\n"
+        "• **Volume** — session share volume (K/M/B)\n"
+        "_Research only — not an OMS entry signal._"
     )
     if for_discord:
         return f"{header}\n```\n{body}\n```\n{legend}"
