@@ -332,6 +332,25 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
             templates, request, "oms.html", _base_ctx(request, snap, "/oms")
         )
 
+    @app.get("/session", response_class=HTMLResponse)
+    async def session(request: FastAPIRequest):
+        from trading_agent.desk_ui.readers.session_index import list_session_files
+
+        snap = get_snapshot()
+        session_index = list_session_files(
+            snap.trading_date,
+            state=cfg.state_root or default_state_root(),
+        )
+        return _template_response(
+            templates,
+            request,
+            "session.html",
+            {
+                **_base_ctx(request, snap, "/session"),
+                "session_index": session_index,
+            },
+        )
+
     @app.get("/firm", response_class=HTMLResponse)
     async def firm(request: FastAPIRequest):
         snap = get_snapshot()
@@ -351,16 +370,23 @@ def create_app(settings: DeskUiSettings | None = None) -> Any:
                 "page_title": path.strip("/").title() or "Page",
                 "stub_message": (
                     "This panel is stubbed. Use Overview, Book, Manage, OMS, Firm, "
-                    "Rejections, Discovery, or desk-status /api/v1/snapshot."
+                    "Rejections, Discovery, Session, or desk-status /api/v1/snapshot."
                 ),
             },
         )
 
-    for stub_path in (
-        "/session",
-        "/settings",
-    ):
+    for stub_path in ("/settings",):
         app.add_api_route(stub_path, _stub, methods=["GET"], response_class=HTMLResponse)
+
+    @app.get("/api/v1/session")
+    async def api_session():
+        from trading_agent.desk_ui.readers.session_index import list_session_files
+
+        snap = get_snapshot()
+        return list_session_files(
+            snap.trading_date,
+            state=cfg.state_root or default_state_root(),
+        )
 
     @app.get("/api/v1/snapshot")
     async def api_snapshot():

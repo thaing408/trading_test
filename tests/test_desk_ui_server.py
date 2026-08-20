@@ -165,6 +165,7 @@ def test_templates_dir_exists():
     assert (templates_dir() / "firm.html").is_file()
     assert (templates_dir() / "rejections.html").is_file()
     assert (templates_dir() / "discovery.html").is_file()
+    assert (templates_dir() / "session.html").is_file()
     assert (static_dir() / "desk.css").is_file()
 
 
@@ -186,6 +187,32 @@ def test_manage_oms_firm_routes(client):
         r = client.get(path)
         assert r.status_code == 200, path
         assert needle in r.text
+
+
+def test_oms_shows_export_health_and_dual_system(client):
+    r = client.get("/oms")
+    assert r.status_code == 200
+    body = r.text
+    assert "Export health" in body
+    assert "auto_trade_book.json" in body
+    # Fixture assemble uses win32 → windows-research caveat
+    assert "windows-research" in body or "Mac-local" in body or "research host" in body
+
+
+def test_session_page_lists_fixture_files(client):
+    r = client.get("/session")
+    assert r.status_code == 200
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Session files" in body
+    assert "daily_plan_context.json" in body
+    assert "auto_trade_book.json" in body
+    api = client.get("/api/v1/session")
+    assert api.status_code == 200
+    data = api.json()
+    assert data["exists"] is True
+    rels = {f["rel"] for f in data["files"]}
+    assert any("daily_plan_context.json" in x for x in rels)
 
 
 def test_firm_page_shows_aapl(client):
@@ -256,7 +283,6 @@ def test_discovery_api_and_filter(client):
 
 
 def test_stub_routes_remaining(client):
-    for path in ("/session", "/settings"):
-        r = client.get(path)
-        assert r.status_code == 200, path
-        assert "stubbed" in r.text.lower()
+    r = client.get("/settings")
+    assert r.status_code == 200
+    assert "stubbed" in r.text.lower()

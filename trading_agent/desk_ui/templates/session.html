@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Session{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Session files</h1>
+  <p class="lede">
+    Read-only index of <code>sessions/{{ snap.trading_date }}/</code>.
+    Dual-system: local host files only — never treat this as the other machine’s book.
+  </p>
+  <div class="kpi-row compact">
+    <div class="kpi-card"><div class="k">Files</div><div class="v">{{ session_index.files|length }}</div></div>
+    <div class="kpi-card"><div class="k">Exists</div><div class="v small">{{ session_index.exists }}</div></div>
+    <div class="kpi-card"><div class="k">Host role</div><div class="v small">{{ snap.host_role }}</div></div>
+  </div>
+  <p class="muted paths"><code>{{ session_index.session_dir }}</code></p>
+  {% for note in session_index.notes %}
+  <p class="muted">{{ note }}</p>
+  {% endfor %}
+</section>
+
+{% if snap.host_role == 'windows-research' %}
+<div class="banner banner-amber">
+  windows-research host — OMS lots / ready_orders / LIVE place live on <strong>mac-execute</strong>.
+  This session index is research-side context only.
+</div>
+{% endif %}
+
+<section class="panel">
+  <h2>Files</h2>
+  {% if session_index.files %}
+  <table class="data compact">
+    <thead>
+      <tr><th>Relative path</th><th>Size</th><th>mtime (UTC)</th></tr>
+    </thead>
+    <tbody>
+      {% for f in session_index.files %}
+      <tr>
+        <td><code>{{ f.rel }}</code></td>
+        <td class="muted">{% if f.size is not none %}{{ f.size }}{% else %}—{% endif %}</td>
+        <td class="muted">{{ f.mtime_iso or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No files under this session directory.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Export targets (same as OMS)</h2>
+  <ul class="plain paths">
+    {% for t in snap.export_health.targets %}
+    <li>
+      <span class="dot {{ 'ok' if t.exists else 'miss' }}"></span>
+      <code>{{ t.path }}</code>
+      {% if t.age_seconds is not none %}
+      <span class="muted">{{ (t.age_seconds / 60)|round(0)|int }}m</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}
