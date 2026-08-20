@@ -19,3 +19,8 @@
 # Opt-in on research
 TRADING_AGENT_BOOK_GATES_MODE=score
 ```
+
+## Related weekend (researcher) — still open
+
+CSV Discord play cards still lack GEX / call–put wall / notional (Finviz focus already has them).  
+See: `~/researcher/docs/TODO_csv_gex_weekend.md` (target weekend **2026-08-22**).
