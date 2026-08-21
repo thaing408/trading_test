@@ -7,10 +7,13 @@ LIVE ENTERs then require:
   - process bias ``trade`` (not light/cash)
   - regime not chop/range
   - optional tape: SPY 10d MA >= 20d MA and VIX <= 20
-  - method in allowlist (default fvg,soulz_pa — pullback family)
+  - method in allowlist (default chart_patterns + fvg/soulz/swing confirms)
   - no bear/PUT
   - DTE >= 3 (index 0DTE off unless WR_ALLOW_INDEX_0DTE=1 *and* tape push)
   - spread < max if provided on the order
+
+Also: multi-method export requires ``chart_patterns`` in play_methods
+(``TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS=1``, default ON).
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 
-_DEFAULT_ALLOW = frozenset({"fvg", "soulz_pa"})
+# Pattern-first allowlist — ORB/0DTE/top_winners stay research-only for LIVE
+_DEFAULT_ALLOW = frozenset({"chart_patterns", "fvg", "soulz_pa", "swing_daily"})
 _BLOCK_METHODS = frozenset(
     {"orb_vwap", "odte_breakout", "top_winners", "range_fade", "bear_breakdown"}
 )

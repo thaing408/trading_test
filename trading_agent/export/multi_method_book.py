@@ -110,18 +110,22 @@ def entry_from_multi_eval(
     except Exception:
         pass
     if require_export_quality:
-        if getattr(result, "export_eligible", False) is True:
-            pass
-        else:
-            ok, _why = passes_export_quality(result, cfg=cfg or MultiMethodConfig())
-            if not ok:
-                return None
+        # Always re-check export gate (includes chart_patterns requirement)
+        ok, _why = passes_export_quality(result, cfg=cfg or MultiMethodConfig())
+        if not ok:
+            return None
 
+    # Prefer chart_patterns geometry when it played (export edge)
     best = None
     for v in result.votes:
-        if v.method_id == result.best_method and v.play:
+        if v.play and v.method_id == "chart_patterns" and float(v.entry or 0) > 0:
             best = v
             break
+    if best is None:
+        for v in result.votes:
+            if v.method_id == result.best_method and v.play:
+                best = v
+                break
     if best is None:
         play_votes = [v for v in result.votes if v.play and v.method_id != "process_methods"]
         best = max(play_votes, key=lambda v: v.score) if play_votes else None

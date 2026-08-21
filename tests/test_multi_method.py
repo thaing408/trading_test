@@ -98,12 +98,12 @@ def test_passes_export_quality_gate():
         symbol="X",
         play=True,
         decision="PLAY",
-        best_method="orb_vwap",
+        best_method="chart_patterns",
         best_side="CALL",
         aggregate_score=45.0,
-        play_methods=["orb_vwap", "fvg"],
+        play_methods=["chart_patterns", "fvg"],
         votes=[
-            MethodVote("orb_vwap", True, "CALL", 75),
+            MethodVote("chart_patterns", True, "CALL", 75),
             MethodVote("fvg", True, "CALL", 70),
             MethodVote("soulz_pa", False, "", 20),
         ],
@@ -113,17 +113,36 @@ def test_passes_export_quality_gate():
     ok, why = passes_export_quality(strong)
     assert ok, why
 
-    weak = TickerMultiEval(
-        symbol="Y",
+    no_chart = TickerMultiEval(
+        symbol="Z",
         play=True,
         decision="PLAY",
         best_method="orb_vwap",
         best_side="CALL",
-        aggregate_score=40.0,
+        aggregate_score=60.0,
         play_methods=["orb_vwap", "odte_breakout"],
         votes=[
-            MethodVote("orb_vwap", True, "CALL", 58),
-            MethodVote("odte_breakout", True, "CALL", 56),
+            MethodVote("orb_vwap", True, "CALL", 75),
+            MethodVote("odte_breakout", True, "CALL", 72),
+        ],
+        play_quality_score=73.5,
+        best_play_score=75,
+    )
+    ok_nc, why_nc = passes_export_quality(no_chart)
+    assert not ok_nc
+    assert "chart_patterns" in why_nc
+
+    weak = TickerMultiEval(
+        symbol="Y",
+        play=True,
+        decision="PLAY",
+        best_method="chart_patterns",
+        best_side="CALL",
+        aggregate_score=40.0,
+        play_methods=["chart_patterns", "fvg"],
+        votes=[
+            MethodVote("chart_patterns", True, "CALL", 58),
+            MethodVote("fvg", True, "CALL", 56),
         ],
         play_quality_score=57.0,
         best_play_score=58,

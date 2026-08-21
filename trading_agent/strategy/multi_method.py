@@ -98,6 +98,9 @@ class MultiMethodConfig:
     export_min_best_score: float = 65.0  # best play-method score
     export_min_play_avg_score: float = 65.0  # mean of play-method scores
     # Pass export if (methods>=N) and (best>=B or avg>=A)
+    # LIVE auto-ENTER only when chart_patterns is among play votes (edge preservation).
+    # Other methods may still vote PLAY for research cards; they cannot unlock export alone.
+    export_require_chart_patterns: bool = True
     # Cap method stops wider than N×ATR (swing pattern lows were often 20–40% away)
     max_stop_atr_mult: float = 1.5
     # weights for aggregate score (sum normalized)
@@ -139,6 +142,20 @@ def compute_play_quality(result: TickerMultiEval) -> Tuple[float, float, List[st
     return max(scores), float(sum(scores) / len(scores)), ids
 
 
+def export_require_chart_patterns_enabled(cfg: MultiMethodConfig | None = None) -> bool:
+    """Default ON — set TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS=0 to disable."""
+    import os
+
+    raw = os.getenv("TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if cfg is not None:
+        return bool(getattr(cfg, "export_require_chart_patterns", True))
+    return True
+
+
 def passes_export_quality(
     result: TickerMultiEval,
     *,
@@ -149,6 +166,7 @@ def passes_export_quality(
     Requires:
       - decision PLAY
       - len(play_methods) >= export_min_play_methods (default 2)
+      - chart_patterns among play methods (default ON — preserves pattern edge)
       - best_play_score >= export_min_best_score **or**
         play_quality_score (avg) >= export_min_play_avg_score (default 65)
     """
@@ -160,10 +178,13 @@ def passes_export_quality(
     need_n = int(cfg.export_min_play_methods)
     if n < need_n:
         return False, f"play_methods {n}<{need_n}"
+    play_ids = {str(x).lower() for x in (ids or result.play_methods or [])}
+    if export_require_chart_patterns_enabled(cfg) and "chart_patterns" not in play_ids:
+        return False, "need_chart_patterns_in_play"
     min_best = float(cfg.export_min_best_score)
     min_avg = float(cfg.export_min_play_avg_score)
     if best_sc >= min_best or avg_sc >= min_avg:
-        return True, f"ok best={best_sc:.0f} avg={avg_sc:.0f} n={n}"
+        return True, f"ok best={best_sc:.0f} avg={avg_sc:.0f} n={n} chart=1"
     return (
         False,
         f"weak play scores best={best_sc:.0f}<{min_best:.0f} and "
