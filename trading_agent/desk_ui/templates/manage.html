@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Manage{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Manage / open lots</h1>
+  <p class="lede">OMS software stops — trail, option ±%, EOD 0DTE flatten, min-premium wipe.</p>
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="k">Open lots</div><div class="v">{{ snap.oms_summary.get('open_lots', snap.oms_lots|length) }}</div></div>
+    <div class="kpi-card"><div class="k">Open risk $</div><div class="v">{{ '%.0f'|format(snap.oms_summary.get('open_risk') or 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Day realized</div><div class="v">{{ '%.0f'|format(snap.oms_summary.get('day_realized_pnl') or 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Manage events</div><div class="v">{{ snap.manage.summary.get('events', 0) }}</div></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Protected / open lots</h2>
+  {% if snap.oms_lots %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Status</th><th>Side</th><th>Qty</th>
+        <th>Entry</th><th>Stop</th><th>Trail</th><th>Target</th>
+        <th>Exp</th><th>OCC / premium</th><th>Setup</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lot in snap.oms_lots %}
+      <tr>
+        <td><strong>{{ lot.get('symbol') }}</strong></td>
+        <td>{{ lot.get('status') }}</td>
+        <td>{{ lot.get('side') }}</td>
+        <td>{{ lot.get('quantity') }}</td>
+        <td>{{ lot.get('entry') }}</td>
+        <td>{{ lot.get('stop') }}</td>
+        <td>{% if lot.get('trail_stop') %}<strong>{{ lot.get('trail_stop') }}</strong>{% else %}—{% endif %}</td>
+        <td>{{ lot.get('target') }}</td>
+        <td>{{ lot.get('expiration') or '—' }}</td>
+        <td class="muted">
+          <code>{{ (lot.get('occ_symbol') or '—')[:22] }}</code>
+          {% if lot.get('option_entry_premium') %}<br>prem ${{ '%.2f'|format(lot.option_entry_premium) }}{% endif %}
+        </td>
+        <td class="muted">{{ (lot.get('setup_id') or lot.get('strategy') or '')[:40] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No open OMS lots on this host.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Intraday manage log</h2>
+  {% if snap.manage.quiet %}
+  <p class="banner banner-amber">{{ snap.manage.quiet_reason }}</p>
+  {% endif %}
+  {% if snap.manage.recent %}
+  <table class="data compact">
+    <thead><tr><th>ts</th><th>event</th><th>detail</th></tr></thead>
+    <tbody>
+      {% for ev in snap.manage.recent[:25] %}
+      <tr>
+        <td class="muted">{{ ev.get('ts') }}</td>
+        <td>{{ ev.get('event') or ev.get('type') }}</td>
+        <td class="muted">{{ (ev.get('payload') or ev)|string|truncate(120) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No recent manage JSONL events.</p>
+  {% endif %}
+</section>
+{% endblock %}

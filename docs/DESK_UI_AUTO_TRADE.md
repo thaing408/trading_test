@@ -9,6 +9,7 @@
 | **Owner repo** | [trading_agent](https://github.com/thaing408/trading_agent) (`C:\Personal\Grok\trading_agent`) |
 | **Product** | Live CIO desk only — **not** trading_test methods lab |
 | **Primary host** | Windows research host (scheduled `TradingAgentDeskSession` → `scripts/start_desk_session.py`) |
+| **Packaging north star** | Installable Operator Desk (Mac/Windows) — [`PACKAGING_ROADMAP.md`](PACKAGING_ROADMAP.md) |
 
 ---
 

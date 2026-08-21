@@ -1,5 +1,10 @@
 """Scalp research tools (multi-ticker BT + universe card + Soulz PA)."""
 
+from trading_agent.scalp.pulse_halt import (
+    format_session_halt_card,
+    record_pulse_close,
+    sleeve_halted,
+)
 from trading_agent.scalp.universe_card import format_scalp_universe_card, post_scalp_universe_card
 from trading_agent.scalp.soulz_pa import (
     SoulzPaConfig,
@@ -10,6 +15,9 @@ from trading_agent.scalp.soulz_pa import (
 )
 
 __all__ = [
+    "format_session_halt_card",
+    "record_pulse_close",
+    "sleeve_halted",
     "format_scalp_universe_card",
     "post_scalp_universe_card",
     "SoulzPaConfig",

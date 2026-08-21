@@ -131,6 +131,9 @@ def _risk_from_bt(cfg: BacktestConfig) -> RiskConfig:
         enforce_discipline_rails=bool(getattr(cfg, "enforce_discipline_rails", True)),
         enforce_smb_book_gates=bool(getattr(cfg, "enforce_smb_book_gates", True)),
         enforce_ta_book_gates=bool(getattr(cfg, "enforce_ta_book_gates", True)),
+        enforce_classic_ta_book_gates=bool(
+            getattr(cfg, "enforce_classic_ta_book_gates", True)
+        ),
         # Offline: no network fundamentals; soft A/B rules still apply
         enforce_fundamental_gate=False,
         allow_b_when_aligned=bool(getattr(cfg, "allow_b_when_aligned", True)),
@@ -605,6 +608,7 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_mtf_gate=False,
             enforce_smb_book_gates=False,
             enforce_ta_book_gates=False,
+            enforce_classic_ta_book_gates=False,
             enforce_discipline_rails=False,
         ),
         # Shipped production-like risk (A-tier only) with full book discipline
@@ -621,6 +625,7 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_mtf_gate=True,
             enforce_smb_book_gates=True,
             enforce_ta_book_gates=True,
+            enforce_classic_ta_book_gates=True,
             enforce_discipline_rails=True,
         ),
         # Slight-less-cash A/B: conf 55 + B quality 65, still A-prefer + full gates
@@ -638,6 +643,7 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_mtf_gate=True,
             enforce_smb_book_gates=True,
             enforce_ta_book_gates=True,
+            enforce_classic_ta_book_gates=True,
             enforce_discipline_rails=True,
         ),
         # New methods: full book gates + 3 discovery passes (simulates 07:00/09:30/11:00 PT)
@@ -653,6 +659,7 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_mtf_gate=True,
             enforce_smb_book_gates=True,
             enforce_ta_book_gates=True,
+            enforce_classic_ta_book_gates=True,
             enforce_discipline_rails=True,
             discovery_passes=3,
         ),
@@ -669,6 +676,7 @@ def default_sweep_configs() -> List[BacktestConfig]:
             enforce_mtf_gate=False,
             enforce_smb_book_gates=False,
             enforce_ta_book_gates=False,
+            enforce_classic_ta_book_gates=False,
             enforce_discipline_rails=False,
             discovery_passes=3,
         ),

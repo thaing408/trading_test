@@ -64,7 +64,7 @@ TOOL_REGISTRY: Dict[str, ToolSpec] = {
     "news": ToolSpec("news", "News headlines / catalysts", tool_news),
     "fundamentals": ToolSpec("fundamentals", "Fundamentals snapshot", tool_fundamentals),
     "insider": ToolSpec("insider", "Insider / Form-4 style series", tool_insider),
-    "social": ToolSpec("social", "Social / news-tone sentiment proxy", tool_social),
+    "social": ToolSpec("social", "News-tone + Reddit JSON sentiment (informational)", tool_social),
 }
 
 

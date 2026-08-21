@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Firm{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Firm sleeve</h1>
+  <p class="lede">TradingAgents advisory path (P0–P7). Off unless <code>TRADING_AGENT_FIRM=1</code>.</p>
+  {% if not snap.firm.get('enabled_artifacts') %}
+  <p class="muted">No firm artifacts for {{ snap.trading_date }} under <code>{{ snap.firm.get('path') }}</code>.</p>
+  <p class="muted">Run: <code>python -m trading_agent firm --symbol AAPL --force --no-llm</code></p>
+  {% else %}
+  {% if snap.firm.get('eval') %}
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="k">Symbols</div><div class="v">{{ snap.firm.eval.get('n_symbols', 0) }}</div></div>
+    <div class="kpi-card"><div class="k">BUY</div><div class="v">{{ snap.firm.eval.get('n_buy', 0) }}</div></div>
+    <div class="kpi-card"><div class="k">HOLD</div><div class="v">{{ snap.firm.eval.get('n_hold', 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Veto</div><div class="v">{{ snap.firm.eval.get('n_veto', 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Agree vs book</div><div class="v">{{ snap.firm.eval.get('agreement_rate', 0) }}</div></div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Cards</h2>
+  {% if snap.firm.get('cards') %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Tech</th><th>Fund</th><th>Sent</th>
+        <th>Debate</th><th>Trader</th><th>Risk</th><th>Manager</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in snap.firm.cards %}
+      {% set c = row.get('card') or {} %}
+      {% set t = row.get('trader') or {} %}
+      {% set r = row.get('risk') or {} %}
+      {% set m = row.get('manager') or {} %}
+      {% set d = row.get('debate') or {} %}
+      <tr>
+        <td><strong>{{ row.get('symbol') }}</strong></td>
+        <td class="muted">{{ c.get('technical_bullet') or '—' }}</td>
+        <td class="muted">{{ c.get('fundamental_bullet') or '—' }}</td>
+        <td class="muted">{{ c.get('sentiment_bullet') or '—' }}</td>
+        <td>{{ d.get('winner') or c.get('debate_winner') }} {% if d.get('confidence') %}({{ '%.0f'|format(d.confidence) }}){% endif %}</td>
+        <td><strong>{{ t.get('action') or c.get('trader_action') }}</strong>
+          {% if t.get('size_hint') %}<span class="muted">{{ t.size_hint }}</span>{% endif %}
+        </td>
+        <td>{{ r.get('recommendation') or c.get('risk_adjustment') }}</td>
+        <td>{{ m.get('decision') or c.get('manager_decision') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Firm folder exists but no symbol cards.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

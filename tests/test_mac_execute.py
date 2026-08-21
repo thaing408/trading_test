@@ -17,11 +17,16 @@ from trading_agent.export.mac_execute import (
     in_qt_window,
     live_entry_blocked_reason,
     infer_call_put,
+    is_terminal_broker_reject,
+    option_contract_precheck,
     parse_expiration_date,
+    resolve_listed_option_strike,
+    strike_grid_candidates,
     submit_order,
     validate_enter,
 )
 from datetime import date
+from trading_agent.export.multi_method_book import _option_strike
 
 
 def _good_options_entry(**overrides):
@@ -219,6 +224,79 @@ def test_format_occ_symbol():
     assert "P" in put
 
 
+def test_option_strike_uses_listed_increments():
+    # Avoid inventing V 357 / GE 372 / ZS 183 style strikes
+    assert _option_strike(184.35, "PUT") == 180.0  # $2.5 grid under $200
+    assert _option_strike(358.91, "PUT") == 350.0  # $5 grid at $200+
+    assert _option_strike(369.22, "CALL") == 375.0  # $5 OTM call grid
+
+
+def test_strike_grid_includes_common_listed():
+    cands = strike_grid_candidates(183.0, spot=184.0)
+    assert 180.0 in cands
+    assert 182.5 in cands
+    assert 185.0 in cands
+
+
+def test_resolve_listed_option_strike_snaps_via_quotes():
+    preferred = 183.0
+    exp = date(2026, 8, 21)
+
+    def fake_mcp(tool: str, payload: dict, **kwargs):
+        assert tool == "get_quotes"
+        quotes = []
+        for sym in payload["symbols"]:
+            # Only 182.50 and 185 exist
+            if "00182500" in sym or "00185000" in sym:
+                quotes.append(
+                    {"symbol": sym, "asset_type": "OPTION", "bid": 1.0, "ask": 1.2}
+                )
+            else:
+                quotes.append({"symbol": sym, "error": "Symbol not found"})
+        return {"quotes": quotes}
+
+    strike, occ, meta = resolve_listed_option_strike(
+        "ZS", exp, "PUT", preferred, spot=184.0, call_mcp=fake_mcp
+    )
+    assert strike == 182.5
+    assert occ == format_occ_symbol("ZS", exp, "PUT", 182.5)
+    assert meta.get("strike_snapped_from") == 183.0
+
+
+def test_precheck_resolve_listed_skips_when_none_quote():
+    o = _ready(
+        symbol="ZS",
+        strategy="Multi-method long put (chart_patterns)",
+        side="Bearish",
+        strike_prices=[183.0],
+        entry=184.0,
+    )
+
+    def fake_mcp(tool: str, payload: dict, **kwargs):
+        return {
+            "quotes": [
+                {"symbol": s, "error": "Symbol not found"} for s in payload["symbols"]
+            ]
+        }
+
+    ok, reason, meta = option_contract_precheck(
+        o, resolve_listed=True, call_mcp=fake_mcp
+    )
+    assert ok is False
+    assert reason == "occ_not_listed"
+
+
+def test_is_terminal_broker_reject_400():
+    assert is_terminal_broker_reject(
+        {
+            "error": True,
+            "error_type": "HTTPStatusError",
+            "message": "Client error '400 Bad Request' for url 'https://api.schwabapi.com/.../orders'",
+        }
+    )
+    assert not is_terminal_broker_reject({"status": "submitted"})
+
+
 def test_classify_iron_condor_multileg():
     o = _ready(
         strategy="Iron Condor",
@@ -292,14 +370,28 @@ def test_submit_order_live_single_leg_place_order(monkeypatch):
 
     def fake_mcp(tool: str, payload: dict, **kwargs):
         calls.append((tool, payload))
+        if tool == "get_quotes":
+            # Pretend preferred OCC (and neighbors) are listed
+            return {
+                "quotes": [
+                    {
+                        "symbol": s,
+                        "asset_type": "OPTION",
+                        "bid": 1.0,
+                        "ask": 1.2,
+                    }
+                    for s in payload.get("symbols") or []
+                ]
+            }
         return {"status": "submitted", "dry_run": False, "symbol": payload.get("symbol")}
 
     monkeypatch.setattr("trading_agent.export.mac_execute.call_schwab_mcp", fake_mcp)
     o = _ready(strategy="Long Call", setup_id="options_debit_call", side="long")
     out = submit_order(o, live=True)
     assert out.status == "submitted"
-    assert len(calls) == 1
-    tool, payload = calls[0]
+    place_calls = [c for c in calls if c[0] == "place_order"]
+    assert len(place_calls) == 1
+    tool, payload = place_calls[0]
     assert tool == "place_order"
     assert payload["asset_type"] == "OPTION"
     assert payload["instruction"] == "BUY_TO_OPEN"
@@ -307,6 +399,7 @@ def test_submit_order_live_single_leg_place_order(monkeypatch):
     assert payload["confirm_live"] is True
     assert "C" in payload["symbol"]
     assert out.broker_response.get("occ_symbol")
+    assert any(c[0] == "get_quotes" for c in calls)
 
 
 def test_submit_order_live_equity_buy(monkeypatch):

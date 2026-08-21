@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}OMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>OMS &amp; export health</h1>
+  <p class="lede">Kill switch (read), open risk, ready-order outcomes, export path mtimes.</p>
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="k">Kill switch</div><div class="v">{% if snap.kill_switch.get('active') %}<span class="text-cash">ON</span>{% else %}<span class="text-armed">off</span>{% endif %}</div></div>
+    <div class="kpi-card"><div class="k">Open lots</div><div class="v">{{ snap.oms_summary.get('open_lots', snap.oms_lots|length) }}</div></div>
+    <div class="kpi-card"><div class="k">Open risk $</div><div class="v">{{ '%.0f'|format(snap.oms_summary.get('open_risk') or 0) }}</div></div>
+    <div class="kpi-card"><div class="k">Submitted today</div><div class="v">{{ snap.ready_orders.get('counts', {}).get('submitted', 0) }}</div></div>
+  </div>
+  {% if snap.kill_switch.get('file') %}
+  <p class="muted">kill file: {{ snap.kill_switch.get('file') }}</p>
+  {% endif %}
+</section>
+
+{% if snap.export_health.wrong_day %}
+<div class="banner banner-red">
+  Wrong day: book <code>trading_date</code> does not match resolved PT session
+  (<strong>{{ snap.trading_date }}</strong>).
+</div>
+{% endif %}
+{% if snap.host_role == 'windows-research' %}
+<div class="banner banner-amber">
+  <strong>windows-research</strong> — OMS lots and LIVE place are Mac-local
+  (<code>mac-execute</code>). Empty lots here are expected; do not treat Windows OMS state as TOS truth.
+</div>
+{% elif snap.host_role == 'mac-execute' and not snap.oms_lots %}
+<p class="muted">No open OMS lots on this Mac (normal when flat).</p>
+{% endif %}
+
+<section class="panel">
+  <h2>Export health</h2>
+  <ul class="plain paths">
+    {% for t in snap.export_health.targets %}
+    <li>
+      <span class="dot {{ 'ok' if t.exists else 'miss' }}"></span>
+      <code>{{ t.path }}</code>
+      {% if t.exists and t.age_seconds is not none %}
+      <span class="muted">{{ (t.age_seconds / 60)|round(0)|int }}m ago</span>
+      {% elif not t.exists %}
+      <span class="muted">missing</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% for note in snap.export_health.notes %}
+  <p class="muted">{{ note }}</p>
+  {% endfor %}
+  {% if snap.export_health.stale_missed_slot and not snap.export_health.stale_suppressed_cash %}
+  <p class="banner banner-amber" style="margin-top:0.75rem">Missed refresh slot — no recent book/scanned write.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Open / protected lots</h2>
+  {% if snap.oms_lots %}
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Status</th><th>Side</th><th>Qty</th>
+        <th>Entry</th><th>Stop</th><th>Target</th><th>Exp</th><th>Setup</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lot in snap.oms_lots %}
+      <tr>
+        <td><strong>{{ lot.get('symbol') }}</strong></td>
+        <td>{{ lot.get('status') }}</td>
+        <td>{{ lot.get('side') }}</td>
+        <td>{{ lot.get('quantity') }}</td>
+        <td>{{ lot.get('entry') }}</td>
+        <td>{{ lot.get('stop') }}</td>
+        <td>{{ lot.get('target') }}</td>
+        <td>{{ lot.get('expiration') or '—' }}</td>
+        <td class="muted">{{ (lot.get('setup_id') or lot.get('strategy') or '')[:40] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">
+    {% if snap.host_role == 'windows-research' %}
+    No local OMS lots (expected on research host).
+    {% else %}
+    No open OMS lots.
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Ready orders ({{ snap.trading_date }})</h2>
+  {% if snap.ready_orders.get('orders') %}
+  <table class="data">
+    <thead>
+      <tr><th>Symbol</th><th>Action</th><th>Status</th><th>Skip reason</th><th>Side</th><th>Exp</th><th>Qty</th><th>Risk$</th><th>Strategy</th></tr>
+    </thead>
+    <tbody>
+      {% for o in snap.ready_orders.orders %}
+      <tr class="{% if o.get('status')=='failed' %}row-fail{% elif o.get('status')=='submitted' %}row-ok{% endif %}">
+        <td><strong>{{ o.get('symbol') }}</strong></td>
+        <td>{{ o.get('action') }}</td>
+        <td>{{ o.get('status') }}</td>
+        <td class="muted">{{ o.get('skip_reason') or '—' }}</td>
+        <td>{{ o.get('side') }}</td>
+        <td>{{ o.get('expiration') or '—' }}</td>
+        <td>{{ o.get('quantity') }}</td>
+        <td>{{ o.get('max_risk_dollars') }}</td>
+        <td class="muted">{{ o.get('strategy') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">{{ snap.ready_orders.get('path') }}</p>
+  {% else %}
+  <p class="muted">
+    {% if snap.host_role == 'windows-research' %}
+    No ready_orders on this host (Mac consumer writes them).
+    {% else %}
+    No ready_orders file for today yet.
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Consumer</h2>
+  <ul class="plain">
+    <li>alive: <strong>{{ snap.consumer_health.get('alive') }}</strong></li>
+    <li>pids: {{ snap.consumer_health.get('pids') }}</li>
+    {% if snap.consumer_health.get('last_log_line') %}
+    <li class="muted">last log: {{ snap.consumer_health.last_log_line[:200] }}</li>
+    {% endif %}
+  </ul>
+</section>
+{% endblock %}

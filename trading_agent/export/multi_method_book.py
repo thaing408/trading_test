@@ -54,12 +54,21 @@ def _nearest_option_expiration(from_day: date | None = None, *, max_dte: int = 5
 
 
 def _option_strike(spot: float, side: str, *, otm: float = 1.0) -> float:
-    """1-point (or 1%) OTM strike for CALL/PUT; round to sensible increment."""
+    """Slightly OTM strike on common listed increments.
+
+    Heuristic only — LIVE place path snaps to a Schwab-quoted OCC. Prefer
+    increments that actually list (avoid inventing V 357 / GE 372 / ZS 183):
+      < $50 → $0.50 | $50–$200 → $2.50 | $200–$500 → $5 | ≥ $500 → $5
+    """
     px = max(float(spot), 0.01)
     side_u = (side or "CALL").upper()
-    # Increment: $1 under $200, $5 for mega-priced names
-    inc = 5.0 if px >= 500 else (1.0 if px >= 50 else 0.5)
-    otm_pts = max(otm, inc) if px < 200 else max(otm, px * 0.005)
+    if px >= 200:
+        inc = 5.0
+    elif px >= 50:
+        inc = 2.5
+    else:
+        inc = 0.5
+    otm_pts = max(float(otm), inc) if px < 200 else max(float(otm), px * 0.005, inc)
 
     def _round_down(x: float) -> float:
         return inc * int(x / inc)
@@ -69,9 +78,9 @@ def _option_strike(spot: float, side: str, *, otm: float = 1.0) -> float:
 
     if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
         # long put slightly OTM
-        return float(_round_down(px - otm_pts))
+        return float(round(_round_down(px - otm_pts), 4))
     # long call slightly OTM
-    return float(_round_up(px + otm_pts))
+    return float(round(_round_up(px + otm_pts), 4))
 
 
 def entry_from_multi_eval(
@@ -86,19 +95,37 @@ def entry_from_multi_eval(
     """Build one ENTER row from a PLAY multi-eval. None if incomplete or quality fail."""
     if not result.play or result.decision != "PLAY":
         return None
-    if require_export_quality:
-        if getattr(result, "export_eligible", False) is True:
-            pass
-        else:
-            ok, _why = passes_export_quality(result, cfg=cfg or MultiMethodConfig())
-            if not ok:
-                return None
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled, allowed_methods
 
+        if wr_desk_enabled():
+            allow = allowed_methods()
+            best_m = str(result.best_method or "").lower()
+            plays = [str(m).lower() for m in (result.play_methods or [])]
+            if allow and best_m not in allow and not any(m in allow for m in plays):
+                return None
+            side_u = (result.best_side or "").upper()
+            if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
+                return None
+    except Exception:
+        pass
+    if require_export_quality:
+        # Always re-check export gate (includes chart_patterns requirement)
+        ok, _why = passes_export_quality(result, cfg=cfg or MultiMethodConfig())
+        if not ok:
+            return None
+
+    # Prefer chart_patterns geometry when it played (export edge)
     best = None
     for v in result.votes:
-        if v.method_id == result.best_method and v.play:
+        if v.play and v.method_id == "chart_patterns" and float(v.entry or 0) > 0:
             best = v
             break
+    if best is None:
+        for v in result.votes:
+            if v.method_id == result.best_method and v.play:
+                best = v
+                break
     if best is None:
         play_votes = [v for v in result.votes if v.play and v.method_id != "process_methods"]
         best = max(play_votes, key=lambda v: v.score) if play_votes else None
@@ -116,6 +143,19 @@ def entry_from_multi_eval(
             stop = entry * 1.02
         else:
             stop = entry * 0.98
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled, apply_payoff
+
+        if wr_desk_enabled() and entry > 0 and stop > 0:
+            bullish = (result.best_side or best.side or "").upper() not in (
+                "PUT",
+                "BEAR",
+                "BEARISH",
+                "SHORT",
+            )
+            target = apply_payoff(entry, stop, bullish=bullish)
+    except Exception:
+        pass
     if target <= 0:
         if stop < entry:
             target = entry + (entry - stop) * 1.5
@@ -125,6 +165,20 @@ def entry_from_multi_eval(
         return None
 
     side_raw = (result.best_side or best.side or "CALL").upper()
+    # Safety: never export a stop wider than N×ATR estimate (2% of price fallback)
+    try:
+        from trading_agent.strategy.swing_scan import clamp_stop_to_atr
+
+        mult = float(getattr(cfg or MultiMethodConfig(), "max_stop_atr_mult", 1.5) or 1.5)
+        atr_guess = entry * 0.02
+        for t in best.tags or []:
+            if isinstance(t, str) and t.startswith("atr=") and t.endswith("%"):
+                atr_guess = max(atr_guess, entry * float(t[4:-1]) / 100.0)
+                break
+        stop, _ = clamp_stop_to_atr(entry, stop, side_raw, atr_guess, max_atr_mult=mult)
+        stop = float(round(stop, 2))
+    except Exception:
+        pass
     if side_raw in ("CALL", "LONG", "BULL", "BULLISH"):
         direction = "Bullish"
         contract_side = "CALL"
@@ -170,7 +224,7 @@ def entry_from_multi_eval(
     )
     notes = "; ".join(result.reasons[:3])[:240]
 
-    return {
+    row = {
         "symbol": result.symbol,
         "action": "ENTER",
         "side": direction,  # Bullish→CALL / Bearish→PUT via infer_call_put
@@ -226,7 +280,28 @@ def entry_from_multi_eval(
         "export_eligible": True,
         "play_quality_score": float(getattr(result, "play_quality_score", 0) or 0),
         "best_play_score": float(getattr(result, "best_play_score", 0) or 0),
+        "book_points": 0.0,
+        "compete_score": float(
+            getattr(result, "play_quality_score", 0) or result.aggregate_score or 0
+        )
+        + min(10.0, 2.0 * len(method_tags)),
+        "book_gates_mode": "hard",
     }
+    # Qullamaggie ADR extension tags (size cut only if TRADING_AGENT_ADR_EXTENSION=1)
+    try:
+        from trading_agent.analysis.extension import try_enrich_entry_from_market
+
+        row = try_enrich_entry_from_market(row)
+    except Exception:  # noqa: BLE001
+        pass
+    # EP vs breakout family (size cut only if TRADING_AGENT_EP_SLOW=1)
+    try:
+        from trading_agent.analysis.setup_family import apply_setup_family_to_entry
+
+        row = apply_setup_family_to_entry(row)
+    except Exception:  # noqa: BLE001
+        pass
+    return row
 
 
 def build_multi_method_book(
@@ -268,9 +343,13 @@ def build_multi_method_book(
             continue
         entries.append(row)
 
-    # Merge existing book entries (desk/CIO) — multi-method adds or replaces same symbol
+    # Merge existing book entries (desk/CIO) — prefer higher compete_score
     if merge_entries:
-        by_sym = {str(e.get("symbol") or "").upper(): e for e in entries}
+        from trading_agent.discipline.compete import annotate_entry_compete, prefer_entry_by_compete
+
+        by_sym = {
+            str(e.get("symbol") or "").upper(): annotate_entry_compete(e) for e in entries
+        }
         for e in merge_entries:
             if not isinstance(e, dict):
                 continue
@@ -278,18 +357,17 @@ def build_multi_method_book(
             if not sym:
                 continue
             if sym in by_sym:
-                # Prefer multi-method row but keep desk tags
-                desk_tags = list(e.get("method_tags") or [])
-                mm = by_sym[sym]
-                mm_tags = list(mm.get("method_tags") or [])
-                for t in desk_tags:
-                    if t not in mm_tags:
-                        mm_tags.append(t)
-                mm["method_tags"] = mm_tags
-                mm["merged_with_desk"] = True
+                winner = prefer_entry_by_compete(by_sym[sym], dict(e))
+                winner["merged_with_desk"] = True
+                by_sym[sym] = winner
             else:
-                # keep desk entry as-is
-                entries.append(dict(e))
+                by_sym[sym] = annotate_entry_compete(dict(e))
+        entries = list(by_sym.values())
+        # Prefer higher compete_score overall
+        entries.sort(
+            key=lambda r: float(r.get("compete_score") or 0),
+            reverse=True,
+        )
 
     play_syms = [e["symbol"] for e in entries if e.get("source") == "multi_method_router"]
     watch = play_syms + [

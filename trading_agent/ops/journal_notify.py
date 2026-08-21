@@ -215,14 +215,272 @@ def _as_opt_float(value: Any) -> Optional[float]:
         return None
 
 
+def _order_get(order: Any, key: str, default: Any = "") -> Any:
+    if isinstance(order, dict):
+        return order.get(key, default)
+    return getattr(order, key, default)
+
+
+def _setup_label(order: Any) -> str:
+    setup_id = str(_order_get(order, "setup_id") or "").strip()
+    strategy = str(_order_get(order, "strategy") or "").strip()
+    setup = setup_id or strategy or "multi_method"
+    if setup.lower().startswith("multi-method"):
+        setup = setup_id or "multi_method"
+    return setup
+
+
+# Ops skip reasons worth a Discord ping (day+symbol deduped).
+SKIP_ALERT_REASONS = frozenset(
+    {
+        "before_rth_open",
+        "after_entry_window",
+        "max_open_risk",
+        "max_open_lots",
+        "insufficient_buying_power",
+        "account_cash_unavailable",
+        "schwab_oauth_expired",
+        "schwab_no_token",
+        "insufficient_debit_cash",
+        "insufficient_credit_bp",
+        "missing_account_balances",
+        "credit_undefined_risk",
+    }
+)
+
+
+def skip_reason_should_alert(reason: str) -> bool:
+    r = (reason or "").strip()
+    if not r:
+        return False
+    if r in SKIP_ALERT_REASONS:
+        return True
+    if r.startswith("insufficient_cash") or r.startswith("insufficient_margin"):
+        return True
+    if r.startswith("afford") or r.startswith("credit_"):
+        return True
+    if r.startswith("schwab_"):
+        return True
+    if r.startswith("before_rth") or r.startswith("after_entry"):
+        return True
+    if r.startswith("max_open"):
+        return True
+    return False
+
+
+def _human_skip_reason(reason: str, order: Any = None) -> str:
+    r = (reason or "").strip()
+    broker = {}
+    if order is not None:
+        br = _order_get(order, "broker_response") or {}
+        if isinstance(br, dict):
+            broker = br
+    msg = str(broker.get("message") or "").strip()
+    labels = {
+        "before_rth_open": "Held until RTH open (09:30 ET) — will retry after open",
+        "after_entry_window": "Past entry window — no new LIVE entries",
+        "max_open_risk": "Blocked: max open risk",
+        "max_open_lots": "Blocked: max open lots",
+        "insufficient_buying_power": "Blocked: insufficient buying power",
+        "account_cash_unavailable": "Blocked: account cash/BP unavailable",
+        "schwab_oauth_expired": "Blocked: Schwab OAuth expired — refresh token",
+        "schwab_no_token": "Blocked: no Schwab token",
+        "insufficient_debit_cash": "Blocked: cash cannot fund debit premium",
+        "insufficient_credit_bp": "Blocked: BP cannot fund credit/short premium",
+        "missing_account_balances": "Blocked: missing account balances",
+        "credit_undefined_risk": "Blocked: credit package missing defined risk",
+    }
+    if r in labels:
+        base = labels[r]
+    elif r.startswith("insufficient_cash"):
+        base = f"Blocked: insufficient cash ({r})"
+    else:
+        base = f"Skipped: {r}"
+    if msg and msg.lower() not in base.lower():
+        return f"{base} — {msg[:120]}"
+    return base
+
+
+def notify_skip_activity(
+    order: Any,
+    *,
+    reason: str = "",
+    live: bool = True,
+) -> Dict[str, Any]:
+    """Discord ops alert when LIVE place is skipped (RTH / cash / risk).
+
+    Day+symbol+reason dedupe so consumer polls do not spam.
+    Disable: TRADING_AGENT_JOURNAL_SKIP_ALERTS=0
+    """
+    if not live:
+        return {"skipped": True, "reason": "not_live"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
+        return {"skipped": True, "reason": "journal_alerts_disabled"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_SKIP_ALERTS", True):
+        return {"skipped": True, "reason": "skip_alerts_disabled"}
+
+    skip = (reason or str(_order_get(order, "skip_reason") or "")).strip()
+    if not skip_reason_should_alert(skip):
+        return {"skipped": True, "reason": f"skip_not_alertable:{skip or 'empty'}"}
+
+    sym = str(_order_get(order, "symbol") or "?").upper()
+    setup = _setup_label(order)
+    day = datetime.now(PT).strftime("%Y-%m-%d")
+    text = _human_skip_reason(skip, order)
+    broker = _order_get(order, "broker_response") or {}
+    extra = ""
+    if isinstance(broker, dict):
+        need = broker.get("cash_required")
+        have = broker.get("remaining_cash")
+        aff = broker.get("affordability") if isinstance(broker.get("affordability"), dict) else {}
+        if need is not None or have is not None:
+            extra = f"\nCash need/have: `{need}` / `{have}`"
+        elif aff:
+            extra = f"\nNeed/have: `{aff.get('need')}` / `{aff.get('have')}` ({aff.get('kind') or ''})"
+
+    return post_journal_activity(
+        f"⏸️ **MULTI AUTO — ENTRY SKIPPED**\n"
+        f"**{sym}** · Setup: **{setup}**\n"
+        f"{text}{extra}",
+        title="Mac LIVE auto-trade",
+        mention=True,
+        dedupe_key=f"skip:{day}:{sym}:{skip.split(':')[0]}",
+    )
+
+
+def notify_working_activity(
+    order: Any,
+    *,
+    live: bool = True,
+) -> Dict[str, Any]:
+    """Quiet note that order was accepted but fill not yet confirmed.
+
+    No @mention by default. Disable: TRADING_AGENT_JOURNAL_WORKING_ALERTS=0
+    """
+    if not live:
+        return {"skipped": True, "reason": "not_live"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
+        return {"skipped": True, "reason": "journal_alerts_disabled"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_WORKING_ALERTS", True):
+        return {"skipped": True, "reason": "working_alerts_disabled"}
+
+    sym = str(_order_get(order, "symbol") or "?").upper()
+    setup = _setup_label(order)
+    broker = _order_get(order, "broker_response") or {}
+    if not isinstance(broker, dict):
+        broker = {}
+    occ = str(broker.get("occ_symbol") or "").strip()
+    oid = _schwab_order_id(broker) or str(_order_get(order, "order_id") or "")
+    day = datetime.now(PT).strftime("%Y-%m-%d")
+    return post_journal_activity(
+        f"⏳ **MULTI AUTO — WORKING** (fill not confirmed yet)\n"
+        f"**{sym} {occ}**\n"
+        f"Setup: **{setup}**\n"
+        f"Will post 🟢 ENTRY when position is at the broker."
+        + (f"\nOrder: `{oid}`" if oid else ""),
+        title="Mac LIVE auto-trade",
+        mention=False,
+        dedupe_key=f"working:{day}:{oid or sym}:{occ}",
+    )
+
+
+def notify_lot_entry_filled(
+    lot: Any,
+    *,
+    live: bool = True,
+    fill_price: Optional[float] = None,
+    spot_price: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Green ENTER from OMS lot after position reconcile confirmed the fill."""
+    if not live:
+        return {"skipped": True, "reason": "not_live"}
+    if not _env_bool("TRADING_AGENT_JOURNAL_ALERTS", True):
+        return {"skipped": True, "reason": "journal_alerts_disabled"}
+
+    def _g(key: str, default: Any = "") -> Any:
+        if isinstance(lot, dict):
+            return lot.get(key, default)
+        return getattr(lot, key, default)
+
+    sym = str(_g("symbol") or "?").upper()
+    occ = str(_g("occ_symbol") or "").strip()
+    qty = int(_g("quantity") or 1)
+    setup = str(_g("setup_id") or "").strip() or str(_g("strategy") or "").strip() or "multi_method"
+    if setup.lower().startswith("multi-method"):
+        setup = str(_g("setup_id") or "multi_method")
+    lot_id = str(_g("lot_id") or "")
+    oid = str(_g("broker_order_id") or lot_id)
+    meta = _g("broker_meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    fill_f = fill_price
+    if fill_f is None:
+        fill_f = _as_opt_float(meta.get("option_entry_premium"))
+    if fill_f is None:
+        fe = _as_opt_float(_g("fill_entry"))
+        if fe is not None and 0 < fe < 50:
+            fill_f = fe
+    und_px_f = spot_price if spot_price is not None else _as_opt_float(_g("entry"))
+    exp = _g("expiration") or ""
+    reason = (
+        f"{sym} fill confirmed at broker · {setup}"
+        + (f" · exp {exp}" if exp else "")
+    )
+    payload = {
+        "event": "entry",
+        "side": "entry",
+        "label": "MULTI AUTO",
+        "symbol": occ or sym,
+        "description": f"{sym} {occ}".strip() if occ else sym,
+        "setup": setup,
+        "underlying": sym,
+        "qqq_price": und_px_f,
+        "fill_price": fill_f,
+        "quantity": qty,
+        "reason": reason,
+        "order_id": oid or None,
+        "dedupe_key": f"entry:{oid or lot_id or sym}:{occ or exp}",
+        "time_pt": datetime.now(PT).strftime("%Y-%m-%d %H:%M %Z"),
+    }
+    out = _post_via_trade_event_script(payload)
+    if out.get("ok") or out.get("skipped"):
+        if payload.get("dedupe_key"):
+            _mark_posted(str(payload["dedupe_key"]))
+        return out
+    lines = [
+        "🟢 **MULTI AUTO — ENTRY**",
+        f"**{payload['description']}**",
+        f"`{payload['time_pt']}`",
+        f"Setup: **{setup}**",
+        f"Underlying: **{sym}**",
+    ]
+    if und_px_f is not None:
+        lines.append(f"Spot: **${und_px_f:.2f}**")
+    if fill_f is not None:
+        lines.append(f"Fill: **${fill_f:.2f}** × {qty}")
+    lines.append(f"Reason: {reason}")
+    if oid:
+        lines.append(f"Order: `{oid}`")
+    return post_journal_activity(
+        "\n".join(lines),
+        title="Mac LIVE auto-trade",
+        mention=True,
+        dedupe_key=str(payload.get("dedupe_key") or ""),
+    )
+
+
 def notify_order_activity(
     order: Any,
     *,
     live: bool = True,
     fill_price: Optional[float] = None,
     spot_price: Optional[float] = None,
+    fill_confirmed: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Notify for a ReadyOrder-like object after place (submitted/failed).
+
+    Green 🟢 ENTRY only when ``fill_confirmed`` is True (broker filled status
+    or position reconcile). Mere place-accept posts ⏳ WORKING instead.
 
     Matches QQQ scalp #trading-journal format exactly via post-trade-event.sh:
 
@@ -250,17 +508,10 @@ def notify_order_activity(
             return {"skipped": True, "reason": f"status_{status}"}
 
     def _g(key: str, default: Any = "") -> Any:
-        if isinstance(order, dict):
-            return order.get(key, default)
-        return getattr(order, key, default)
+        return _order_get(order, key, default)
 
     sym = str(_g("symbol") or "?").upper()
-    setup_id = str(_g("setup_id") or "").strip()
-    strategy = str(_g("strategy") or "").strip()
-    # Prefer short setup id like QQQ's bull_breakout
-    setup = setup_id or strategy or "multi_method"
-    if setup.lower().startswith("multi-method"):
-        setup = setup_id or "multi_method"
+    setup = _setup_label(order)
     qty = int(_g("quantity") or 1)
     exp = _g("expiration") or ""
     strikes = _g("strike_prices") or []
@@ -293,6 +544,17 @@ def notify_order_activity(
             mention=True,
             dedupe_key=f"failed:{schwab_oid or sym}:{occ or exp}",
         )
+
+    # Gate green ENTER on confirmed fill (default: infer from broker status)
+    if fill_confirmed is None:
+        try:
+            from trading_agent.oms.lifecycle import broker_status_is_filled
+
+            fill_confirmed = broker_status_is_filled(broker)
+        except Exception:  # noqa: BLE001
+            fill_confirmed = False
+    if not fill_confirmed:
+        return notify_working_activity(order, live=True)
 
     # Reason line — mirror QQQ prose style
     strike_s = ""

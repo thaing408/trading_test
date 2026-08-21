@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Discovery{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Discovery &amp; universe</h1>
+  <p class="lede">
+    Watchlist / play / process trade cards. Process cards live here only (no top-level Process nav).
+  </p>
+  <div class="kpi-row compact">
+    <div class="kpi-card"><div class="k">Watch</div><div class="v">{{ snap.watchlist|length }}</div></div>
+    <div class="kpi-card"><div class="k">Play</div><div class="v">{{ snap.play_symbols|length }}</div></div>
+    <div class="kpi-card"><div class="k">Process cards</div><div class="v">{{ snap.process_cards|length }}</div></div>
+    <div class="kpi-card"><div class="k">Next discovery</div><div class="v small">
+      {% if snap.phase.next_discovery_at %}
+      {{ snap.phase.next_discovery_at.strftime('%H:%M %Z') }}
+      {% else %}—{% endif %}
+    </div></div>
+  </div>
+  {% if snap.phase.discovery_slot_label %}
+  <p class="muted">Slot: {{ snap.phase.discovery_slot_label }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <form class="filter-form" method="get" action="/discovery">
+    <label>
+      Symbol
+      <input type="text" name="symbol" value="{{ filter_symbol }}" placeholder="AAPL" autocomplete="off"/>
+    </label>
+    <label>
+      Text
+      <input type="text" name="q" value="{{ filter_q }}" placeholder="bias / setup / note" autocomplete="off"/>
+    </label>
+    <button type="submit">Filter</button>
+    {% if filter_symbol or filter_q %}
+    <a class="muted" href="/discovery">Clear</a>
+    {% endif %}
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Process trade cards</h2>
+  {% if filtered_cards %}
+  <div class="card-grid">
+    {% for c in filtered_cards %}
+    <article class="proc-card">
+      <header>
+        <strong>{{ c.get('symbol') or c.get('ticker') or '—' }}</strong>
+        {% if c.get('bias') or c.get('side') %}
+        <span class="tag">{{ c.get('bias') or c.get('side') }}</span>
+        {% endif %}
+        {% if c.get('setup') or c.get('setup_id') %}
+        <span class="tag">{{ c.get('setup') or c.get('setup_id') }}</span>
+        {% endif %}
+      </header>
+      {% if c.get('status') or c.get('score') is not none %}
+      <p class="muted">
+        {% if c.get('status') %}status={{ c.get('status') }}{% endif %}
+        {% if c.get('score') is not none %} · score={{ c.get('score') }}{% endif %}
+      </p>
+      {% endif %}
+      {% if c.get('notes') or c.get('note') or c.get('summary') %}
+      <p>{{ c.get('notes') or c.get('note') or c.get('summary') }}</p>
+      {% endif %}
+      <details>
+        <summary class="muted">raw</summary>
+        <pre class="json-dump">{{ c | tojson(indent=2) }}</pre>
+      </details>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">
+    {% if snap.process_cards %}
+    No process cards match this filter.
+    {% else %}
+    No process cards for this session (<code>process/YYYY-MM-DD.json</code>).
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel two-col">
+  <div>
+    <h2>Watchlist</h2>
+    {% if filtered_watch %}
+    <p>{{ filtered_watch|join(', ') }}</p>
+    {% else %}
+    <p class="muted">—</p>
+    {% endif %}
+  </div>
+  <div>
+    <h2>Play symbols</h2>
+    {% if filtered_play %}
+    <p>{{ filtered_play|join(', ') }}</p>
+    {% else %}
+    <p class="muted">—</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Gap book</h2>
+  {% if snap.gap_book_summary %}
+  <pre class="json-dump">{{ snap.gap_book_summary | tojson(indent=2) }}</pre>
+  {% else %}
+  <p class="muted">No gap book summary.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Scanned list (expand)</h2>
+  <details>
+    <summary>scanned_list.json</summary>
+    <pre class="json-dump">{{ snap.scanned_raw | tojson(indent=2) }}</pre>
+  </details>
+</section>
+{% endblock %}

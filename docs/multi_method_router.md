@@ -69,7 +69,12 @@ HTF structure/daily bias soft-filters sides (see `pa/htf_bias.py`).
 5. Best method = highest score among play votes (for prep / card suggestion).  
 6. **EXPORT** (auto_trade_book) only if PLAY **and**:
    - `len(play_methods) ≥ 2` (configurable), **and**
+   - **`chart_patterns` is among play methods** (default ON — preserves pattern edge; other methods confirm only), **and**
    - `best_play_score ≥ 65` **or** `play_quality_score` (avg of play methods) **≥ 65**  
+
+Disable chart gate (not recommended): `TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS=0`.
+
+Entry geometry prefers the **chart_patterns** vote when it played.
 
 Note: **`aggregate_score`** averages *all* methods (including fails) and is **not** used for the export gate.
 

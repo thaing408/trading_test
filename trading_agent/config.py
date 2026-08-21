@@ -87,6 +87,11 @@ class RiskConfig:
     enforce_ta_book_gates: bool = True
     ta_min_indicator_confluence: int = 2
     ta_pring_min_rvol: float = 1.2
+    # Classic TA top-ten (Minervini / Weinstein / Elder / Carter / Grimes)
+    enforce_classic_ta_book_gates: bool = True
+    classic_min_rvol: float = 1.5
+    classic_min_rs: float = 1.0  # 0 = inactive RS floor
+    classic_min_rr: float = 1.5
 
     @classmethod
     def from_env(cls) -> "RiskConfig":

@@ -104,26 +104,26 @@ from trading_agent.discipline.classic_ta_books import (
 from trading_agent.ranking.ranker import build_opportunities
 ```
 
-## Deferred: books compete for ticker (score & rank)
+## Books compete for ticker (score & rank)
 
-**Status:** Reminder only — **do not implement until weekend after observing multi-method this week.**  
-**Noted:** 2026-08-17 · **Target implement:** weekend of 2026-08-22 (Sat/Sun PT).
+**Status:** **Shipped** (default remains `hard`).  
+**Module:** `trading_agent/discipline/compete.py` · wired in `ranking/ranker.py` + multi-method merge.
 
-### Why wait
-- Watch **multi-method PLAY / EXPORT** behavior through the week first (live path already score-competes methods).
-- Classic five (Minervini / Weinstein / Elder / Carter / Grimes) stay as **hard AND gates** on the pipeline path for now; multi-method export still **bypasses** them.
+### Mode
 
-### Recommended design (agreed direction)
-1. **`book_gates_mode=score`** (keep `hard` as A/B kill-switch).
-2. Books award **points** (pass / soft / inactive=0 / fail); **dedupe by `mechanism`** so O'Neil/Murphy aren't double-counted.
-3. Unified **`compete_score`** = setup core + book points + method boost; fill `top_candidates` / export N by rank.
-4. **Hard DQ only for safety red flags:** no stop/plan, kill switch, cash halt, daily-loss/tilt/revenge, average-down, Bulkowski opposing high-reliability PA, MTF hard conflict when enforced, oversize risk.
-5. Wire the **same scorer into multi-method merge** (prefer higher compete_score, not always MM).
+| Env | Behavior |
+|-----|----------|
+| `TRADING_AGENT_BOOK_GATES_MODE=hard` (default) | Classic AND gates — fail → reject (unchanged) |
+| `TRADING_AGENT_BOOK_GATES_MODE=score` | Books award points; soft fails do not DQ; rank by `compete_score` |
 
-### First slice when implementing
-- Classic five → points (no hard AND except safety).
-- Ranker sort by `compete_score`.
-- Multi-method export overlay + merge.
-- Docs + tests; leave `hard` mode available.
+### Scoring
+1. Each gate result → points (pass=1, inactive/soft=0, fail=0), **deduped by `mechanism`**.
+2. `compete_score` = combined quality (setup core) + book points + method-tag boost.
+3. Ranker sorts by `compete_score` descending in score mode (then grade key).
+4. **Hard DQ still** for safety mechanisms: Schwager plan, Wizards risk, Kiev, System-2/tilt, Bulkowski opposing PA, Shannon MTF, Livermore cut, Grimes edge — see `SAFETY_MECHANISMS`.
+5. Multi-method ↔ desk merge keeps the **higher** `compete_score` and unions `method_tags`.
 
-See also session plan notes under Grok session compaction / prior plan: “Books compete for ticker play (score & rank).”
+```bash
+# A/B on research host (do not flip LIVE Mac defaults lightly)
+echo 'TRADING_AGENT_BOOK_GATES_MODE=score' >> ~/.grok/trading-agent.env
+```

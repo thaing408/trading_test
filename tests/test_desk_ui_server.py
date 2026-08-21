@@ -160,10 +160,129 @@ def test_templates_dir_exists():
     assert (templates_dir() / "base.html").is_file()
     assert (templates_dir() / "overview.html").is_file()
     assert (templates_dir() / "book.html").is_file()
+    assert (templates_dir() / "manage.html").is_file()
+    assert (templates_dir() / "oms.html").is_file()
+    assert (templates_dir() / "firm.html").is_file()
+    assert (templates_dir() / "rejections.html").is_file()
+    assert (templates_dir() / "discovery.html").is_file()
+    assert (templates_dir() / "session.html").is_file()
     assert (static_dir() / "desk.css").is_file()
 
 
-def test_stub_routes(client):
+def test_overview_shows_execute_cash(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.text
+    assert "Execute (Mac)" in body
+    assert "Tradable cash" in body or "tradable" in body.lower()
+    assert "11500" in body or "12,500" in body or "12500" in body
+
+
+def test_manage_oms_firm_routes(client):
+    for path, needle in (
+        ("/manage", "Manage"),
+        ("/oms", "Ready orders"),
+        ("/firm", "Firm sleeve"),
+    ):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert needle in r.text
+
+
+def test_oms_shows_export_health_and_dual_system(client):
+    r = client.get("/oms")
+    assert r.status_code == 200
+    body = r.text
+    assert "Export health" in body
+    assert "auto_trade_book.json" in body
+    # Fixture assemble uses win32 → windows-research caveat
+    assert "windows-research" in body or "Mac-local" in body or "research host" in body
+
+
+def test_session_page_lists_fixture_files(client):
+    r = client.get("/session")
+    assert r.status_code == 200
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Session files" in body
+    assert "daily_plan_context.json" in body
+    assert "auto_trade_book.json" in body
+    api = client.get("/api/v1/session")
+    assert api.status_code == 200
+    data = api.json()
+    assert data["exists"] is True
+    rels = {f["rel"] for f in data["files"]}
+    assert any("daily_plan_context.json" in x for x in rels)
+
+
+def test_firm_page_shows_aapl(client):
+    r = client.get("/firm")
+    assert r.status_code == 200
+    assert "AAPL" in r.text
+    assert "BUY" in r.text
+
+
+def test_rejections_page_shows_plan_rows(client):
     r = client.get("/rejections")
     assert r.status_code == 200
-    assert "later PR" in r.text or "PR3" in r.text
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Rejections" in body
+    assert "QQQ" in body
+    assert "IWM" in body
+    assert "ADR" in body
+    assert "RVOL" in body or "volume" in body.lower()
+    assert "plan" in body
+
+
+def test_rejections_filter_symbol(client):
+    r = client.get("/rejections", params={"symbol": "IWM"})
+    assert r.status_code == 200
+    body = r.text
+    assert "IWM" in body
+    assert "52w" in body or "strength" in body.lower()
+    # QQQ-only ADR row should be filtered out of the table body sense —
+    # page still has nav, so check API filter instead for precision
+    api = client.get("/api/v1/rejections", params={"symbol": "IWM"})
+    assert api.status_code == 200
+    rows = api.json()["rejections"]
+    assert rows
+    assert all(row["symbol"] == "IWM" for row in rows)
+
+
+def test_rejections_filter_text(client):
+    api = client.get("/api/v1/rejections", params={"q": "rvol"})
+    assert api.status_code == 200
+    rows = api.json()["rejections"]
+    assert rows
+    assert all("rvol" in (row["reason"] or "").lower() or "volume" in (row["reason"] or "").lower() for row in rows)
+
+
+def test_discovery_page_process_cards(client):
+    r = client.get("/discovery")
+    assert r.status_code == 200
+    body = r.text
+    assert "stubbed" not in body.lower()
+    assert "Discovery" in body
+    assert "Process trade cards" in body
+    assert "QQQ" in body
+    assert "IWM" in body
+    assert "ADR" in body or "process card" in body.lower()
+
+
+def test_discovery_api_and_filter(client):
+    api = client.get("/api/v1/discovery")
+    assert api.status_code == 200
+    data = api.json()
+    assert len(data["process_cards"]) >= 2
+    filtered = client.get("/api/v1/discovery", params={"symbol": "QQQ"}).json()
+    assert filtered["process_cards"]
+    assert all(
+        (c.get("symbol") or "").upper() == "QQQ" for c in filtered["process_cards"]
+    )
+
+
+def test_stub_routes_remaining(client):
+    r = client.get("/settings")
+    assert r.status_code == 200
+    assert "stubbed" in r.text.lower()

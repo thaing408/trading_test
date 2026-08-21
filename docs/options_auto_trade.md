@@ -63,6 +63,8 @@ python scripts/macos/consume_auto_trade_book.py --live --anytime
 - **Fail-closed default:** no broker calls unless `TRADING_AGENT_AUTO_TRADE_LIVE=1` or `--live`
 - **LIVE place RTH gate:** consumer may prep/`ready_orders` from **09:25 ET**, but **`place_order` is blocked until ≥ 09:30 ET** (`before_rth_open`). Skips are **not** marked processed — retries after the open. Escape hatch only: `TRADING_AGENT_AUTO_TRADE_ALLOW_PREOPEN_LIVE=1` (tests/ops).
 - **Affordability gate (opens + closes):** before LIVE place, OMS checks Schwab cash/BP (`oms/affordability.py`). Debits need premium dollars; credit/SELL_TO_OPEN needs margin cushion + defined risk; BUY_TO_CLOSE exits need buyback cash. Failures audit as `order_affordability_block` / `close_affordability_block` (no Discord “filled” spam).
+- **Fill-confirmed Discord ENTER:** green 🟢 ENTRY posts only when broker status is **filled** (or a later position reconcile confirms the lot). Mere place-accept posts ⏳ WORKING (no @mention). Disable WORKING with `TRADING_AGENT_JOURNAL_WORKING_ALERTS=0`.
+- **Discord skip alerts:** RTH / cash / max_open_risk / affordability / Schwab OAuth skips ping #trading-journal once per symbol per day. Disable with `TRADING_AGENT_JOURNAL_SKIP_ALERTS=0`. IBKR paper still suppresses Schwab-journal notify (`not is_ibkr`).
 - Writes `~/.trading_agent/ready_orders/ready_orders_YYYY-MM-DD.json` for TOS hand entry when MCP cannot place multi-leg packages
 - Discovers **local** books only: `~/.trading_agent/sync/`, session dir, `~/.grok/state/` (not work paths)
 

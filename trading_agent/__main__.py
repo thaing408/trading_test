@@ -794,6 +794,26 @@ def _run_research(args: argparse.Namespace) -> int:
             with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(text)
         return 0
+    if cmd == "scalp-halt":
+        from trading_agent.scalp.pulse_halt import main as pulse_halt_main
+
+        extra: list[str] = []
+        if getattr(args, "record", False):
+            extra.append("--record")
+        if getattr(args, "symbol", None):
+            extra.extend(["--symbol", str(args.symbol)])
+        if getattr(args, "side", None):
+            extra.extend(["--side", str(args.side)])
+        if getattr(args, "pnl", None) is not None and getattr(args, "record", False):
+            extra.extend(["--pnl", str(args.pnl)])
+        if getattr(args, "setup", None):
+            extra.extend(["--setup", str(args.setup)])
+        extra.append("--card")
+        if getattr(args, "discord", False):
+            extra.append("--post")
+        if getattr(args, "ledger", None):
+            extra.extend(["--ledger", str(args.ledger)])
+        return pulse_halt_main(extra)
     if cmd == "scalp-universe":
         from trading_agent.scalp.universe_card import (
             format_scalp_universe_card,
@@ -813,14 +833,36 @@ def _run_research(args: argparse.Namespace) -> int:
         return 0
     if cmd == "methods-backtest":
         from trading_agent.sleeves.momentum import format_momentum_report, run_momentum_backtest
-        from trading_agent.sleeves.orb_vwap import format_orb_report, run_orb_vwap_backtest
+        from trading_agent.sleeves.orb_vwap import (
+            compare_orb_windows,
+            format_orb_compare_report,
+            format_orb_report,
+            run_orb_vwap_backtest,
+        )
         from trading_agent.sleeves.regime_premium import format_regime_report, run_regime_premium_ablation
 
         which = (getattr(args, "method", None) or "all").lower()
         parts = []
         if which in ("all", "orb", "orb-vwap"):
-            orb = run_orb_vwap_backtest(period=getattr(args, "period", "60d") or "60d")
-            parts.append(format_orb_report(orb))
+            raw_mins = str(getattr(args, "or_minutes", "30") or "30")
+            mins_list = []
+            for tok in raw_mins.replace(";", ",").split(","):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                try:
+                    mins_list.append(int(tok))
+                except ValueError:
+                    continue
+            if not mins_list:
+                mins_list = [30]
+            period = getattr(args, "period", "60d") or "60d"
+            if len(mins_list) == 1:
+                orb = run_orb_vwap_backtest(period=period, or_minutes=mins_list[0])
+                parts.append(format_orb_report(orb))
+            else:
+                cmp = compare_orb_windows(period=period, or_minutes_list=mins_list)
+                parts.append(format_orb_compare_report(cmp))
         if which in ("all", "momentum", "mom"):
             mom = run_momentum_backtest(period=getattr(args, "mom_period", "1y") or "1y")
             parts.append(format_momentum_report(mom))
@@ -833,11 +875,64 @@ def _run_research(args: argparse.Namespace) -> int:
             with open(args.output, "w", encoding="utf-8") as handle:
                 handle.write(text)
         return 0
+    if cmd in ("tv-ta", "tv_ta", "tradingview-ta"):
+        from trading_agent.research.tv_ta import (
+            bollinger_extreme_scan,
+            enrich_symbols,
+            format_rating_scan_report,
+            format_tv_ta_report,
+            post_tv_ta_discord,
+            rating_scan,
+        )
+
+        mode = (getattr(args, "tv_mode", None) or "enrich").lower()
+        force = bool(getattr(args, "force", False))
+        raw = str(getattr(args, "symbols", "") or "QQQ,SPY,IWM,AAPL")
+        symbols = [s.strip().upper() for s in raw.replace(";", ",").split(",") if s.strip()]
+        interval = str(getattr(args, "interval", "1d") or "1d")
+        title = "TradingView TA · enrich"
+        if mode in ("rating", "screener", "scan"):
+            pack = rating_scan(
+                min_recommend=float(getattr(args, "min_recommend", 0.3) or 0.3),
+                limit=int(getattr(args, "limit", 25) or 25),
+                force=force,
+            )
+            text = format_rating_scan_report(pack)
+            title = "TradingView TA · rating screener"
+        elif mode in ("bb", "bollinger", "extreme"):
+            pack = bollinger_extreme_scan(
+                symbols,
+                interval=interval,
+                min_abs_sigma=float(getattr(args, "min_sigma", 2.0) or 2.0),
+                force=force,
+            )
+            text = format_tv_ta_report(pack)
+            title = "TradingView TA · BB extreme"
+        else:
+            pack = enrich_symbols(symbols, interval=interval, force=force)
+            text = format_tv_ta_report(pack)
+            title = "TradingView TA · enrich"
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        # Auto-post to dedicated TV research channel unless --no-discord
+        if not bool(getattr(args, "no_discord", False)):
+            posted = post_tv_ta_discord(text, title=title)
+            if posted.get("ok"):
+                print(
+                    f"[discord] posted {posted.get('chunks')} chunk(s) → "
+                    f"channel {posted.get('channel_id')}",
+                    flush=True,
+                )
+            else:
+                print(f"[discord] skip/fail: {posted}", flush=True)
+        return 0
     print(
         "research commands: hypotheses | promotion | replay | walk-forward | "
-        "features | manage-summary | scalp-backtest | scalp-universe | methods-backtest | "
+        "features | manage-summary | scalp-backtest | scalp-halt | scalp-universe | methods-backtest | "
         "soulz | soulz-backtest | multi-method | multi-method-backtest | "
-        "swing-scan | venom-backtest",
+        "swing-scan | venom-backtest | tv-ta",
         file=sys.stderr,
     )
     return 2
@@ -1552,6 +1647,21 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="YYYY-MM-DD (default: today UTC)",
     )
+    scalp_halt = research_sub.add_parser(
+        "scalp-halt",
+        help="Named Scalp Pulse halt card (which tickers lost; sleeve 2-loss halt)",
+    )
+    scalp_halt.add_argument("--record", action="store_true", help="Append a closed scalp")
+    scalp_halt.add_argument("--symbol", default="")
+    scalp_halt.add_argument("--side", default="", help="CALL or PUT")
+    scalp_halt.add_argument("--pnl", type=float, default=0.0)
+    scalp_halt.add_argument("--setup", default="")
+    scalp_halt.add_argument("--ledger", default="")
+    scalp_halt.add_argument(
+        "--discord",
+        action="store_true",
+        help="Post halt card once if sleeve loss cap is hit",
+    )
     scalp_uni = research_sub.add_parser(
         "scalp-universe",
         help="Show desk+gainer/loser link to QQQ scalp rules (optional Discord)",
@@ -1606,8 +1716,46 @@ def main(argv: list[str] | None = None) -> int:
         choices=["all", "orb", "orb-vwap", "momentum", "mom", "regime", "premium"],
     )
     methods_bt.add_argument("--period", default="60d", help="ORB intraday period")
+    methods_bt.add_argument(
+        "--or-minutes",
+        default="30",
+        help="ORB window dial in minutes (research only). "
+        "Single value e.g. 30, or compare e.g. 15,30",
+    )
     methods_bt.add_argument("--mom-period", default="1y", help="Momentum/regime daily period")
     methods_bt.add_argument("--output", "-o", metavar="FILE")
+
+    tv_ta_p = research_sub.add_parser(
+        "tv-ta",
+        help="TradingView TA enrich + rating/BB scan (research only; flag TRADING_AGENT_TV_TA)",
+    )
+    tv_ta_p.add_argument(
+        "--mode",
+        dest="tv_mode",
+        default="enrich",
+        choices=["enrich", "rating", "screener", "scan", "bb", "bollinger", "extreme"],
+        help="enrich=per-symbol consensus+BB; rating=live Recommend.All screener; bb=extreme σ filter",
+    )
+    tv_ta_p.add_argument(
+        "--symbols",
+        default="QQQ,SPY,IWM,AAPL",
+        help="Comma symbols for enrich/bb modes",
+    )
+    tv_ta_p.add_argument("--interval", default="1d", help="TV interval (1d, 1h, 15m, …)")
+    tv_ta_p.add_argument("--min-recommend", type=float, default=0.3)
+    tv_ta_p.add_argument("--min-sigma", type=float, default=2.0)
+    tv_ta_p.add_argument("--limit", type=int, default=25)
+    tv_ta_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even when TRADING_AGENT_TV_TA is off (CLI smoke)",
+    )
+    tv_ta_p.add_argument(
+        "--no-discord",
+        action="store_true",
+        help="Do not post report to DISCORD_TV_TA_CHANNEL_ID",
+    )
+    tv_ta_p.add_argument("--output", "-o", metavar="FILE")
 
     soulz_p = research_sub.add_parser(
         "soulz",

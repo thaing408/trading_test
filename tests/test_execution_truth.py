@@ -5,7 +5,11 @@ from __future__ import annotations
 from trading_agent.export.mac_execute import ReadyOrder
 from trading_agent.oms.broker import close_instruction_for_open_leg, order_submitted_ok
 from trading_agent.oms.exits import flatten_all_lots, submit_close
-from trading_agent.oms.lifecycle import extract_legs_from_broker_response, register_submitted_lot
+from trading_agent.oms.lifecycle import (
+    broker_status_is_filled,
+    extract_legs_from_broker_response,
+    register_submitted_lot,
+)
 from trading_agent.oms.multileg import (
     build_multileg_package,
     try_sequential_submit,
@@ -116,16 +120,25 @@ def test_submit_close_multileg(tmp_path):
             ]
         },
     )
-    calls = []
+    place_calls = []
 
     def mcp(tool, payload):
-        calls.append(payload)
+        if tool == "get_account":
+            return {
+                "balances": {
+                    "cash_available": 50_000,
+                    "buying_power": 50_000,
+                }
+            }
+        if tool == "get_quotes":
+            return {"quotes": {}}
+        place_calls.append(payload)
         return {"status": "submitted", "dry_run": False}
 
     resp = submit_close(lot, live=True, call_mcp=mcp, reason="test")
     assert resp.get("mode") == "multileg_close"
-    assert len(calls) == 2
-    instrs = {c["instruction"] for c in calls}
+    assert len(place_calls) == 2
+    instrs = {c["instruction"] for c in place_calls}
     assert "SELL_TO_CLOSE" in instrs
     assert "BUY_TO_CLOSE" in instrs
 
@@ -154,6 +167,16 @@ def test_register_submitted_lot_legs(tmp_path):
     assert out.status in (LotStatus.OPEN.value, LotStatus.PROTECTED.value)
     assert out.occ_symbol.startswith("QQQ")
     assert store.get_lot("y") is not None
+    # Place-accept is not a fill — Discord ENTER waits for reconcile
+    assert (out.broker_meta or {}).get("journal_entry_pending") is True
+
+
+def test_broker_status_is_filled_vs_submitted():
+    assert not broker_status_is_filled({"status": "submitted"})
+    assert not broker_status_is_filled({"status": "working"})
+    assert broker_status_is_filled({"status": "filled"})
+    assert broker_status_is_filled({"status": "submitted", "fill_price": 1.25})
+    assert broker_status_is_filled({"status": "WORKING", "filledQuantity": 1})
 
 
 def test_extract_legs_from_response():

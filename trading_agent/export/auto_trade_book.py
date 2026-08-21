@@ -110,6 +110,9 @@ def _entry_from_opp(opp: TradeOpportunity, *, expires_at: str) -> Dict[str, Any]
         "measured_target": float(getattr(opp, "measured_target", 0) or 0),
         "pattern_height": float(getattr(opp, "pattern_height", 0) or 0),
         "structure_notes": str(getattr(opp, "structure_notes", "") or "")[:240],
+        "book_points": float(getattr(opp, "book_points", 0) or 0),
+        "compete_score": float(getattr(opp, "compete_score", 0) or 0),
+        "book_gates_mode": str(getattr(opp, "book_gates_mode", "") or "hard"),
     }
 
 
@@ -191,6 +194,20 @@ def build_auto_trade_book(
             continue
         row["method_tags"] = list(getattr(opp, "method_tags", None) or [])
         row["method_notes"] = str(getattr(opp, "method_notes", "") or "")[:240]
+        # ADR extension tags (optional size cut when TRADING_AGENT_ADR_EXTENSION=1)
+        try:
+            from trading_agent.analysis.extension import try_enrich_entry_from_market
+
+            row = try_enrich_entry_from_market(row)
+        except Exception:  # noqa: BLE001
+            pass
+        # EP vs breakout family (optional EP size cut when TRADING_AGENT_EP_SLOW=1)
+        try:
+            from trading_agent.analysis.setup_family import apply_setup_family_to_entry
+
+            row = apply_setup_family_to_entry(row)
+        except Exception:  # noqa: BLE001
+            pass
         # Researcher gap screener handoff (Raschke 4-day unfilled → continuation)
         try:
             from trading_agent.export.gap_book import apply_gap_boost_to_opportunity_fields, load_gap_book

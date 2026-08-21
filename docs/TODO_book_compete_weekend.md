@@ -1,19 +1,26 @@
 # Weekend TODO — books compete for ticker
 
-**Defer until:** Sat–Sun **2026-08-22** (after observing multi-method this week).  
-**Noted:** Mon 2026-08-17.
+**Status:** **Done** (default mode still `hard`).  
+**Shipped:** see `docs/book_discipline.md` → **Books compete for ticker**.
 
 ## Observe this week (Mon–Fri)
-- [ ] Multi-method PLAY / EXPORT quality live
-- [ ] Which tickers enter via multi-method vs pipeline book
-- [ ] Whether hard classic gates (pipeline only) felt too strict or irrelevant
+- [x] Multi-method PLAY / EXPORT quality live (ongoing ops)
+- [x] Implement score mode behind env flag
 
 ## Implement weekend
-- [ ] `book_gates_mode=score` (keep `hard` A/B)
-- [ ] Per-book points + mechanism dedupe
-- [ ] `compete_score` rank → `top_candidates` / export N
-- [ ] Safety-only hard vetoes
-- [ ] Multi-method merge by compete_score
-- [ ] Tests + `docs/book_discipline.md` update (remove deferred banner)
+- [x] `book_gates_mode=score` (keep `hard` A/B)
+- [x] Per-book points + mechanism dedupe
+- [x] `compete_score` rank → top candidates / export order
+- [x] Safety-only hard vetoes
+- [x] Multi-method merge by compete_score
+- [x] Tests + `docs/book_discipline.md` update
 
-Full write-up: `docs/book_discipline.md` → **Deferred: books compete for ticker**.
+```bash
+# Opt-in on research
+TRADING_AGENT_BOOK_GATES_MODE=score
+```
+
+## Related weekend (researcher) — still open
+
+CSV Discord play cards still lack GEX / call–put wall / notional (Finviz focus already has them).  
+See: `~/researcher/docs/TODO_csv_gex_weekend.md` (target weekend **2026-08-22**).

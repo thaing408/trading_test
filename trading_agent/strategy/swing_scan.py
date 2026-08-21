@@ -65,6 +65,9 @@ class SwingScanConfig:
     max_symbols: int = 40
     # Soft: prefer names not extended > max_ext_pct above ema_fast for pullback style
     max_extension_pct: float = 12.0
+    # Cap pattern/structure stops that sit on ancient swing lows/highs (ZS/CRWD-style).
+    # If |entry−stop| > max_stop_atr_mult × ATR, pull stop to entry ± N×ATR.
+    max_stop_atr_mult: float = 1.5
 
 
 @dataclass
@@ -125,6 +128,43 @@ def _ema(series: Sequence[float], span: int) -> List[float]:
     for x in series[1:]:
         out.append(alpha * float(x) + (1 - alpha) * out[-1])
     return out
+
+
+def clamp_stop_to_atr(
+    entry: float,
+    stop: float,
+    side: str,
+    atr_abs: float,
+    *,
+    max_atr_mult: float = 1.5,
+) -> Tuple[float, bool]:
+    """Tighten a stop that is wider than ``max_atr_mult`` × ATR from entry.
+
+    CALL → stop below entry; PUT → stop above entry.
+    Returns ``(new_stop, clamped)``. No-op if inputs invalid or already tight.
+    Default **1.5× ATR** (tighter day/swing risk; was often 20–40% on pattern lows).
+    """
+    if entry <= 0 or stop <= 0 or atr_abs <= 0 or max_atr_mult <= 0:
+        return stop, False
+    side_u = (side or "").upper()
+    max_dist = float(max_atr_mult) * float(atr_abs)
+    if max_dist <= 0:
+        return stop, False
+    if side_u in ("CALL", "LONG", "BULL", "BULLISH"):
+        if stop >= entry:
+            return entry - max_dist, True
+        dist = entry - stop
+        if dist > max_dist:
+            return entry - max_dist, True
+        return stop, False
+    if side_u in ("PUT", "SHORT", "BEAR", "BEARISH"):
+        if stop <= entry:
+            return entry + max_dist, True
+        dist = stop - entry
+        if dist > max_dist:
+            return entry + max_dist, True
+        return stop, False
+    return stop, False
 
 
 def _atr_pct(highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], n: int = 14) -> float:
@@ -357,6 +397,31 @@ def score_swing_from_ohlc(
 
     if tags_p:
         tags.extend([t for t in tags_p if t not in tags])
+
+    # Cap absurd pattern/structure stops (e.g. double-bottom low months ago).
+    if side in ("CALL", "PUT") and entry > 0 and stop > 0 and atr_abs > 0:
+        new_stop, clamped = clamp_stop_to_atr(
+            entry,
+            stop,
+            side,
+            atr_abs,
+            max_atr_mult=float(cfg.max_stop_atr_mult or 1.5),
+        )
+        if clamped:
+            old = stop
+            stop = new_stop
+            tags.append(f"stop_atr_cap={cfg.max_stop_atr_mult:g}x")
+            reasons.append(
+                f"stop capped {old:.2f}→{stop:.2f} ({cfg.max_stop_atr_mult:g}×ATR)"
+            )
+            # Keep measured target if still beyond entry; else rebuild ~2R from new risk
+            risk = abs(entry - stop)
+            if side == "CALL":
+                if target <= entry:
+                    target = entry + max(risk * 2.0, atr_abs * 2.5)
+            else:
+                if target >= entry:
+                    target = entry - max(risk * 2.0, atr_abs * 2.5)
 
     score = float(min(100.0, max(0.0, score)))
     play = (
@@ -698,7 +763,15 @@ def write_swing_process_cards(
             f"swing_daily {c.side} @ {c.entry:.2f} ({c.style}"
             f"{' ' + c.pattern_name if c.pattern_name else ''})"
         )
-        stop = f"{c.stop:.2f} daily structure invalidation" if c.stop else "daily swing low/high"
+        if c.stop:
+            capped = any(str(t).startswith("stop_atr_cap=") for t in (c.tags or []))
+            stop = (
+                f"{c.stop:.2f} ATR-capped stop ({c.atr_pct:.1f}% ATR)"
+                if capped
+                else f"{c.stop:.2f} daily structure invalidation"
+            )
+        else:
+            stop = "daily swing low/high"
         exit_plan = (
             f"target {c.target:.2f} (measured/2R); trail after +1R; multi-day hold"
             if c.target

@@ -89,6 +89,12 @@ class DeskSnapshot:
     platform: str = ""
     parse_failures: int = 0
     panel_errors: dict[str, str] = field(default_factory=dict)
+    # Execute-side (Mac) + firm sleeve panels
+    account_cash: dict[str, Any] = field(default_factory=dict)
+    ready_orders: dict[str, Any] = field(default_factory=dict)
+    consumer_health: dict[str, Any] = field(default_factory=dict)
+    oms_summary: dict[str, Any] = field(default_factory=dict)
+    firm: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable dict (datetimes → iso)."""

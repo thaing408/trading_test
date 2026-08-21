@@ -1,12 +1,33 @@
 # Auto-trade next steps (Mac `trading_agent`)
 
-**Last updated:** 2026-08-17  
+**Last updated:** 2026-08-20
+
+## WR desk (default ON) — fewer ENTERs, higher bar
+
+`TRADING_AGENT_WR_DESK=1` (default). LIVE new entries require:
+
+| Gate | Rule |
+|------|------|
+| Bias | **`trade` only** (`light` / `cash` → no ENTER) |
+| Regime | Not chop/range/sideways |
+| Tape | SPY 10d MA ≥ 20d MA **and** VIX ≤ 20 (disable tape: `TRADING_AGENT_WR_TAPE=0`) |
+| Setup | Pullback family only: `fvg`, `soulz_pa` (`TRADING_AGENT_WR_METHODS`) |
+| Side | No PUT / bear_breakdown |
+| DTE | ≥ 3 (index 0DTE off; `TRADING_AGENT_WR_ALLOW_INDEX_0DTE=1` to restore on push tape) |
+| Spread | Skip if `bid_ask_spread_pct` &gt; 8 |
+| Payoff | Target **2R** vs stop |
+| Time stop | Flatten debit after **60m** if still open |
+
+Disable all of the above: `TRADING_AGENT_WR_DESK=0`.
+
+---  
 **Audience:** Mac production desk ops + continue from multi-day manage hardening.
 
 Related:
 
 - [`options_auto_trade.md`](options_auto_trade.md) — LIVE path, env flags, multi-method auto-export  
 - [`DESK_UI_AUTO_TRADE.md`](DESK_UI_AUTO_TRADE.md) — operator UI  
+- [`PACKAGING_ROADMAP.md`](PACKAGING_ROADMAP.md) — installable Operator Desk (Mac/Windows); feature constraints  
 - [`quant_institution_roadmap.md`](quant_institution_roadmap.md) — long-horizon G0–G7  
 
 Paper stack on me-ai is **`trading_test`** (separate repo); this file is **Mac production desk**.

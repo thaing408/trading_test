@@ -34,6 +34,7 @@ class BacktestConfig:
     enforce_discipline_rails: bool = True
     enforce_smb_book_gates: bool = True
     enforce_ta_book_gates: bool = True
+    enforce_classic_ta_book_gates: bool = True
     # Simulate PST discovery refreshes: re-research N times per bar-day (1 = morning only)
     discovery_passes: int = 1
     # Cost model (G3.2) — applied to simulated trade P/L

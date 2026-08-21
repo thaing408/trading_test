@@ -245,6 +245,23 @@ def close_lot(
             trips = store.record_round_trip(lot.symbol)
         except Exception:
             trips = 0
+        try:
+            tag = f"{lot.strategy} {lot.setup_id} {lot.source_book}".lower()
+            hook_all = os.getenv("TRADING_AGENT_PULSE_OMS_HOOK", "0").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if hook_all or "scalp" in tag:
+                from trading_agent.scalp.pulse_halt import (
+                    maybe_post_session_halt,
+                    record_lot_close,
+                )
+
+                led = record_lot_close(lot, pnl=pnl)
+                maybe_post_session_halt(led, post=True)
+        except Exception:
+            pass
         if journal:
             _journal_close(lot, pnl=pnl)
         append_audit(

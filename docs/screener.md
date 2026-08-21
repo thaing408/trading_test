@@ -112,6 +112,32 @@ TRADING_AGENT_SCAN_MAX_SYMBOLS=40 python -m trading_agent.export.market_scan --j
 
 Level proximity spam on pulse is separate (`SCALP_LEVEL_ALERTS=breaks|off`).
 
+### Pulse session halt card (named tickers)
+
+Two **losing** Pulse scalps halt the **whole sleeve** for the day (not the desk
+OMS “2 round-trips per ticker” gate). The old Discord line `trips=2 W=0 L=2`
+did not name symbols. After pull on Mac, Pulse should record each close:
+
+```bash
+python -m trading_agent research scalp-halt --record --symbol NVDA --side PUT --pnl -30
+python -m trading_agent research scalp-halt --card
+```
+
+Or from `scalp-market-pulse.py`:
+
+```python
+from trading_agent.scalp.pulse_halt import (
+    maybe_post_session_halt,
+    record_pulse_close,
+    sleeve_halted,
+)
+led = record_pulse_close(symbol, side=side, pnl=pnl)
+if sleeve_halted(led):
+    maybe_post_session_halt(led)
+```
+
+Card includes `LOSERS: NVDA PUT  AMD CALL` plus per-ticker trip/W/L lines.
+
 ## Intraday discovery refresh (Pacific Time)
 
 Morning research/CIO still builds the day plan once. During RTH the desk also runs

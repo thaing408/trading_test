@@ -140,6 +140,36 @@ def format_options_enter_cards(plan: DailyTradingPlan, *, limit: int = 5) -> lis
             f"  entry ${o.entry_price:.2f} stop ${o.stop_loss:.2f} target ${o.profit_target:.2f} "
             f"max_risk ${o.maximum_risk:.2f} | conf {o.confidence_score:.0f}"
         )
+        ext = getattr(o, "extension_note", None) or getattr(o, "adr_used", None)
+        if ext is not None and ext != "":
+            if isinstance(ext, (int, float)):
+                bucket = getattr(o, "adr_bucket", "") or ""
+                lines.append(f"  ADR used {float(ext):.2f} ({bucket or 'n/a'})")
+            else:
+                lines.append(f"  {ext}")
+    return lines
+
+
+def format_book_enter_extension_lines(entries: list, *, limit: int = 8) -> list[str]:
+    """Discord lines for auto_trade_book rows with ADR / setup_family tags."""
+    from trading_agent.analysis.extension import discord_extension_line
+    from trading_agent.analysis.setup_family import discord_family_line
+
+    lines: list[str] = []
+    for e in (entries or [])[:limit]:
+        if not isinstance(e, dict):
+            continue
+        bits = []
+        note = discord_extension_line(e)
+        if note:
+            bits.append(note)
+        fam = discord_family_line(e)
+        if fam:
+            bits.append(fam)
+        if not bits:
+            continue
+        sym = str(e.get("symbol") or "?").upper()
+        lines.append(f"- **{sym}** · " + " · ".join(bits))
     return lines
 
 

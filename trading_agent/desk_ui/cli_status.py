@@ -172,18 +172,88 @@ def format_desk_status(snap: DeskSnapshot) -> str:
         )
     lines.append("")
 
+    # Execute (Mac) — cash / consumer / ready orders
+    ac = snap.account_cash or {}
+    ch = snap.consumer_health or {}
+    ro = snap.ready_orders or {}
+    counts = ro.get("counts") or {}
+    tradable = ac.get("tradable_after_reserve")
+    tradable_s = f"${tradable:.0f}" if isinstance(tradable, (int, float)) else "—"
+    cash_av = ac.get("cash_available")
+    cash_av_s = f"${cash_av:.2f}" if isinstance(cash_av, (int, float)) else "—"
+    lines.append("## Execute (Mac)")
+    lines.append(
+        f"  cash available={cash_av_s}  tradable_after_reserve={tradable_s}  "
+        f"source={ac.get('source') or '—'}"
+    )
+    if ac.get("error"):
+        lines.append(f"  cash_error: {ac.get('error')}")
+    alive = "UP" if ch.get("alive") else "DOWN"
+    pids = ", ".join(str(p) for p in (ch.get("pids") or [])) or "—"
+    lines.append(f"  consumer={alive}  pids={pids}")
+    if ch.get("last_log_line"):
+        lines.append(f"  last_log: {str(ch['last_log_line'])[:120]}")
+    lines.append(
+        f"  ready_orders submitted={counts.get('submitted', 0)}  "
+        f"skipped={counts.get('skipped', 0)}  failed={counts.get('failed', 0)}  "
+        f"exists={ro.get('exists')}"
+    )
+    for o in (ro.get("orders") or [])[:8]:
+        if isinstance(o, dict):
+            skip = o.get("skip_reason") or ""
+            lines.append(
+                f"    {o.get('symbol')} {o.get('status')} "
+                f"exp={o.get('expiration') or '—'} {skip}".rstrip()
+            )
+    lines.append("")
+
     # OMS
     ks = snap.kill_switch
+    oms_sum = snap.oms_summary or {}
+    open_n = oms_sum.get("open_lots", len(snap.oms_lots))
+    open_risk = oms_sum.get("open_risk", 0)
+    day_pnl = oms_sum.get("day_realized_pnl", 0)
     lines.append(
-        f"## OMS  open_lots={len(snap.oms_lots)}  "
+        f"## OMS  open_lots={open_n}  open_risk=${float(open_risk or 0):.0f}  "
+        f"day_pnl=${float(day_pnl or 0):.0f}  "
         f"kill_active={ks.get('active')}  path={ks.get('path')}"
     )
     for lot in snap.oms_lots[:10]:
+        trail = lot.get("trail_stop")
+        trail_s = f" trail={trail}" if trail else ""
         lines.append(
             f"  lot {lot.get('lot_id')} {lot.get('symbol')} "
-            f"status={lot.get('status')}"
+            f"status={lot.get('status')}{trail_s}"
         )
     lines.append("")
+
+    # Firm sleeve
+    firm = snap.firm or {}
+    if firm.get("enabled_artifacts"):
+        ev = firm.get("eval") or {}
+        lines.append(
+            f"## Firm  symbols={len(firm.get('symbols') or [])}  "
+            f"path={firm.get('path')}"
+        )
+        if ev:
+            lines.append(
+                f"  eval buy={ev.get('n_buy', 0)} hold={ev.get('n_hold', 0)} "
+                f"veto={ev.get('n_veto', 0)} agree={ev.get('agreement_rate', '—')}"
+            )
+        for row in (firm.get("cards") or [])[:10]:
+            if not isinstance(row, dict):
+                continue
+            t = row.get("trader") or {}
+            m = row.get("manager") or {}
+            action = t.get("action") or (row.get("card") or {}).get("trader_action") or "—"
+            decision = m.get("decision") or (row.get("card") or {}).get("manager_decision") or "—"
+            lines.append(f"  {row.get('symbol')} trader={action} manager={decision}")
+        lines.append("")
+    else:
+        lines.append(
+            f"## Firm  (no artifacts)  path={firm.get('path') or '—'}"
+        )
+        lines.append("")
 
     if snap.process_cards:
         lines.append(f"## Process cards  n={len(snap.process_cards)}")

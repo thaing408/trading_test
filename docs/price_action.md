@@ -11,6 +11,9 @@ Living notes on **price action (PA)** for the desk, with **code** under `trading
 - Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `range_fade`, `sweep`, `chart_patterns`, `swing_daily`)
 - Systematic process: `docs/systematic_process.md`
 - ICT Venom Model notes (NY 08:00–09:30 box + open sweep): `docs/venom_model_ict.md`
+- Qullamaggie entry dials (Muninn, 900 longs): `docs/qullamaggie_entry_dials.md`
+- Weekend implement plan (ADR used, OR dial, EP vs BO): `docs/qullamaggie_weekend_plan.md`
+- Five entries (breakout / pullback / shakeout / pivot / ORB) from @hb_stocks: `docs/five_entries_hb_stocks.md`
 
 ---
 

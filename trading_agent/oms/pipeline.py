@@ -11,6 +11,7 @@ from trading_agent.oms.audit import append_audit
 from trading_agent.oms.exits import manage_enabled, manage_open_lots
 from trading_agent.oms.kill_switch import is_killed, kill_switch_status
 from trading_agent.oms.lifecycle import (
+    broker_status_is_filled,
     extract_legs_from_broker_response,
     register_submitted_lot,
 )
@@ -31,6 +32,23 @@ from trading_agent.oms.pretrade import (
     pretrade_snapshot,
 )
 from trading_agent.oms.state import LotStatus, OpenLot, OmsStore
+
+
+def _maybe_notify_skip(order: mx.ReadyOrder, *, live: bool) -> None:
+    """Discord ops alert for RTH/cash/risk skips (fail-open, day-deduped)."""
+    if not live:
+        return
+    try:
+        if str(mx.broker_name() or "").lower() == "ibkr":
+            return
+        from trading_agent.ops.journal_notify import notify_skip_activity
+
+        notify_skip_activity(order, reason=str(order.skip_reason or ""), live=True)
+    except Exception as exc:  # noqa: BLE001
+        append_audit(
+            "journal_skip_notify_error",
+            payload={"order_id": order.order_id, "error": str(exc)},
+        )
 
 
 def _lot_from_order(order: mx.ReadyOrder, place_path: str) -> OpenLot:
@@ -184,6 +202,7 @@ def run_oms_consume(
     orders = mx.build_ready_orders(books, processed=processed)
 
     submitted_ids: List[str] = []
+    processed_now: List[str] = []  # submitted + terminal fails/skips → no poll retry
     submit_count = 0
     # If LIVE but Schwab OAuth dead, force dry-run place path (still build ready_orders)
     effective_live = bool(live) and not schwab_block
@@ -289,6 +308,7 @@ def run_oms_consume(
                     "process_gate": process_detail or None,
                 },
             )
+            _maybe_notify_skip(order, live=effective_live)
             continue
 
         if schwab_block and live:
@@ -304,6 +324,7 @@ def run_oms_consume(
                 "order_schwab_health_block",
                 payload={"order_id": order.order_id, "symbol": order.symbol, "reason": schwab_block},
             )
+            _maybe_notify_skip(order, live=True)
             continue
 
         # Hard gate: no LIVE MARKET place before RTH (09:30 ET). Prep/ready_orders OK.
@@ -332,6 +353,7 @@ def run_oms_consume(
                     "live": True,
                 },
             )
+            _maybe_notify_skip(order, live=True)
             continue
 
         # Explicit affordability (debit premium / credit margin) before any LIVE place.
@@ -357,6 +379,8 @@ def run_oms_consume(
                     "mode": "affordability",
                     "affordability": afford.as_dict(),
                     "place_path": place_path,
+                    "cash_required": afford.need,
+                    "remaining_cash": afford.have,
                     "message": (
                         "LIVE place blocked — account balance/BP cannot fund this order"
                     ),
@@ -374,6 +398,7 @@ def run_oms_consume(
                         "place_path": place_path,
                     },
                 )
+                _maybe_notify_skip(order, live=True)
                 continue
 
         # Multi-leg / credit: package always; LIVE sequential when MULTILEG_LIVE allowed
@@ -479,16 +504,28 @@ def run_oms_consume(
                     cash_info["remaining_after_submits"] = remaining_cash
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                    processed_now.append(order.order_id)
                 if effective_live and not is_ibkr:
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
 
+                        filled_now = broker_status_is_filled(order.broker_response or {})
                         notify_order_activity(
                             order,
                             live=True,
                             fill_price=prem,
                             spot_price=spot,
+                            fill_confirmed=filled_now,
                         )
+                        # If green ENTER posted now, clear pending on the lot
+                        if filled_now:
+                            lot_now = oms.get_lot(registered.lot_id) or registered
+                            meta = dict(lot_now.broker_meta or {})
+                            meta["journal_entry_pending"] = False
+                            meta["journal_entry_due"] = False
+                            meta["journal_entry_posted"] = True
+                            lot_now.broker_meta = meta
+                            oms.upsert_lot(lot_now)
                     except Exception as exc:  # noqa: BLE001 — fail-open
                         append_audit(
                             "journal_notify_error",
@@ -500,36 +537,49 @@ def run_oms_consume(
                     orders[i] = order
                 if mark_processed:
                     oms.mark_processed(order.order_id)
+                    processed_now.append(order.order_id)
                 if effective_live and not is_ibkr:
                     try:
                         from trading_agent.ops.journal_notify import notify_order_activity
 
-                        notify_order_activity(orders[i], live=True)
+                        notify_order_activity(orders[i], live=True, fill_confirmed=False)
                     except Exception as exc:  # noqa: BLE001
                         append_audit(
                             "journal_notify_error",
                             payload={"order_id": order.order_id, "error": str(exc)},
                         )
-        elif order.status == "failed" and effective_live and not is_ibkr:
-            try:
-                from trading_agent.ops.journal_notify import notify_order_activity
+        elif order.status == "failed":
+            # Terminal place failures must not retry every poll (was Discord spam).
+            if mark_processed:
+                oms.mark_processed(order.order_id)
+                processed_now.append(order.order_id)
+            if effective_live and not is_ibkr:
+                try:
+                    from trading_agent.ops.journal_notify import notify_order_activity
 
-                notify_order_activity(order, live=True)
-            except Exception as exc:  # noqa: BLE001
-                append_audit(
-                    "journal_notify_error",
-                    payload={"order_id": order.order_id, "error": str(exc)},
-                )
+                    notify_order_activity(order, live=True)
+                except Exception as exc:  # noqa: BLE001
+                    append_audit(
+                        "journal_notify_error",
+                        payload={"order_id": order.order_id, "error": str(exc)},
+                    )
+        elif order.status == "skipped" and order.skip_reason in (
+            "occ_not_listed",
+            "broker_reject_terminal",
+        ):
+            if mark_processed:
+                oms.mark_processed(order.order_id)
+                processed_now.append(order.order_id)
         elif order.status in ("ready", "dry_run") and place_path in (
             "multi_leg_ready",
             "credit_ready",
         ):
             orders[i] = attach_package_to_order(order)
 
-    if mark_processed and submitted_ids:
-        # keep legacy file in sync for older tools
+    if mark_processed and processed_now:
+        # keep legacy file in sync for older tools (includes terminal fails)
         legacy = mx.default_state_dir() / "auto_trade_processed.json"
-        legacy_ids = mx.load_processed_ids(legacy) | set(submitted_ids)
+        legacy_ids = mx.load_processed_ids(legacy) | set(processed_now)
         mx.save_processed_ids(legacy, legacy_ids)
 
     manage_results = []

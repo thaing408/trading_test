@@ -44,6 +44,20 @@ def non_index_min_dte() -> int:
 
 
 def min_dte_for_symbol(symbol: str) -> int:
+    try:
+        from trading_agent.oms.wr_desk import wr_desk_enabled
+
+        if wr_desk_enabled():
+            allow_0 = os.getenv("TRADING_AGENT_WR_ALLOW_INDEX_0DTE", "0").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if not (allow_0 and is_index_0dte_allowed(symbol)):
+                return max(3, non_index_min_dte())
+    except Exception:
+        pass
     if is_index_0dte_allowed(symbol):
         return 0
     # Legacy global floor (if set) can only raise non-index min, not lower below 3 default

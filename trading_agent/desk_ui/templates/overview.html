@@ -18,8 +18,63 @@
 <section class="kpi-row">
   <div class="kpi-card"><div class="k">Entries</div><div class="v">{{ snap.entries|length }}</div></div>
   <div class="kpi-card"><div class="k">Rejections</div><div class="v">{{ snap.rejections|length }}</div></div>
-  <div class="kpi-card"><div class="k">Play</div><div class="v">{{ snap.play_symbols|length }}</div></div>
-  <div class="kpi-card"><div class="k">Manage events</div><div class="v">{{ snap.manage.summary.get('events', 0) }}</div></div>
+  <div class="kpi-card"><div class="k">Open lots</div><div class="v">{{ snap.oms_summary.get('open_lots', snap.oms_lots|length) }}</div></div>
+  <div class="kpi-card"><div class="k">Open risk $</div><div class="v">{{ '%.0f'|format(snap.oms_summary.get('open_risk') or 0) }}</div></div>
+  <div class="kpi-card"><div class="k">Tradable cash</div><div class="v">{% if snap.account_cash.get('tradable_after_reserve') is not none %}${{ '%.0f'|format(snap.account_cash.tradable_after_reserve) }}{% else %}—{% endif %}</div></div>
+  <div class="kpi-card"><div class="k">Consumer</div><div class="v">{% if snap.consumer_health.get('alive') %}<span class="text-armed">UP</span>{% else %}<span class="text-cash">DOWN</span>{% endif %}</div></div>
+</section>
+
+<section class="panel">
+  <h2>Execute (Mac)</h2>
+  <div class="two-col">
+    <div>
+      <h3 class="subhead">Account cash</h3>
+      {% if snap.account_cash.get('fetched') or snap.account_cash.get('cash_available') is not none %}
+      <ul class="plain">
+        <li>available: <strong>{% if snap.account_cash.get('cash_available') is not none %}${{ '%.2f'|format(snap.account_cash.cash_available) }}{% else %}—{% endif %}</strong></li>
+        <li>buying power: {% if snap.account_cash.get('buying_power') is not none %}${{ '%.2f'|format(snap.account_cash.buying_power) }}{% else %}—{% endif %}</li>
+        <li>tradable after reserve: <strong>{% if snap.account_cash.get('tradable_after_reserve') is not none %}${{ '%.2f'|format(snap.account_cash.tradable_after_reserve) }}{% else %}—{% endif %}</strong>
+          {% if snap.account_cash.get('reserve') %}(reserve ${{ '%.0f'|format(snap.account_cash.reserve) }}){% endif %}</li>
+        <li class="muted">source={{ snap.account_cash.get('source') or '—' }}</li>
+      </ul>
+      {% else %}
+      <p class="muted">No cash snapshot yet (run a LIVE consume, or set <code>TRADING_AGENT_UI_LIVE_CASH=1</code>).</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3 class="subhead">Consumer / ready orders</h3>
+      <ul class="plain">
+        <li>consumer: {% if snap.consumer_health.get('alive') %}<strong class="text-armed">alive</strong> pids={{ snap.consumer_health.get('pids')|join(', ') }}{% else %}<strong class="text-cash">down</strong>{% endif %}</li>
+        {% if snap.consumer_health.get('watchdog_last') %}
+        <li class="muted">watchdog: {{ snap.consumer_health.watchdog_last[:120] }}</li>
+        {% endif %}
+        <li>ready_orders: submitted={{ snap.ready_orders.get('counts', {}).get('submitted', 0) }}
+          · skipped={{ snap.ready_orders.get('counts', {}).get('skipped', 0) }}
+          · failed={{ snap.ready_orders.get('counts', {}).get('failed', 0) }}</li>
+        {% if snap.ready_orders.get('mtime_iso') %}
+        <li class="muted">file {{ snap.ready_orders.get('path') }}</li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+  {% if snap.ready_orders.get('orders') %}
+  <h3 class="subhead">Today’s ready / place results</h3>
+  <table class="data compact">
+    <thead><tr><th>Sym</th><th>Status</th><th>Skip / note</th><th>Exp</th><th>Qty</th><th>Risk$</th></tr></thead>
+    <tbody>
+      {% for o in snap.ready_orders.orders[:15] %}
+      <tr>
+        <td>{{ o.get('symbol') }}</td>
+        <td>{{ o.get('status') }}</td>
+        <td class="muted">{{ o.get('skip_reason') or '—' }}</td>
+        <td>{{ o.get('expiration') or '—' }}</td>
+        <td>{{ o.get('quantity') }}</td>
+        <td>{{ o.get('max_risk_dollars') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </section>
 
 <section class="panel">
@@ -119,7 +174,7 @@
   <table class="data">
     <thead>
       <tr>
-        <th>Symbol</th><th>Side</th><th>Grade</th><th>Entry</th><th>Stop</th><th>Target</th><th>Strategy</th>
+        <th>Symbol</th><th>Side</th><th>Grade</th><th>Entry</th><th>Stop</th><th>Target</th><th>DTE</th><th>Exp</th><th>Strategy</th>
       </tr>
     </thead>
     <tbody>
@@ -131,6 +186,8 @@
         <td>{{ e.get('entry') }}</td>
         <td>{{ e.get('stop') }}</td>
         <td>{{ e.get('target') }}</td>
+        <td>{{ e.get('dte') if e.get('dte') is not none else '—' }}</td>
+        <td>{{ e.get('expiration') or '—' }}</td>
         <td>{{ e.get('strategy') }}</td>
       </tr>
       {% endfor %}

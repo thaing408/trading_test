@@ -75,7 +75,7 @@ Flag off → orchestrator hook is a no-op (bit-identical book).
 | Agent | Implementation |
 |-------|----------------|
 | **Fundamental** | `gather_fundamentals` (yfinance score) → `FundamentalReport`; LLM narrative if `XAI_API_KEY` |
-| **Sentiment** | News-tone proxy (`gather_social`) until X/Reddit; optional LLM polish |
+| **Sentiment** | News-tone + Reddit JSON (`gather_social`); optional LLM polish. Crowd score is informational, never auto-ENTER. |
 | **News** | `collect_news_catalysts` → name/macro lists; optional LLM “what moves next” |
 | **Technical** | OHLCV + `analysis.technical` bundle → regime/bias/timing; optional LLM write-up |
 
@@ -133,7 +133,7 @@ python -m trading_agent firm --symbol AAPL --force --no-llm
 |------|--------|
 | Prices / TA | **`firm_ta_pack_v1`** (~40–60 features) in `indicators.py` / `data_pack.json` |
 | News | Existing collectors |
-| Social | News-tone proxy (X/Reddit still absent) |
+| Social | News-tone + public Reddit JSON (`gather_social` / `SentimentReport.reddit`). X still absent. Informational only. |
 | Insider | News-category proxy |
 | Calendar | `gather_calendar` → empty/unavailable without paid FMP |
 | Breadth | Explicitly `unavailable` in pack |

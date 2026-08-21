@@ -1,5 +1,9 @@
-"""Book-informed auto-trade discipline (SMB top-ten + Shannon + desk rails)."""
+"""Book-informed auto-trade discipline (SMB + Investopedia TA + classic TA + rails)."""
 
+from trading_agent.discipline.classic_ta_books import (
+    CLASSIC_TA_TOP_TEN,
+    apply_classic_ta_book_gates,
+)
 from trading_agent.discipline.edge import (
     EdgePackage,
     EdgeValidation,
@@ -49,8 +53,10 @@ from trading_agent.discipline.ta_books import (
 )
 
 __all__ = [
+    "CLASSIC_TA_TOP_TEN",
     "INVESTOPEDIA_TA_BOOKS",
     "SMB_TOP_TEN",
+    "apply_classic_ta_book_gates",
     "apply_investopedia_ta_gates",
     "apply_smb_book_gates",
     "smb_process_habit_lines",

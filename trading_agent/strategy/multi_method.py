@@ -98,6 +98,11 @@ class MultiMethodConfig:
     export_min_best_score: float = 65.0  # best play-method score
     export_min_play_avg_score: float = 65.0  # mean of play-method scores
     # Pass export if (methods>=N) and (best>=B or avg>=A)
+    # LIVE auto-ENTER only when chart_patterns is among play votes (edge preservation).
+    # Other methods may still vote PLAY for research cards; they cannot unlock export alone.
+    export_require_chart_patterns: bool = True
+    # Cap method stops wider than N×ATR (swing pattern lows were often 20–40% away)
+    max_stop_atr_mult: float = 1.5
     # weights for aggregate score (sum normalized)
     weights: Dict[str, float] = field(
         default_factory=lambda: {
@@ -137,6 +142,20 @@ def compute_play_quality(result: TickerMultiEval) -> Tuple[float, float, List[st
     return max(scores), float(sum(scores) / len(scores)), ids
 
 
+def export_require_chart_patterns_enabled(cfg: MultiMethodConfig | None = None) -> bool:
+    """Default ON — set TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS=0 to disable."""
+    import os
+
+    raw = os.getenv("TRADING_AGENT_EXPORT_REQUIRE_CHART_PATTERNS", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if cfg is not None:
+        return bool(getattr(cfg, "export_require_chart_patterns", True))
+    return True
+
+
 def passes_export_quality(
     result: TickerMultiEval,
     *,
@@ -147,6 +166,7 @@ def passes_export_quality(
     Requires:
       - decision PLAY
       - len(play_methods) >= export_min_play_methods (default 2)
+      - chart_patterns among play methods (default ON — preserves pattern edge)
       - best_play_score >= export_min_best_score **or**
         play_quality_score (avg) >= export_min_play_avg_score (default 65)
     """
@@ -158,10 +178,13 @@ def passes_export_quality(
     need_n = int(cfg.export_min_play_methods)
     if n < need_n:
         return False, f"play_methods {n}<{need_n}"
+    play_ids = {str(x).lower() for x in (ids or result.play_methods or [])}
+    if export_require_chart_patterns_enabled(cfg) and "chart_patterns" not in play_ids:
+        return False, "need_chart_patterns_in_play"
     min_best = float(cfg.export_min_best_score)
     min_avg = float(cfg.export_min_play_avg_score)
     if best_sc >= min_best or avg_sc >= min_avg:
-        return True, f"ok best={best_sc:.0f} avg={avg_sc:.0f} n={n}"
+        return True, f"ok best={best_sc:.0f} avg={avg_sc:.0f} n={n} chart=1"
     return (
         False,
         f"weak play scores best={best_sc:.0f}<{min_best:.0f} and "
@@ -444,6 +467,49 @@ def _ohlc_lists(df):
     return opens, highs, lows, closes
 
 
+def _atr_abs_from_lists(
+    highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], n: int = 14
+) -> float:
+    if len(closes) < 2:
+        return 0.0
+    trs: List[float] = []
+    for i in range(1, len(closes)):
+        h = float(highs[i]) if i < len(highs) else float(closes[i])
+        l = float(lows[i]) if i < len(lows) else float(closes[i])
+        pc = float(closes[i - 1])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    window = trs[-n:] if len(trs) >= n else trs
+    return float(sum(window) / len(window)) if window else 0.0
+
+
+def _clamp_method_vote_stop(vote: MethodVote, atr_abs: float, *, max_atr_mult: float) -> MethodVote:
+    """Tighten vote.stop when wider than N×ATR (mutates and returns vote)."""
+    if atr_abs <= 0 or max_atr_mult <= 0:
+        return vote
+    if vote.entry <= 0 or vote.stop <= 0 or vote.side not in ("CALL", "PUT"):
+        return vote
+    from trading_agent.strategy.swing_scan import clamp_stop_to_atr
+
+    new_stop, clamped = clamp_stop_to_atr(
+        vote.entry, vote.stop, vote.side, atr_abs, max_atr_mult=max_atr_mult
+    )
+    if not clamped:
+        return vote
+    old = vote.stop
+    vote.stop = float(round(new_stop, 2))
+    tag = f"stop_atr_cap={max_atr_mult:g}x"
+    if tag not in vote.tags:
+        vote.tags = list(vote.tags) + [tag]
+    vote.reasons = list(vote.reasons) + [f"stop capped {old:.2f}→{vote.stop:.2f} ({max_atr_mult:g}×ATR)"]
+    # Rebuild target if it no longer makes sense vs side
+    risk = abs(vote.entry - vote.stop)
+    if vote.side == "CALL" and (vote.target <= vote.entry):
+        vote.target = float(round(vote.entry + max(risk * 1.5, atr_abs * 2.0), 2))
+    if vote.side == "PUT" and (vote.target >= vote.entry or vote.target <= 0):
+        vote.target = float(round(vote.entry - max(risk * 1.5, atr_abs * 2.0), 2))
+    return vote
+
+
 def eval_fvg(symbol: str, df, cfg: MultiMethodConfig, *, htf_direction: str = "") -> MethodVote:
     try:
         opens, highs, lows, closes = _ohlc_lists(df)
@@ -525,6 +591,9 @@ def eval_swing_daily(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
             require_confirmed_pattern=False,
             allow_structure_only=True,
             use_rs=True,
+            max_stop_atr_mult=float(
+                getattr(cfg, "max_stop_atr_mult", 1.5) or 1.5
+            ),
         )
         cand = evaluate_swing_symbol(symbol, cfg=sc)
         play = bool(cand.play and cand.score >= cfg.min_method_score)
@@ -796,6 +865,28 @@ def evaluate_ticker_all_methods(
     if "process_methods" in cfg.enabled_methods:
         votes.append(eval_process_methods(sym, df, cfg, votes))
 
+    # Cap absurd stops across methods (pattern lows / old structure)
+    try:
+        _, highs_c, lows_c, closes_c = _ohlc_lists(df)
+        atr_abs = _atr_abs_from_lists(highs_c, lows_c, closes_c)
+        # Prefer daily ATR% tag from swing_daily when present (more relevant for swing stops)
+        for v in votes:
+            if v.method_id == "swing_daily" and v.entry > 0:
+                for t in v.tags or []:
+                    if isinstance(t, str) and t.startswith("atr=") and t.endswith("%"):
+                        try:
+                            atr_pct = float(t[4:-1])
+                            if atr_pct > 0:
+                                atr_abs = max(atr_abs, v.entry * atr_pct / 100.0)
+                        except ValueError:
+                            pass
+        mult = float(getattr(cfg, "max_stop_atr_mult", 1.5) or 1.5)
+        if atr_abs > 0:
+            for v in votes:
+                _clamp_method_vote_stop(v, atr_abs, max_atr_mult=mult)
+    except Exception:
+        pass
+
     # Soft HTF filter: demote play votes that fight HTF when strict or always tag
     if htf_direction in ("up", "down"):
         from trading_agent.pa.htf_bias import HtfBias, bias_allows_side
@@ -1005,7 +1096,15 @@ def trade_card_fields_from_eval(
         trigger += f" (also: {methods})"
 
     if stop_px > 0:
-        stop = f"{stop_px:.2f} ({side} invalidation / method stop)"
+        capped = any(
+            isinstance(t, str) and t.startswith("stop_atr_cap=")
+            for t in ((best.tags if best else None) or [])
+        )
+        stop = (
+            f"{stop_px:.2f} (ATR-capped method stop)"
+            if capped
+            else f"{stop_px:.2f} ({side} invalidation / method stop)"
+        )
     else:
         stop = "structure stop per best method (set before open)"
 

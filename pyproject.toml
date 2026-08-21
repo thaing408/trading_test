@@ -24,6 +24,10 @@ desk-ui = [
     "python-multipart>=0.0.9",
     "httpx>=0.27",
 ]
+tv-ta = [
+    "tradingview-ta>=3.3.0",
+    "tradingview-screener==3.0.0",
+]
 
 [project.scripts]
 trading-agent = "trading_agent.__main__:main"

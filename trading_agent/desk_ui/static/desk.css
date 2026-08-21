@@ -157,6 +157,9 @@ table.data th, table.data td {
   vertical-align: top;
 }
 table.data th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+table.data.compact th, table.data.compact td { padding: 0.28rem 0.4rem; font-size: 12px; }
+tr.row-ok td { color: var(--armed); }
+tr.row-fail td { color: #f07178; }
 table.market-table tbody th {
   width: 9.5rem;
   color: var(--muted);
@@ -250,3 +253,58 @@ ul.plain li { margin: 0.25rem 0; }
 a { color: var(--link); }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .empty-entries { font-style: italic; }
+
+.filter-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+}
+.filter-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.filter-form input[type="text"] {
+  background: #0a0e14;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  min-width: 10rem;
+  font-size: 13px;
+}
+.filter-form button {
+  background: #243044;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  font-size: 13px;
+}
+.filter-form button:hover { border-color: var(--link); }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+.proc-card {
+  background: #0a0e14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 0.85rem;
+}
+.proc-card header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.proc-card .json-dump { max-height: 12rem; }

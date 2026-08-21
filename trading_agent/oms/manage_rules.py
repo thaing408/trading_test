@@ -286,6 +286,14 @@ def early_exit_reasons(
     )
     if ok:
         return True, reason
+    try:
+        from trading_agent.oms.wr_desk import time_stop_due
+
+        ok, reason = time_stop_due(lot, now=now)
+        if ok:
+            return True, reason
+    except Exception:
+        pass
     return False, ""
 
 
