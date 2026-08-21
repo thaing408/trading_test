@@ -46,6 +46,33 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def max_same_day_names_per_day() -> int:
+    """N1: max distinct same-day names to ENTER per session.
+
+    Default **0 = off**. Paper: ``TRADING_AGENT_WR_MAX_PER_DAY=1``.
+    Swing book is not counted.
+    """
+    try:
+        return max(0, int(os.getenv("TRADING_AGENT_WR_MAX_PER_DAY", "0") or 0))
+    except ValueError:
+        return 0
+
+
+def count_same_day_open_symbols(lots: Any) -> int:
+    seen: set[str] = set()
+    for lot in lots or []:
+        hold = str(getattr(lot, "hold_path", "") or "same_day").strip().lower()
+        if hold == "swing":
+            continue
+        status = str(getattr(lot, "status", "") or "").lower()
+        if status in ("closed", "cancelled", "skipped", "failed"):
+            continue
+        sym = str(getattr(lot, "symbol", "") or "").upper()
+        if sym:
+            seen.add(sym)
+    return len(seen)
+
+
 def allowed_methods() -> FrozenSet[str]:
     raw = os.getenv("TRADING_AGENT_WR_METHODS", "").strip()
     if not raw:
@@ -233,6 +260,25 @@ def evaluate_wr_enter(
         if not ok:
             return False, reason
     return True, ""
+
+
+def same_day_name_cap_blocks(
+    order: Any,
+    *,
+    open_same_day_names: int,
+    extra_this_run: int = 0,
+) -> Tuple[bool, str]:
+    """True if this same-day ENTER should skip (cap reached)."""
+    cap = max_same_day_names_per_day()
+    if cap <= 0:
+        return False, ""
+    hold = str(getattr(order, "hold_path", "") or "").strip().lower()
+    if hold == "swing":
+        return False, ""
+    n = int(open_same_day_names) + int(extra_this_run)
+    if n >= cap:
+        return True, f"wr_max_per_day:{n}>={cap}"
+    return False, ""
 
 
 def apply_payoff(entry: float, stop: float, *, bullish: bool) -> float:

@@ -75,6 +75,26 @@ def test_entry_from_multi_eval_valid():
     assert ok, reason
 
 
+def test_n1_caps_same_day_book_to_one_name(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_WR_MAX_PER_DAY", "1")
+    monkeypatch.setenv("TRADING_AGENT_WR_DESK", "1")
+    monkeypatch.setenv("TRADING_AGENT_WR_DESK_TEST", "1")
+    hi = _play("NVDA", strong=True)
+    lo = _play("AMD", strong=True)
+    lo.votes[0].score = 70.0
+    lo.votes[1].score = 68.0
+    lo.best_play_score = 70.0
+    lo.play_quality_score = 69.0
+    lo.aggregate_score = 48.0
+    lo.export_eligible = True
+    book = build_multi_method_book([hi, lo], hold_path="same_day")
+    syms = [e["symbol"] for e in book.get("entries") or []]
+    assert "NVDA" in syms
+    assert len(syms) == 1
+    rej = " ".join(book.get("rejected_incomplete") or [])
+    assert "AMD" in rej or len(syms) == 1
+
+
 def test_weak_play_blocked_from_export():
     row = entry_from_multi_eval(
         _play(strong=False),

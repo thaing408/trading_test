@@ -204,6 +204,7 @@ def run_oms_consume(
     submitted_ids: List[str] = []
     processed_now: List[str] = []  # submitted + terminal fails/skips → no poll retry
     submit_count = 0
+    same_day_names_this_run = 0
     # If LIVE but Schwab OAuth dead, force dry-run place path (still build ready_orders)
     effective_live = bool(live) and not schwab_block
 
@@ -281,6 +282,7 @@ def run_oms_consume(
             oms,
             config=gate_cfg,
             submitted_this_run=submit_count,
+            same_day_names_this_run=same_day_names_this_run,
             buying_power=bp_for_gate,
             cash_required=cash_req_for_gate,
             process_detail=process_detail,
@@ -468,6 +470,8 @@ def run_oms_consume(
                 "closed",
             ):
                 submit_count += 1
+                if str(getattr(order, "hold_path", "") or "same_day").lower() != "swing":
+                    same_day_names_this_run += 1
                 submitted_ids.append(order.order_id)
                 # Store option entry premium for QQQ-style % exits + journal Fill:
                 prem: Optional[float] = None

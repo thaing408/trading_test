@@ -304,6 +304,48 @@ def entry_from_multi_eval(
     return row
 
 
+def _cap_same_day_names(
+    entries: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Keep top-N same-day names by technical/quality score. Default cap 0 = off."""
+    try:
+        from trading_agent.oms.wr_desk import max_same_day_names_per_day
+
+        cap = max_same_day_names_per_day()
+    except Exception:
+        cap = 0
+    if cap <= 0 or len(entries) <= cap:
+        return entries, []
+    ranked = sorted(
+        entries,
+        key=lambda r: float(
+            r.get("technical_score")
+            or r.get("quality_score")
+            or r.get("grade_score")
+            or 0
+        ),
+        reverse=True,
+    )
+    kept: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    rejected: List[str] = []
+    for row in ranked:
+        hold = str(row.get("hold_path") or "same_day").lower()
+        if hold == "swing":
+            kept.append(row)
+            continue
+        sym = str(row.get("symbol") or "").upper()
+        if sym in seen:
+            rejected.append(f"{sym}:wr_max_per_day_dup")
+            continue
+        if len(seen) >= cap:
+            rejected.append(f"{sym}:wr_max_per_day")
+            continue
+        seen.add(sym)
+        kept.append(row)
+    return kept, rejected
+
+
 def build_multi_method_book(
     results: Sequence[TickerMultiEval],
     *,
@@ -343,6 +385,9 @@ def build_multi_method_book(
             continue
         entries.append(row)
 
+    entries, n1_rej = _cap_same_day_names(entries)
+    rejected.extend(n1_rej)
+
     # Merge existing book entries (desk/CIO) — prefer higher compete_score
     if merge_entries:
         from trading_agent.discipline.compete import annotate_entry_compete, prefer_entry_by_compete
@@ -368,6 +413,9 @@ def build_multi_method_book(
             key=lambda r: float(r.get("compete_score") or 0),
             reverse=True,
         )
+
+    entries, n1_rej2 = _cap_same_day_names(entries)
+    rejected.extend(n1_rej2)
 
     play_syms = [e["symbol"] for e in entries if e.get("source") == "multi_method_router"]
     watch = play_syms + [

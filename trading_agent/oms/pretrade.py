@@ -129,6 +129,7 @@ def evaluate_pretrade(
     *,
     config: Optional[PretradeConfig] = None,
     submitted_this_run: int = 0,
+    same_day_names_this_run: int = 0,
     quote_age_seconds: Optional[float] = None,
     buying_power: Optional[float] = None,
     cash_required: Optional[float] = None,
@@ -225,11 +226,26 @@ def evaluate_pretrade(
             )
             if not ok_w:
                 return False, reason_w
-    except Exception as exc:  # noqa: BLE001
+            try:
+                from trading_agent.oms.wr_desk import (
+                    count_same_day_open_symbols,
+                    same_day_name_cap_blocks,
+                )
+
+                blocked, why_n1 = same_day_name_cap_blocks(
+                    order,
+                    open_same_day_names=count_same_day_open_symbols(store.open_lots()),
+                    extra_this_run=int(same_day_names_this_run or 0),
+                )
+                if blocked:
+                    return False, why_n1
+            except Exception:
+                pass
+    except Exception as extra:  # noqa: BLE001
         from trading_agent.oms.wr_desk import wr_desk_enabled
 
         if wr_desk_enabled():
-            return False, f"wr_desk_error:{exc}"
+            return False, f"wr_desk_error:{extra}"
 
     if cfg.require_defined_risk and getattr(order, "instrument", "").lower() in (
         "options",

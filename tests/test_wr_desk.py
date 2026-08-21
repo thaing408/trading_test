@@ -11,7 +11,9 @@ from trading_agent.oms.wr_desk import (
     apply_payoff,
     dte_ok,
     evaluate_wr_enter,
+    max_same_day_names_per_day,
     process_session_ok,
+    same_day_name_cap_blocks,
     setup_allowed,
     time_stop_due,
 )
@@ -108,3 +110,23 @@ def test_evaluate_wr_enter_combo():
         order, bias="trade", regime="trend_up", dte=7
     )
     assert not ok and "spread" in reason
+
+
+def test_n1_max_per_day_default_off():
+    assert max_same_day_names_per_day() == 0
+    order = SimpleNamespace(hold_path="same_day", symbol="NVDA")
+    blocked, why = same_day_name_cap_blocks(order, open_same_day_names=3)
+    assert not blocked and why == ""
+
+
+def test_n1_max_per_day_blocks_second_name(monkeypatch):
+    monkeypatch.setenv("TRADING_AGENT_WR_MAX_PER_DAY", "1")
+    assert max_same_day_names_per_day() == 1
+    a = SimpleNamespace(hold_path="same_day", symbol="NVDA")
+    blocked, why = same_day_name_cap_blocks(a, open_same_day_names=0, extra_this_run=0)
+    assert not blocked
+    blocked, why = same_day_name_cap_blocks(a, open_same_day_names=0, extra_this_run=1)
+    assert blocked and "wr_max_per_day" in why
+    swing = SimpleNamespace(hold_path="swing", symbol="AMD")
+    blocked, _ = same_day_name_cap_blocks(swing, open_same_day_names=1)
+    assert not blocked
