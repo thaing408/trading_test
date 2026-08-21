@@ -4,11 +4,12 @@ Living notes on **price action (PA)** for the desk, with **code** under `trading
 
 **Related:**
 
-- PA package: `trading_agent/pa/` (structure, levels, FVG, sweep, range fade, chart patterns, HTF bias, journal)
+- PA package: `trading_agent/pa/` (structure, levels, FVG, order blocks, sweep, range fade, chart patterns, HTF bias, journal)
 - Classical chart patterns: `trading_agent/pa/chart_patterns.py` (H&S, double top/bottom, triangles, flags)
 - Daily swing scanner: `trading_agent/strategy/swing_scan.py` · CLI `research swing-scan` (1d structure + patterns + EMA/RS)
 - Soulz-style PA: `docs/soulz_pa_scalp.md`, `trading_agent/scalp/soulz_pa.py` (BRR + range + fib)
-- Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `range_fade`, `sweep`, `chart_patterns`, `swing_daily`)
+- Order blocks (ICT body + SMC range + breakers): `trading_agent/pa/order_block.py` · `docs/order_block_ict_smc.md`
+- Multi-method router: `docs/multi_method_router.md` (includes `fvg`, `order_block`, `range_fade`, `sweep`, `chart_patterns`, `swing_daily`)
 - Systematic process: `docs/systematic_process.md`
 - ICT Venom Model notes (NY 08:00–09:30 box + open sweep): `docs/venom_model_ict.md`
 - Qullamaggie entry dials (Muninn, 900 longs): `docs/qullamaggie_entry_dials.md`
@@ -62,6 +63,7 @@ Fibonacci, VWAP, EMAs, volume are often **helpers**, not the definition of PA. P
 | **Failed breakout / sweep** | Take stops beyond high/low then reverse | `pa.sweep` / multi `sweep` |
 | **Opening range / session structure** | ORH/ORL as day structure | `orb_vwap`, `odte_breakout`, `pa.levels` |
 | **FVG / IFVG** | Imbalance fill + rejection | `pa.fvg` (shared), QT delegates |
+| **Order block / breaker** | Last opposite candle before impulse; retest zone | `pa.order_block` (ICT + SMC), multi `order_block` |
 
 ---
 

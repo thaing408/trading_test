@@ -64,6 +64,7 @@ class RouterBacktestConfig:
             "top_winners": 1.1,
             "soulz_pa": 1.05,
             "fvg": 1.0,
+            "order_block": 1.0,
             "sweep": 1.0,
             "orb_vwap": 0.95,
             "odte_breakout": 0.9,

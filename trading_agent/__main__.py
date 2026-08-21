@@ -523,6 +523,64 @@ def _run_research(args: argparse.Namespace) -> int:
                 handle.write(text)
         return 0
 
+    if cmd in ("order-block-backtest", "order_block_backtest", "ob-backtest", "ob_backtest"):
+        from trading_agent.strategy.order_block_backtest import (
+            render_order_block_backtest,
+            run_order_block_multi,
+            run_order_block_style_split,
+        )
+
+        raw = getattr(args, "symbols", None) or ""
+        pos = getattr(args, "symbols_list", None) or ""
+        if pos:
+            raw = f"{raw},{pos}" if raw else pos
+        syms = [p.strip().upper() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+        if not syms:
+            syms = ["QQQ", "SPY"]
+        style = (getattr(args, "ob_style", None) or "both").lower()
+        if style == "ict":
+            styles = ("ict",)
+        elif style == "smc":
+            styles = ("smc",)
+        else:
+            styles = ("ict", "smc")
+        period = getattr(args, "period", None) or "59d"
+        interval = getattr(args, "interval", None) or "15m"
+        source = getattr(args, "source", None) or "yfinance"
+        min_score = float(getattr(args, "min_score", None) or 55)
+        r_mult = float(getattr(args, "r_multiple", None) or 1.5)
+        split = bool(getattr(args, "style_split", False))
+        if split and len(syms) == 1:
+            parts = run_order_block_style_split(
+                syms[0],
+                period=period,
+                interval=interval,
+                source=source,
+                min_score=min_score,
+                r_multiple=r_mult,
+            )
+            results = [parts["ict"], parts["smc"], parts["both"]]
+            results[0].symbol = f"{syms[0]} [ict]"
+            results[1].symbol = f"{syms[0]} [smc]"
+            results[2].symbol = f"{syms[0]} [both]"
+        else:
+            results = run_order_block_multi(
+                syms,
+                period=period,
+                interval=interval,
+                source=source,
+                min_score=min_score,
+                styles=styles,
+                r_multiple=r_mult,
+                max_trades_per_day=int(getattr(args, "max_per_symbol", None) or 2),
+            )
+        text = render_order_block_backtest(results)
+        print(text)
+        if getattr(args, "output", None):
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return 0
+
     if cmd in ("multi-method-backtest", "multi_method_backtest", "router-backtest"):
         from trading_agent.strategy.multi_method import MultiMethodConfig
         from trading_agent.strategy.multi_method_backtest import (
@@ -932,7 +990,7 @@ def _run_research(args: argparse.Namespace) -> int:
         "research commands: hypotheses | promotion | replay | walk-forward | "
         "features | manage-summary | scalp-backtest | scalp-halt | scalp-universe | methods-backtest | "
         "soulz | soulz-backtest | multi-method | multi-method-backtest | "
-        "swing-scan | venom-backtest | tv-ta",
+        "swing-scan | venom-backtest | order-block-backtest | tv-ta",
         file=sys.stderr,
     )
     return 2
@@ -1942,6 +2000,36 @@ def main(argv: list[str] | None = None) -> int:
         help="Do not require MSS proxy after sweep",
     )
     venom_bt.add_argument("--output", "-o", metavar="FILE")
+
+    ob_bt = research_sub.add_parser(
+        "order-block-backtest",
+        help="ICT + SMC order-block mitigation BT (underlying R; default QQQ,SPY)",
+    )
+    ob_bt.add_argument(
+        "symbols_list",
+        nargs="?",
+        default="",
+        help="Comma symbols (default QQQ,SPY)",
+    )
+    ob_bt.add_argument("--symbols", default="")
+    ob_bt.add_argument("--period", default="59d")
+    ob_bt.add_argument("--interval", default="15m")
+    ob_bt.add_argument("--source", default="yfinance")
+    ob_bt.add_argument("--min-score", type=float, default=55.0)
+    ob_bt.add_argument("--r-multiple", type=float, default=1.5)
+    ob_bt.add_argument(
+        "--ob-style",
+        choices=("ict", "smc", "both"),
+        default="both",
+        help="OB geometry (default both)",
+    )
+    ob_bt.add_argument(
+        "--style-split",
+        action="store_true",
+        help="Run ICT / SMC / both as three labeled results (one symbol)",
+    )
+    ob_bt.add_argument("--max-per-symbol", type=int, default=2, help="Max trades per symbol per day")
+    ob_bt.add_argument("--output", "-o", metavar="FILE")
 
     multi_bt = research_sub.add_parser(
         "multi-method-backtest",

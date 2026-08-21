@@ -11,6 +11,7 @@ Every ticker is evaluated by **all** registered methods on a **shared bar histor
 | `orb_vwap` | Opening-range break + VWAP |
 | `odte_breakout` | OR close-beyond continuation |
 | `fvg` | Fair value gap tag + rejection (`pa.fvg`) |
+| `order_block` | ICT body OB + SMC range OB mitigation / breaker (`pa.order_block`) |
 | `range_fade` | Pure range-edge fade (`pa.range_fade`) |
 | `sweep` | Liquidity sweep + reclaim (`pa.sweep`) |
 | `chart_patterns` | Classical H&S / double top-bottom / triangle / flag on **shared** bars (`pa.chart_patterns`) |

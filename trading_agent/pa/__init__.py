@@ -1,4 +1,4 @@
-"""Price-action engines: structure, levels, FVG, sweeps, chart patterns, HTF bias."""
+"""Price-action engines: structure, levels, FVG, order blocks, sweeps, chart patterns, HTF bias."""
 
 from trading_agent.pa.chart_patterns import (
     ChartPattern,
@@ -16,6 +16,15 @@ from trading_agent.pa.fvg import (
 )
 from trading_agent.pa.htf_bias import HtfBias, compute_htf_bias
 from trading_agent.pa.levels import KeyLevels, compute_key_levels, whole_dollar_levels
+from trading_agent.pa.order_block import (
+    BreakerBlock,
+    OrderBlock,
+    detect_ict_order_block_at,
+    detect_smc_order_block_at,
+    find_active_order_blocks,
+    find_breakers,
+    score_order_block_entry,
+)
 from trading_agent.pa.range_fade import RangeFadeSignal, evaluate_range_fade
 from trading_agent.pa.reactions import acceptance_at_level, rejection_at_level
 from trading_agent.pa.structure import (
@@ -26,10 +35,12 @@ from trading_agent.pa.structure import (
 from trading_agent.pa.sweep import SweepSignal, detect_sweep_reclaim
 
 __all__ = [
+    "BreakerBlock",
     "ChartPattern",
     "FairValueGap",
     "HtfBias",
     "KeyLevels",
+    "OrderBlock",
     "RangeFadeSignal",
     "StructureState",
     "SweepSignal",
@@ -40,14 +51,19 @@ __all__ = [
     "detect_all_chart_patterns",
     "detect_fvg",
     "detect_fvg_at",
+    "detect_ict_order_block_at",
+    "detect_smc_order_block_at",
     "detect_sweep_reclaim",
     "evaluate_range_fade",
     "find_active_fvgs",
+    "find_active_order_blocks",
+    "find_breakers",
     "fvg_fill_pct",
     "ifvg_confirm",
     "pivot_highs_lows",
     "rejection_at_level",
     "score_chart_pattern_entry",
     "score_fvg_entry",
+    "score_order_block_entry",
     "whole_dollar_levels",
 ]

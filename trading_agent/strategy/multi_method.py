@@ -9,6 +9,7 @@ Methods (paper / research):
   - orb_vwap     — opening-range break + VWAP
   - odte_breakout — OR high/low continuation (breakout style)
   - fvg          — fair value gap pullback + rejection
+  - order_block  — ICT body OB + SMC range OB mitigation (+ breaker)
   - range_fade   — pure range-edge fade
   - sweep        — liquidity sweep + reclaim (failed breakout)
   - chart_patterns — classical H&S / double / triangle / flag (measured move) on shared bars
@@ -37,6 +38,7 @@ METHOD_IDS = (
     "orb_vwap",
     "odte_breakout",
     "fvg",
+    "order_block",
     "range_fade",
     "sweep",
     "chart_patterns",
@@ -111,6 +113,7 @@ class MultiMethodConfig:
             "orb_vwap": 1.0,
             "odte_breakout": 0.9,
             "fvg": 1.0,
+            "order_block": 1.0,
             "range_fade": 0.95,
             "sweep": 1.0,
             "chart_patterns": 1.0,
@@ -541,6 +544,44 @@ def eval_fvg(symbol: str, df, cfg: MultiMethodConfig, *, htf_direction: str = ""
         )
 
 
+def eval_order_block(
+    symbol: str, df, cfg: MultiMethodConfig, *, htf_direction: str = ""
+) -> MethodVote:
+    try:
+        opens, highs, lows, closes = _ohlc_lists(df)
+        from trading_agent.pa.order_block import score_order_block_entry
+
+        play, side, score, tags, entry, stop, target = score_order_block_entry(
+            highs,
+            lows,
+            opens,
+            closes,
+            htf_direction=htf_direction,
+            styles=("ict", "smc"),
+            require_rejection=True,
+        )
+        return MethodVote(
+            method_id="order_block",
+            play=play and score >= cfg.min_method_score,
+            side=side,
+            score=score,
+            tags=tags,
+            reasons=tags or ["no order-block entry"],
+            entry=entry,
+            stop=stop,
+            target=target,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return MethodVote(
+            method_id="order_block",
+            play=False,
+            side="",
+            score=0.0,
+            error=str(exc),
+            reasons=[str(exc)],
+        )
+
+
 def eval_range_fade(symbol: str, df, cfg: MultiMethodConfig) -> MethodVote:
     try:
         opens, highs, lows, closes = _ohlc_lists(df)
@@ -787,6 +828,7 @@ EVALUATORS: Dict[str, Callable[..., MethodVote]] = {
     "orb_vwap": eval_orb_vwap,
     "odte_breakout": eval_odte_breakout,
     "fvg": eval_fvg,
+    "order_block": eval_order_block,
     "range_fade": eval_range_fade,
     "sweep": eval_sweep,
     "chart_patterns": eval_chart_patterns,
@@ -857,6 +899,8 @@ def evaluate_ticker_all_methods(
             continue
         if mid == "fvg":
             votes.append(eval_fvg(sym, df, cfg, htf_direction=htf_direction))
+        elif mid == "order_block":
+            votes.append(eval_order_block(sym, df, cfg, htf_direction=htf_direction))
         elif mid == "chart_patterns":
             votes.append(eval_chart_patterns(sym, df, cfg, htf_direction=htf_direction))
         else:
