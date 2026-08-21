@@ -59,12 +59,14 @@ class FundamentalReport:
 @dataclass
 class SentimentReport:
     meta: ReportMeta
-    score: float = 0.0  # -100..100
+    score: float = 0.0  # -100..100 blended
     tilt: str = "neutral"  # bullish | bearish | neutral
     peaks: List[str] = field(default_factory=list)
     engagement_notes: str = ""
     reasons: List[str] = field(default_factory=list)
     sources: List[str] = field(default_factory=list)
+    reddit: Dict[str, Any] = field(default_factory=dict)
+    news_tone_score: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)

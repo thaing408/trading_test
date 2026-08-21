@@ -275,6 +275,7 @@ def build_sentiment_report(
             sources=["gather_social"],
         )
 
+    reddit = social.get("reddit") if isinstance(social.get("reddit"), dict) else {}
     report = SentimentReport(
         meta=_meta(
             sym,
@@ -288,15 +289,23 @@ def build_sentiment_report(
         engagement_notes=notes,
         reasons=[f"tilt={tilt} score={score}", notes] if notes else [f"tilt={tilt}"],
         sources=["gather_social", str(social.get("source") or "news_tone_proxy")],
+        reddit=dict(reddit),
+        news_tone_score=float(social.get("news_tone_score") or 0.0),
     )
+    if reddit:
+        report.sources.append("reddit_public_json")
+        rtilt = reddit.get("tilt")
+        rn = reddit.get("n")
+        report.reasons.append(f"reddit tilt={rtilt} n={rn} (informational, not auto-ENTER)")
 
     if use_llm and llm_enabled() and social.get("status") == "ok":
         sys = (
             "You are the sentiment analyst. Return ONLY JSON with keys: "
             "score (-100..100), tilt (bullish|bearish|neutral), peaks (array), "
-            "engagement_notes, summary."
+            "engagement_notes, summary. Reddit is crowd heat only — do not treat "
+            "as a trade signal."
         )
-        user = f"Symbol {sym}. Proxy sentiment={social}"
+        user = f"Symbol {sym}. Sentiment payload={social}"
         llm = chat_json(sys, user, deep=False)
         if llm.get("ok") and isinstance(llm.get("data"), dict):
             d = llm["data"]

@@ -183,9 +183,7 @@ _NEG = (
 )
 
 
-def gather_social(symbol: str, news: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """News-tone proxy until X/Reddit feeds exist."""
-    news = news if news is not None else gather_news(symbol)
+def _news_tone(symbol: str, news: Dict[str, Any]) -> Dict[str, Any]:
     items = news.get("items") or []
     score = 0
     peaks: List[str] = []
@@ -199,7 +197,6 @@ def gather_social(symbol: str, news: Optional[Dict[str, Any]] = None) -> Dict[st
             if w in h:
                 score -= 1
                 peaks.append(f"-{w}")
-    # map to -100..100 soft
     n = max(len(items), 1)
     tilted = max(-100.0, min(100.0, (score / n) * 40.0))
     if tilted > 15:
@@ -214,9 +211,22 @@ def gather_social(symbol: str, news: Optional[Dict[str, Any]] = None) -> Dict[st
         "score": round(tilted, 1),
         "tilt": tilt,
         "peaks": peaks[:12],
-        "engagement_notes": f"news_tone_proxy n={len(items)} (no X/Reddit yet)",
+        "engagement_notes": f"news_tone_proxy n={len(items)}",
         "source": "news_tone_proxy",
     }
+
+
+def gather_social(symbol: str, news: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """News-tone + optional Reddit JSON. Reddit never auto-ENTERs."""
+    news = news if news is not None else gather_news(symbol)
+    tone = _news_tone(symbol, news)
+    try:
+        from trading_agent.firm.reddit_sentiment import blend_social, fetch_reddit_sentiment
+
+        reddit = fetch_reddit_sentiment(symbol)
+        return blend_social(tone, reddit)
+    except Exception:
+        return tone
 
 
 def gather_calendar(symbol: str = "") -> Dict[str, Any]:

@@ -153,3 +153,4 @@ Compare one symbol vs `trading_agent.analysis.technical` + `market_data.provider
 | 2026-08-19 | Parked. Useful as optional research MCP / TV-screener source. Not a replacement for collectors, CIO, OMS, or `backtest/`. |
 | 2026-08-19 | Priority list is the **worth stealing** table at the top (P1–P6). |
 | 2026-08-19 | **P1+P2 implemented** via Option C/library (`tradingview-ta` + `tradingview-screener==3.0.0`), not full MCP server. Informational `tv_*` fields only; never auto-ENTER. |
+| 2026-08-21 | **Grok MCP (Option A-lite):** `tradingview` server in `~/.grok/config.toml` for chat (`market_sentiment`, TA). **Firm social:** public Reddit JSON blended into `gather_social` (`SentimentReport.reddit`); flag `TRADING_AGENT_REDDIT` (default on). Still never auto-ENTER. |
