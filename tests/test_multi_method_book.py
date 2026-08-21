@@ -87,7 +87,7 @@ def test_n1_caps_same_day_book_to_one_name(monkeypatch):
     lo.play_quality_score = 69.0
     lo.aggregate_score = 48.0
     lo.export_eligible = True
-    book = build_multi_method_book([hi, lo], hold_path="same_day")
+    book = build_multi_method_book([hi, lo])
     syms = [e["symbol"] for e in book.get("entries") or []]
     assert "NVDA" in syms
     assert len(syms) == 1
